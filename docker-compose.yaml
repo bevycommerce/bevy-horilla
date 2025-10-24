@@ -9,6 +9,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/horilla"
+      ALLOWED_HOSTS: "hr-portal.bevycommerce.com"
+      CSRF_TRUSTED_ORIGINS: "https://hr-portal.bevycommerce.com"
     command: sh ./entrypoint.sh
     volumes:
       - ./horilla:/app/horilla

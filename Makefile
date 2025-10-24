@@ -19,13 +19,13 @@ restore:
 	docker exec -e PGPASSWORD=mysecretpassword postgres psql -U postgres -d horilla -f /tmp/horilla_backup.sql
 
 dblogs:
-	docker compose logs postgres
+	docker compose logs db
 
 applogs:
-	docker compose logs horilla
+	docker compose logs server
 
 dblogsf:
-	docker compose logs postgres -f
+	docker compose logs db -f
 
 applogsf:
-	docker compose logs horilla -f
+	docker compose logs server -f

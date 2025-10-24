@@ -14,7 +14,7 @@ services:
       - ./horilla:/app/horilla
       - ./media:/app/media
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
 
   db:

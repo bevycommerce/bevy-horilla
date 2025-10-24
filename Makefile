@@ -29,3 +29,6 @@ dblogsf:
 
 applogsf:
 	docker compose logs server -f
+
+adduser:
+	docker exec -it horilla bash -c "python3 manage.py createhorillauser; exec bash"

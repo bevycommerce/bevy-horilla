@@ -1,13 +1,17 @@
 services:
   server:
+    container_name: horilla
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - 8000:8000
+      - 80:8000
     restart: unless-stopped
     environment:
-      DATABASE_URL: "postgres://postgres:postgres@db:5432/horilla"
+      DATABASE_URL: "postgres://postgres:mysecretpassword@postgres:5432/horilla"
+      ALLOWED_HOSTS: "hr-portal.bevycommerce.com"
+      CSRF_TRUSTED_ORIGINS: "https://hr-portal.bevycommerce.com"
+      DEBUG: False
     command: sh ./entrypoint.sh
     volumes:
       - ./horilla:/app/horilla
@@ -17,20 +21,21 @@ services:
         condition: service_healthy
 
   db:
+    container_name: postgres
     image: postgres:16-bullseye
     environment:
       POSTGRES_DB: horilla
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: mysecretpassword
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
       PGDATA: /var/lib/postgresql/data/pgdata
-    ports:
-      - 5432:5432
+#    ports:
+#      - 5432:5432
     restart: unless-stopped
     volumes:
       - horilla-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
+      test: [ "CMD", "pg_isready", "-U", "postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,4 +1,4 @@
-.PHONY: up down wipe reset backup restore dblogs applogs dblogsf applogsf
+.PHONY: up down wipe reset backup restore dblogs applogs dblogsf applogsf adduser shell
 up:
 	docker compose up --build -d
 
@@ -31,4 +31,7 @@ applogsf:
 	docker compose logs server -f
 
 adduser:
+	docker exec -it horilla bash -c "python3 manage.py createhorillauser; exec bash"
+
+shell:
 	docker exec -it horilla bash -c "python3 manage.py createhorillauser; exec bash"

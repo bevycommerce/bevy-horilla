@@ -34,4 +34,4 @@ adduser:
 	docker exec -it horilla bash -c "python3 manage.py createhorillauser; exec bash"
 
 shell:
-	docker exec -it horilla bash -c "python3 manage.py createhorillauser; exec bash"
+	docker exec -it horilla bash

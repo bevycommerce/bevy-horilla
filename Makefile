@@ -18,7 +18,7 @@ backup:
 restore:
 	docker cp horilla_backup.sql postgres:/tmp/horilla_backup.sql
 	docker exec -e PGPASSWORD=mysecretpassword postgres psql -U postgres -d horilla -f /tmp/horilla_backup.sql
-	rm -rf media
+	rm -rf media/*
 	unzip media_backup.zip -d .
 
 dblogs:

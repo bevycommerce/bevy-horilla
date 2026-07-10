@@ -130,10 +130,7 @@ dmypy.json
 
 *.pyc
 
-# migration files
-**/migrations/**
-!**/migrations
-!**/migrations/__init__.py
+# migration files are committed to git (see PR discussion) - not ignored
 
 # media file
 media/

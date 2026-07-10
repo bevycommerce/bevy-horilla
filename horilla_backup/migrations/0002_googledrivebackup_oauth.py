@@ -1,14 +1,27 @@
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
     """
-    Reconciling migration: GoogleDriveBackup moved from service-account-file
-    auth to OAuth (see PR discussion on migrations no longer being
-    gitignored). Production's database still had the old
-    'service_account_file' column and was missing the new OAuth columns
-    because 0001_initial was already recorded as applied without them ever
-    landing on disk.
+    Reconciling migration for databases whose django_migrations ledger
+    recorded horilla_backup.0001_initial before GoogleDriveBackup moved from
+    service-account-file auth to OAuth, so the table on disk still has
+    service_account_file and lacks the four OAuth columns.
+
+    Database-only and idempotent. Migration state is already correct after
+    0001_initial (whose CreateModel defines the OAuth fields), so no state
+    operations are needed here:
+
+    - fresh install: 0001_initial creates the table with the OAuth columns,
+      every statement here is a no-op
+    - drifted ledger (prod): 0001_initial is skipped as already-recorded,
+      this drops the orphaned service_account_file column (no remaining
+      code references) and adds the missing OAuth columns
+
+    Column types mirror 0001_initial: FileField -> varchar(100),
+    TextField -> text, DateTimeField -> timestamptz. Intentionally
+    irreversible: reversing a reconciliation of unknown prior state should
+    refuse loudly rather than guess.
     """
 
     dependencies = [
@@ -16,50 +29,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # service_account_file is already absent from Django's migration
-        # state (0001_initial reflects current, OAuth-only models.py) but
-        # still lingered as a real column on production's table. Drop it
-        # with raw SQL since there is no tracked field for RemoveField.
         migrations.RunSQL(
-            sql="ALTER TABLE horilla_backup_googledrivebackup DROP COLUMN IF EXISTS service_account_file;",
-            reverse_sql=migrations.RunSQL.noop,
-        ),
-        migrations.AddField(
-            model_name="googledrivebackup",
-            name="oauth_credentials_file",
-            field=models.FileField(
-                blank=True,
-                help_text="Make sure your file is in JSON format and contains your Google OAuth 2.0 client credentials (web application type)",
-                null=True,
-                upload_to="gdrive_oauth_credentials_file",
-                verbose_name="OAuth Credentials File",
-            ),
-        ),
-        migrations.AddField(
-            model_name="googledrivebackup",
-            name="access_token",
-            field=models.TextField(
-                blank=True,
-                help_text="OAuth access token (automatically managed)",
-                null=True,
-            ),
-        ),
-        migrations.AddField(
-            model_name="googledrivebackup",
-            name="refresh_token",
-            field=models.TextField(
-                blank=True,
-                help_text="OAuth refresh token (automatically managed)",
-                null=True,
-            ),
-        ),
-        migrations.AddField(
-            model_name="googledrivebackup",
-            name="token_expiry",
-            field=models.DateTimeField(
-                blank=True,
-                help_text="Token expiry time (automatically managed)",
-                null=True,
-            ),
+            sql="""
+            ALTER TABLE horilla_backup_googledrivebackup
+                DROP COLUMN IF EXISTS service_account_file;
+            ALTER TABLE horilla_backup_googledrivebackup
+                ADD COLUMN IF NOT EXISTS oauth_credentials_file varchar(100) NULL;
+            ALTER TABLE horilla_backup_googledrivebackup
+                ADD COLUMN IF NOT EXISTS access_token text NULL;
+            ALTER TABLE horilla_backup_googledrivebackup
+                ADD COLUMN IF NOT EXISTS refresh_token text NULL;
+            ALTER TABLE horilla_backup_googledrivebackup
+                ADD COLUMN IF NOT EXISTS token_expiry timestamp with time zone NULL;
+            """,
         ),
     ]

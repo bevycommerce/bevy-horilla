@@ -1,15 +1,26 @@
-import django.db.models.deletion
-from django.db import migrations, models
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
     """
-    Reconciling migration: 'approved_by' was present in models.py and in the
-    auto-generated 0002_initial migration, but production's database never
-    actually received the column (see PR discussion on migrations no longer
-    being gitignored). This adds it explicitly under a new migration name so
-    it applies regardless of what 0001/0002 are recorded as in an existing
-    django_migrations table.
+    Reconciling migration for databases whose django_migrations ledger
+    already recorded attendance.0001_initial/0002_initial (generated
+    per-container while migrations were gitignored) without the approved_by
+    column ever landing on disk.
+
+    Database-only and idempotent. Migration state is already correct after
+    0002_initial (which defines approved_by), so no state operations are
+    needed here. The guarded SQL makes every scenario safe:
+
+    - fresh install: 0002_initial creates the columns, this is a no-op
+    - drifted ledger (prod): 0001/0002 are skipped as already-recorded,
+      this adds the missing columns, FK and index
+    - manually hot-fixed database (column added via raw ALTER TABLE):
+      this is a no-op
+
+    Postgres-specific (DO block), matching the docker-compose deployment.
+    Intentionally irreversible: reversing a reconciliation of unknown prior
+    state should refuse loudly rather than guess.
     """
 
     dependencies = [
@@ -18,30 +29,34 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="historicalattendance",
-            name="approved_by",
-            field=models.ForeignKey(
-                blank=True,
-                db_constraint=False,
-                editable=False,
-                null=True,
-                on_delete=django.db.models.deletion.DO_NOTHING,
-                related_name="+",
-                to="employee.employee",
-                verbose_name="Approved By",
-            ),
-        ),
-        migrations.AddField(
-            model_name="attendance",
-            name="approved_by",
-            field=models.ForeignKey(
-                blank=True,
-                editable=False,
-                null=True,
-                on_delete=django.db.models.deletion.PROTECT,
-                to="employee.employee",
-                verbose_name="Approved By",
-            ),
+        migrations.RunSQL(
+            sql="""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'attendance_attendance'
+                      AND column_name = 'approved_by_id'
+                ) THEN
+                    ALTER TABLE attendance_attendance
+                        ADD COLUMN approved_by_id bigint NULL
+                        REFERENCES employee_employee(id)
+                        DEFERRABLE INITIALLY DEFERRED;
+                    CREATE INDEX attendance_attendance_approved_by_id_reconcile
+                        ON attendance_attendance (approved_by_id);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'attendance_historicalattendance'
+                      AND column_name = 'approved_by_id'
+                ) THEN
+                    ALTER TABLE attendance_historicalattendance
+                        ADD COLUMN approved_by_id bigint NULL;
+                    CREATE INDEX attendance_historicalatt_approved_by_id_reconcile
+                        ON attendance_historicalattendance (approved_by_id);
+                END IF;
+            END$$;
+            """,
         ),
     ]

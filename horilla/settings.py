@@ -113,6 +113,16 @@ TEMPLATES = [
 WSGI_APPLICATION = "horilla.wsgi.application"
 
 
+# base/models.py adds fields to django.contrib.auth.User via
+# User.add_to_class(), so this project must own auth's migration set:
+# horilla/auth_migrations contains Django's stock auth migrations plus the
+# migrations for the patched fields (e.g. 0013_user_is_new_employee).
+# Without this, makemigrations tries to write new migrations into
+# site-packages and fresh databases never receive the patched columns.
+MIGRATION_MODULES = {
+    "auth": "horilla.auth_migrations",
+}
+
 # Database
 # https://docs.djangoproject.com/en/4.1/ref/settings/#databases
 
@@ -261,9 +271,19 @@ if not DEBUG:
 
 # Shared cache for multi-worker Gunicorn (LocMemCache is per-process and
 # breaks HTMX pipeline pages that set/read cache across worker processes).
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "django_cache",
+# Production only: the django_cache table is created by entrypoint.sh
+# (createcachetable). DEBUG/runserver is single-process, where the default
+# LocMemCache works and needs no table; Django's test runner creates cache
+# tables in the test database by itself.
+# TIMEOUT/MAX_ENTRIES are raised from Django's defaults (300s/300 entries)
+# because the recruitment pipeline stores one entry per active session and
+# an eviction mid-session forces an HX-Refresh full-page reload.
+if not DEBUG:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "django_cache",
+            "TIMEOUT": 3600,
+            "OPTIONS": {"MAX_ENTRIES": 5000},
+        }
     }
-}

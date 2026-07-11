@@ -3,3 +3,6 @@
 *.md
 LICENSE
 docker-compose.yaml
+media
+*.sql
+*.zip

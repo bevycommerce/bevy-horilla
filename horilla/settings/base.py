@@ -104,6 +104,7 @@ INSTALLED_APPS = [
     "expense",
     # Smart Employee Workspace (see WORKSPACE_IMPLEMENTATION_PLAN.md)
     "workspace_attendance",
+    "daily_updates",
 ]
 
 # ========================================

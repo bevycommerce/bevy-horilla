@@ -102,6 +102,8 @@ INSTALLED_APPS = [
     "horilla_tour",
     "master_import",
     "expense",
+    # Smart Employee Workspace (see WORKSPACE_IMPLEMENTATION_PLAN.md)
+    "workspace_attendance",
 ]
 
 # ========================================

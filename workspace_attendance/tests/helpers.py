@@ -32,6 +32,11 @@ def make_workspace_employee(username="ws_emp", company=None, shift=None, enable_
     )
     user = make_user(username)
     employee = make_employee(
-        company=company, email=f"{username}@test.horilla", user=user, shift=shift
+        company=company,
+        email=f"{username}@test.horilla",
+        user=user,
+        shift=shift,
+        first_name=username.replace("_", " ").title().replace(" ", ""),
+        last_name="Tester",
     )
     return company, shift, user, employee

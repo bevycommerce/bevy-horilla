@@ -82,9 +82,93 @@ class HorillaAdapter(BaseAdapter):
             "id": employee.pk,
             "name": employee.get_full_name(),
             "photo": photo,
+            "department_id": department.pk if department else None,
             "department": str(department) if department else "",
             "job_position": str(job_position) if job_position else "",
         }
+
+    def departments(self):
+        from base.models import Department
+
+        return [{"id": d.pk, "name": d.department} for d in Department.objects.order_by("department")]
+
+    def active_employees(self, query=None, department_id=None):
+        """Active employees for the company-wide views, optionally filtered by name or department."""
+        from django.db.models import Q
+
+        from employee.models import Employee
+
+        employees = Employee.objects.filter(is_active=True).select_related(
+            "employee_work_info__department_id", "employee_work_info__job_position_id"
+        )
+        if query:
+            for word in query.split()[:4]:
+                employees = employees.filter(
+                    Q(employee_first_name__icontains=word) | Q(employee_last_name__icontains=word)
+                )
+        if department_id:
+            employees = employees.filter(employee_work_info__department_id=department_id)
+        return list(employees.order_by("employee_first_name", "employee_last_name"))
+
+    def attendance_overview(self, day, employees, now=None):
+        """
+        One row per employee for the shared dashboard: times, status, late and
+        missing-action flags. Only attendance facts, no personal HR data.
+        """
+        now = now or timezone.localtime()
+        ids = [e.pk for e in employees]
+        attendances = {
+            a.employee_id_id: a
+            for a in Attendance.objects.filter(employee_id__in=ids, attendance_date=day)
+        }
+        working = set(
+            AttendanceActivity.objects.filter(
+                employee_id__in=ids, attendance_date=day, clock_out__isnull=True
+            ).values_list("employee_id", flat=True)
+        )
+        from attendance.models import AttendanceBreak
+
+        on_break = set(
+            AttendanceBreak.objects.filter(
+                employee_id__in=ids, attendance_date=day, end_datetime__isnull=True
+            ).values_list("employee_id", flat=True)
+        )
+        late = set(
+            AttendanceLateComeEarlyOut.objects.filter(
+                attendance_id__in=[a.pk for a in attendances.values()], type="late_come"
+            ).values_list("employee_id", flat=True)
+        )
+        rows = []
+        for employee in employees:
+            att = attendances.get(employee.pk)
+            if employee.pk in on_break:
+                status = "on_break"
+            elif employee.pk in working:
+                status = "working"
+            elif att is not None and att.attendance_clock_out is not None:
+                status = "signed_out"
+            else:
+                status = "not_signed_in"
+            missing = []
+            window = self.shift_window(employee, day)
+            if att is None and window is not None and now >= window[0]:
+                missing.append("sign_in")
+            if att is not None and att.attendance_clock_out is None:
+                if status not in ("working", "on_break") or day < now.date():
+                    missing.append("sign_out")
+            rows.append(
+                {
+                    "employee": self.safe_employee_card(employee),
+                    "status": status,
+                    "sign_in": att.attendance_clock_in.strftime("%H:%M") if att and att.attendance_clock_in else None,
+                    "sign_out": att.attendance_clock_out.strftime("%H:%M") if att and att.attendance_clock_out else None,
+                    "worked": att.attendance_worked_hour if att else None,
+                    "late": employee.pk in late,
+                    "missing": missing,
+                    "has_shift_today": window is not None,
+                }
+            )
+        return rows
 
     # ----------------------------------------------------------------- state
     def get_state(self, employee, now=None):

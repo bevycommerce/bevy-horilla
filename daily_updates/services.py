@@ -257,3 +257,45 @@ def update_history(update):
         }
         for r in update.revisions.all()
     ]
+
+
+# ----------------------------------------------------------------- company-wide views
+def company_feed(start, end, update_type=None, query=None, department_id=None, limit=300):
+    """
+    Everyone's submitted updates (company-wide visibility is intentional).
+    Each row holds only the safe employee card plus the update itself.
+    """
+    adapter = get_adapter()
+    employees = {e.pk: e for e in adapter.active_employees(query=query, department_id=department_id)}
+    updates = DailyUpdate.objects.filter(employee_id__in=list(employees), work_date__range=(start, end))
+    if update_type in TYPES:
+        updates = updates.filter(update_type=update_type)
+    return [
+        {"employee": adapter.safe_employee_card(employees[u.employee_id]), "update": serialize_update(u)}
+        for u in updates.order_by("-work_date", "-submitted_at")[:limit]
+    ]
+
+
+def today_board(day, query=None, department_id=None):
+    """Attendance status plus that day's updates for every active employee, and totals."""
+    adapter = get_adapter()
+    employees = adapter.active_employees(query=query, department_id=department_id)
+    rows = adapter.attendance_overview(day, employees)
+    updates = {}
+    for u in DailyUpdate.objects.filter(employee_id__in=[e.pk for e in employees], work_date=day):
+        updates.setdefault(u.employee_id, {})[u.update_type] = serialize_update(u)
+    skips = dict(
+        MiddaySkip.objects.filter(employee_id__in=[e.pk for e in employees], work_date=day).values_list(
+            "employee_id", "choice"
+        )
+    )
+    totals = {"working": 0, "on_break": 0, "signed_out": 0, "not_signed_in": 0, "late": 0, "missing": 0, "updates": 0}
+    for row in rows:
+        emp_id = row["employee"]["id"]
+        row["updates"] = updates.get(emp_id, {})
+        row["midday_skip"] = skips.get(emp_id)
+        totals[row["status"]] += 1
+        totals["late"] += int(row["late"])
+        totals["missing"] += int(bool(row["missing"]))
+        totals["updates"] += len(row["updates"])
+    return {"day": day.isoformat(), "rows": rows, "totals": totals, "employee_count": len(rows)}

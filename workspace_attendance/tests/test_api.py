@@ -55,7 +55,7 @@ class WorkspaceAPITests(TestCase):
         self.assertEqual(body["employee"]["id"], self.employee.pk)
         self.assertTrue(body["break_reasons"])
         # privacy: the card holds only the approved fields
-        self.assertEqual(set(body["employee"]), {"id", "name", "photo", "department", "job_position"})
+        self.assertEqual(set(body["employee"]), {"id", "name", "photo", "department_id", "department", "job_position"})
 
     def test_user_without_employee(self):
         lonely = make_user("lonely_api")

@@ -46,8 +46,18 @@ class WorkspaceError(Exception):
 
 # --------------------------------------------------------------------------- helpers
 def _lock_employee(employee):
-    """Serialize all Workspace actions of one employee (prevents double clicks racing)."""
-    type(employee).objects.select_for_update().filter(pk=employee.pk).first()
+    """
+    Serialize all Workspace actions of one employee (prevents double clicks racing).
+
+    Uses the base manager: Horilla's company-scoped default manager adds an
+    outer join on the API path, and PostgreSQL refuses FOR UPDATE on that.
+    The lock only needs the employee's own row.
+    """
+    list(
+        type(employee)._base_manager.select_for_update(of=("self",))
+        .filter(pk=employee.pk)
+        .values_list("pk", flat=True)
+    )
 
 
 def _check_source(source):

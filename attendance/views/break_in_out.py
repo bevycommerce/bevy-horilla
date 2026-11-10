@@ -12,11 +12,19 @@ from datetime import date
 from django.contrib import messages
 from django.http import HttpResponse
 from django.shortcuts import render
-from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from attendance.methods.utils import employee_exists
-from attendance.models import AttendanceActivity, AttendanceBreak, EmployeePresence
+from attendance.models import AttendanceBreak
+from attendance.services.breaks import (
+    BreakError,
+    clear_away,
+    end_break,
+    open_activity,
+    open_break,
+    set_away,
+    start_break,
+)
 from attendance.views.clock_in_out import clock_in, clock_out
 from horilla.decorators import hx_request_required, login_required
 from horilla.http.response import HorillaRedirect
@@ -40,40 +48,15 @@ def break_start(request):
         )
         return HorillaRedirect(request)
 
-    reason = request.GET.get("reason")
-    note = (request.GET.get("note") or "").strip()[:300]
-    if reason not in dict(AttendanceBreak.REASON_CHOICES):
-        messages.error(request, _("Please choose a valid break reason."))
+    try:
+        start_break(
+            employee,
+            reason=request.GET.get("reason"),
+            note=request.GET.get("note") or "",
+        )
+    except BreakError as error:
+        messages.error(request, error.args[0])
         return HorillaRedirect(request)
-
-    if AttendanceBreak.objects.filter(
-        employee_id=employee, end_datetime__isnull=True
-    ).exists():
-        # a break is already running, just show the current state
-        return render(request, COMPONENT, {})
-
-    activity = (
-        AttendanceActivity.objects.filter(employee_id=employee, clock_out__isnull=True)
-        .order_by("attendance_date", "id")
-        .last()
-    )
-    if activity is None:
-        messages.error(request, _("You need to be checked in to start a break."))
-        return HorillaRedirect(request)
-
-    now = timezone.localtime()
-    activity.clock_out = now.time().replace(microsecond=0)
-    activity.clock_out_date = date.today()
-    activity.out_datetime = now
-    activity.save()
-
-    AttendanceBreak.objects.create(
-        employee_id=employee,
-        attendance_date=activity.attendance_date,
-        reason=reason,
-        note=note,
-        start_datetime=now,
-    )
     return render(request, COMPONENT, {})
 
 
@@ -91,33 +74,7 @@ def break_end(request):
         )
         return HorillaRedirect(request)
 
-    running_break = (
-        AttendanceBreak.objects.filter(employee_id=employee, end_datetime__isnull=True)
-        .order_by("-id")
-        .first()
-    )
-    if running_break is None:
-        return render(request, COMPONENT, {})
-
-    last_activity = (
-        AttendanceActivity.objects.filter(
-            employee_id=employee, attendance_date=running_break.attendance_date
-        )
-        .order_by("id")
-        .last()
-    )
-    now = timezone.localtime()
-    running_break.end_datetime = now
-    running_break.save()
-
-    AttendanceActivity.objects.create(
-        employee_id=employee,
-        attendance_date=running_break.attendance_date,
-        clock_in_date=date.today(),
-        shift_day=last_activity.shift_day if last_activity else None,
-        clock_in=now.time().replace(microsecond=0),
-        in_datetime=now,
-    )
+    end_break(employee)
     return render(request, COMPONENT, {})
 
 
@@ -205,29 +162,22 @@ def set_status(request):
         messages.error(request, _("Could not change the status."))
         return HorillaRedirect(request)
 
-    open_activity = AttendanceActivity.objects.filter(
-        employee_id=employee, clock_out__isnull=True
-    ).exists()
-    on_break = AttendanceBreak.objects.filter(
-        employee_id=employee, end_datetime__isnull=True
-    ).exists()
-    presence, _created = EmployeePresence.objects.get_or_create(employee_id=employee)
+    is_working = open_activity(employee) is not None
+    on_break = open_break(employee) is not None
 
     if status == "away":
-        if open_activity or on_break:
-            presence.away_since = timezone.now()
-            presence.save()
-        else:
-            messages.error(request, _("You need to be checked in to set Away."))
+        try:
+            set_away(employee)
+        except BreakError as error:
+            messages.error(request, error.args[0])
     else:
-        presence.away_since = None
-        presence.save()
+        clear_away(employee)
         if on_break:
-            break_end(request)
-            open_activity = True
-        if status == "online" and not open_activity:
+            end_break(employee)
+            is_working = True
+        if status == "online" and not is_working:
             clock_in(request)
-        elif status == "offline" and open_activity:
+        elif status == "offline" and is_working:
             clock_out(request)
 
     response = HttpResponse()

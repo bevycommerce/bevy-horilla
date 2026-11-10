@@ -7,10 +7,10 @@ Last updated: 2026-11-10 (Asia/Dhaka)
 | Phase | Status |
 |---|---|
 | 0 Safety and preparation | Complete (2026-11-10) |
-| 1 Workspace attendance | Not started |
-| 2 Daily Updates | Not started |
-| 3 Reminder engine | Not started |
-| 4 Desktop API | Not started |
+| 1 Workspace attendance | Implemented and tested in the cloud test environment; NOT yet run in the owner's Docker (migrations pending there) |
+| 2 Daily Updates | Core rules, company feed and Today board implemented and tested; web pages (editor, dashboard, sidebar) not built yet |
+| 3 Reminder engine | Groundwork only (adapter is_day_off, notify) |
+| 4 Desktop API | Attendance endpoints done and tested; updates/reminders endpoints not yet |
 | 5 Windows Desktop Companion | Not started |
 | 6 macOS compatibility | Not started |
 | 7 Full QA and documentation | Not started |
@@ -52,9 +52,31 @@ Last updated: 2026-11-10 (Asia/Dhaka)
 
 - The command-line environment on the PC works, but it has no Docker access. Docker steps run through PowerShell scripts the owner starts (`D:\HR Portal\migration-tools`).
 
+## Session log 2026-11-10 (evening)
+
+Development and testing now happen in Claude's cloud copy of the repo (PostgreSQL 16, Python 3.12, same requirements), synced to `D:\HR-Portal\horilla-hr` through git bundles. Claude's shell on the PC has no Docker, so anything that must run in Docker is done through owner-run PowerShell scripts.
+
+Commits on `feature/smart-workspace` (newest last):
+- `c36b46d31` D7: break/Away logic moved to `attendance/services/breaks.py` (views unchanged in behaviour; 11 tests; full attendance suite 304 OK)
+- `c125e3b46` workspace_attendance core: adapter, services, audit log, idempotency, migration 0001 (33 tests)
+- `aac371b54` Workspace API `/api/workspace/v1/` (status, sign-in, sign-out, break, away, corrections; 12 tests). Bug fixed: employee row lock must use the base manager with FOR UPDATE OF self.
+- `896c3eec3` daily_updates core + migration 0001 (22 tests)
+- `3cbb8d707` company feed and Today board, privacy test (5 tests)
+- `61b0867e9` My Workspace card on both homepages + Fix My Times page (23 tests, built by Sonnet subagent, reviewed)
+- `99100ae13` reminder groundwork in adapter (not used yet)
+
+Test totals in the cloud environment: Workspace suite 106 OK; attendance + payroll 1295 OK.
+
+New migrations to apply in Docker: `workspace_attendance 0001`, `daily_updates 0001` (only new tables; no existing table changes).
+
+Known limitations so far:
+- Not yet clicked through in a real browser; layout, dark mode and mobile untested.
+- "Write Today's Update" button on the card is a placeholder until the Daily Updates pages exist.
+
 ## Exact next task (resume here)
 
-1. DONE 2026-11-10: branch `feature/smart-workspace`, checkpoint commit `e38a7e435` (45 files). `.git/info/exclude` keeps backup.sql, *.sql, *.dump, *.backup, .env, seed_candidates.py, setup_leave_test_data.py out of git. Local git identity "Wahid (local)". Nothing pushed. Note: the checkpoint contains an older copy of this progress file; this version supersedes it.
-2. DONE 2026-11-10: set `TIME_ZONE=Asia/Dhaka` in a local `.env` file (git-ignored, contains no secrets), restart the containers, and confirm `settings.TIME_ZONE` inside the web and scheduler containers.
-3. DONE 2026-11-10: baseline test suite recorded in WORKSPACE_TEST_REPORT.md.
-4. Start Phase 1 with D7 (extract break logic into `attendance/services/breaks.py`, tests before and after), then the `workspace_attendance` app.
+1. Apply the 2 new migrations in Docker on the PC (owner script), restart, run the Workspace tests inside the container, then look at the card in the browser.
+2. Phase 2 web pages: Daily Updates editor (Midday / Skip / Combined / EOD, copy unfinished items, edit with history) and the company dashboard (Today / Attendance / Work Updates / History, filters, visibility notice), top-level sidebar item. Hook the card's "Write Today's Update" button to it.
+3. Phase 3: workspace_reminders app (ReminderDelivery unique per employee/day/kind/attempt, ReminderSnooze, one APScheduler job every 2 min, pending actions, notifications).
+4. Phase 4 rest: updates, skip, reminders, snooze endpoints + docs/workspace_api.md.
+5. Phase 5: Electron desktop companion (Windows first).

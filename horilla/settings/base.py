@@ -101,6 +101,7 @@ INSTALLED_APPS = [
     "horilla_dbtemplate",
     "horilla_tour",
     "master_import",
+    "expense",
 ]
 
 # ========================================
@@ -462,11 +463,11 @@ SIDEBARS = [
     "attendance",
     "leave",
     "payroll",
+    "expense",
     "recruitment",
     "onboarding",
     "offboarding",
     "pms",
-    "project",
     "asset",
     "helpdesk",
     "report",

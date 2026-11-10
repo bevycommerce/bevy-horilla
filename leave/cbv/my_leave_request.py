@@ -491,6 +491,9 @@ class MyLeaveRequestForm(HorillaFormView):
                         if save:
                             leave_request.created_by = self.request.user.employee_get
                             leave_request.save()
+                            from leave.approvals import create_approver_rows
+
+                            create_approver_rows(self.request, leave_request)
                             messages.success(
                                 self.request,
                                 _("Leave request created successfully"),
@@ -670,6 +673,9 @@ class MyLeaveRequestSingleForm(HorillaFormView):
                 if save:
                     leave_request.created_by = employee
                     leave_request.save()
+                    from leave.approvals import create_approver_rows
+
+                    create_approver_rows(self.request, leave_request)
                     messages.success(
                         self.request, _("Leave request created successfully")
                     )

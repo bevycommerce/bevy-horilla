@@ -1,0 +1,102 @@
+{% comment %}
+Popup for leave approvers. Checks every 30 seconds for requests waiting for the
+logged in user and shows a card with Approve / Review buttons.
+{% endcomment %}
+<script>
+    (function () {
+        if (window.__leavePopupBound) return;
+        window.__leavePopupBound = true;
+        var pendingUrl = "{% url 'leave-approver-pending' %}";
+        var decideUrl = "{% url 'leave-approver-decide' %}";
+        var pageUrl = "{% url 'leave-my-approvals' %}";
+        var csrf = "{{ csrf_token }}";
+        var dismissedKey = "leaveApprovalDismissed";
+
+        function getDismissed() {
+            try { return JSON.parse(sessionStorage.getItem(dismissedKey) || "[]"); } catch (e) { return []; }
+        }
+        function addDismissed(id) {
+            try {
+                var d = getDismissed(); d.push(id);
+                sessionStorage.setItem(dismissedKey, JSON.stringify(d));
+            } catch (e) {}
+        }
+        function container() {
+            var box = document.getElementById("leave-popup-box");
+            if (!box) {
+                box = document.createElement("div");
+                box.id = "leave-popup-box";
+                box.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2000;display:flex;flex-direction:column;gap:10px;max-width:340px";
+                document.body.appendChild(box);
+            }
+            return box;
+        }
+        function line(text, style) {
+            var el = document.createElement("div");
+            el.style.cssText = style || "font-size:13px;color:#333;margin-top:2px";
+            el.textContent = text;
+            return el;
+        }
+        function button(label, bg, color) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.textContent = label;
+            b.style.cssText = "height:32px;padding:0 14px;border:0;border-radius:5px;font-size:13px;cursor:pointer;background:" + bg + ";color:" + color;
+            return b;
+        }
+        function showCard(item) {
+            if (document.getElementById("leave-card-" + item.id)) return;
+            var card = document.createElement("div");
+            card.id = "leave-card-" + item.id;
+            card.style.cssText = "background:#fff;border:1px solid #e5e5e5;border-left:4px solid #e9910d;border-radius:8px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,.18)";
+            var head = line("Leave approval needed", "font-size:13px;font-weight:600;color:#e9910d");
+            var close = document.createElement("button");
+            close.type = "button"; close.textContent = "x";
+            close.style.cssText = "float:right;border:0;background:transparent;color:#888;cursor:pointer;font-size:14px";
+            close.addEventListener("click", function () { addDismissed(item.id); card.remove(); });
+            card.appendChild(close);
+            card.appendChild(head);
+            card.appendChild(line(item.employee + " requested " + item.leave_type, "font-size:14px;font-weight:500;color:#222;margin-top:4px"));
+            card.appendChild(line(item.start + " to " + item.end + " (" + item.days + " days)"));
+            if (item.description) card.appendChild(line(item.description, "font-size:12px;color:#666;margin-top:4px"));
+            var msg = line("", "font-size:12px;margin-top:6px;color:#d93025");
+            var actions = document.createElement("div");
+            actions.style.cssText = "display:flex;gap:8px;margin-top:10px";
+            var approve = button("Approve", "#1a8f3c", "#fff");
+            var review = button("Review", "rgb(233 145 13 / 12%)", "#b86f00");
+            review.addEventListener("click", function () { window.location.href = pageUrl; });
+            approve.addEventListener("click", function () {
+                approve.disabled = true;
+                var body = new FormData();
+                body.append("row_id", item.id);
+                body.append("action", "approve");
+                fetch(decideUrl, { method: "POST", body: body, credentials: "same-origin", headers: { "X-CSRFToken": csrf } })
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        if (d.ok) { msg.style.color = "#1a8f3c"; msg.textContent = d.message; setTimeout(function () { card.remove(); }, 2500); }
+                        else { msg.textContent = d.message || "Could not approve."; approve.disabled = false; }
+                    })
+                    .catch(function () { msg.textContent = "Could not approve."; approve.disabled = false; });
+            });
+            actions.appendChild(approve);
+            actions.appendChild(review);
+            card.appendChild(actions);
+            card.appendChild(msg);
+            container().appendChild(card);
+        }
+        function poll() {
+            fetch(pendingUrl, { credentials: "same-origin" })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d) return;
+                    var dismissed = getDismissed();
+                    d.items.forEach(function (item) {
+                        if (dismissed.indexOf(item.id) === -1) showCard(item);
+                    });
+                })
+                .catch(function () {});
+        }
+        poll();
+        setInterval(poll, 30000);
+    })();
+</script>

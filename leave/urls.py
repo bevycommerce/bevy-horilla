@@ -964,3 +964,14 @@ if apps.is_installed("attendance"):
             ),
         ]
     )
+
+
+from leave import approvals  # noqa: E402
+
+urlpatterns += [
+    path("approver-search/", approvals.approver_search, name="leave-approver-search"),
+    path("approver-preview/", approvals.approver_preview, name="leave-approver-preview"),
+    path("approver-pending/", approvals.approver_pending, name="leave-approver-pending"),
+    path("approver-decide/", approvals.approver_decide, name="leave-approver-decide"),
+    path("my-approvals/", approvals.my_approvals, name="leave-my-approvals"),
+]

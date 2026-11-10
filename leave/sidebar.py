@@ -28,6 +28,10 @@ SUBMENUS = [
         "match_prefixes": ["/leave/my-leave-request-detail-view/"],
     },
     {
+        "menu": _("Leave Approvals"),
+        "redirect": reverse_lazy("leave-my-approvals"),
+    },
+    {
         "menu": _("Compensatory Leave Requests"),
         "redirect": reverse_lazy("view-compensatory-leave"),
         "accessibility": "leave.sidebar.componstory_accessibility",

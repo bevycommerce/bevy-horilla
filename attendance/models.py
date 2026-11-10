@@ -2230,3 +2230,79 @@ class AttendanceDailyHours(HorillaModel):
     def __str__(self):
         h, m = self.hours_second // 3600, (self.hours_second % 3600) // 60
         return f"{self.employee_id} {self.date}: {h}h{m:02d}m"
+
+
+class AttendanceBreak(models.Model):
+    """
+    One break taken by an employee during a working day.
+
+    Starting a break closes the running AttendanceActivity and ending it opens
+    a new one, so the break time is automatically left out of the at-work time.
+    This row only keeps the reason and the start/end time of the break.
+    """
+
+    REASON_CHOICES = [
+        ("personal_emergency", _("Personal Emergency")),
+        ("prayer", _("Prayer")),
+        ("internet_electricity", _("Internet/Electricity Issue")),
+        ("technical_issue", _("Computer Device not working/Technical Issue")),
+    ]
+
+    employee_id = models.ForeignKey(
+        Employee,
+        on_delete=models.PROTECT,
+        related_name="employee_attendance_breaks",
+        verbose_name=_("Employee"),
+    )
+    attendance_date = models.DateField(verbose_name=_("Attendance Date"))
+    reason = models.CharField(
+        max_length=30, choices=REASON_CHOICES, verbose_name=_("Break Reason")
+    )
+    note = models.CharField(
+        max_length=300, blank=True, default="", verbose_name=_("Note")
+    )
+    start_datetime = models.DateTimeField(verbose_name=_("Break Start"))
+    end_datetime = models.DateTimeField(
+        null=True, blank=True, verbose_name=_("Break End")
+    )
+
+    class Meta:
+        """
+        Meta class to add some additional options
+        """
+
+        ordering = ["-id"]
+        verbose_name = _("Attendance Break")
+        verbose_name_plural = _("Attendance Breaks")
+
+    def duration_seconds(self):
+        """
+        Length of the break in seconds, up to now if the break is still running
+        """
+        end = self.end_datetime or timezone.now()
+        return max(0, int((end - self.start_datetime).total_seconds()))
+
+    def __str__(self):
+        return f"{self.employee_id} {self.attendance_date}: {self.reason}"
+
+
+class EmployeePresence(models.Model):
+    """
+    Manual "Away" status chosen from the profile menu. The employee counts as
+    away while away_since is set and no newer check in / break end happened.
+    """
+
+    employee_id = models.OneToOneField(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="attendance_presence",
+        verbose_name=_("Employee"),
+    )
+    away_since = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = _("Employee Presence")
+        verbose_name_plural = _("Employee Presences")
+
+    def __str__(self):
+        return f"{self.employee_id} away since {self.away_since}"

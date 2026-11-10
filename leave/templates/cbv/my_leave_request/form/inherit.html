@@ -98,3 +98,21 @@
         });
         {% endif %}
 </script>
+
+{% if not form.instance.pk %}
+    <div id="lvApprMount" style="display: none">{% include "leave/approver_picker.html" %}</div>
+    <script>
+        (function () {
+            var mount = document.getElementById("lvApprMount");
+            var box = mount ? mount.querySelector("#lvAppr") : null;
+            var form = $("#createTitle").closest("form")[0];
+            if (!box || !form) return;
+            var save = form.querySelector("#buttonID");
+            if (save && save.parentElement) {
+                save.parentElement.before(box);
+            } else {
+                form.appendChild(box);
+            }
+        })();
+    </script>
+{% endif %}

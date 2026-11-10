@@ -3082,3 +3082,52 @@ if apps.is_installed("attendance"):
 
 #     thread = threading.Thread(target=update_leaves)
 #     thread.start()
+
+
+class LeaveApprover(models.Model):
+    """
+    A person picked by the employee to approve one leave request. The request
+    is approved only when every approver of it approved.
+    """
+
+    STATUS_CHOICES = [
+        ("pending", _("Pending")),
+        ("approved", _("Approved")),
+        ("rejected", _("Rejected")),
+    ]
+
+    leave_request = models.ForeignKey(
+        LeaveRequest,
+        on_delete=models.CASCADE,
+        related_name="approver_rows",
+        verbose_name=_("Leave Request"),
+    )
+    approver = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name="leave_approver_tasks",
+        verbose_name=_("Approver"),
+    )
+    added_by = models.ForeignKey(
+        Employee,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="leave_approvers_added",
+        verbose_name=_("Added By"),
+    )
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default="pending"
+    )
+    comment = models.CharField(max_length=255, blank=True, default="")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        unique_together = ("leave_request", "approver")
+        verbose_name = _("Leave Approver")
+        verbose_name_plural = _("Leave Approvers")
+
+    def __str__(self):
+        return f"{self.approver} {self.status} on request {self.leave_request_id}"

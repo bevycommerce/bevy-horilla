@@ -186,3 +186,6 @@
     <div class="" id="sidebarModalBody"></div>
     <!--sidecont-->
 </div>
+{% if request.user.is_authenticated and request.user.employee_get %}
+    {% include "leave/approver_popup.html" %}
+{% endif %}

@@ -1057,6 +1057,14 @@ def _may_act_on_leave_request(request, leave_request, perm, owner_allowed=False)
     permission, the employee's reporting manager, or a manager a
     multiple-approval condition nominated for this request.
     """
+    if (
+        isinstance(leave_request, LeaveRequest)
+        and not request.user.is_superuser
+        and LeaveApprover.objects.filter(leave_request_id=leave_request.id).exists()
+    ):
+        # approvers were picked for this request, they decide it from
+        # Leave > Leave Approvals, not the manager screens
+        return False
     if request.user.has_perm(perm):
         return True
     employee = request.user.employee_get
@@ -3109,6 +3117,10 @@ def user_leave_request(request, id):
             if save:
                 leave_request.created_by = employee
                 leave_request.save()
+
+                from leave.approvals import create_approver_rows
+
+                create_approver_rows(request, leave_request)
 
                 if multiple_approvals_check(leave_request.id):
                     conditional_requests = multiple_approvals_check(leave_request.id)

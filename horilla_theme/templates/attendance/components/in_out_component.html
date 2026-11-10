@@ -1,11 +1,63 @@
-{% load static horillafilters attendancefilters i18n %}
+{% load static horillafilters attendancefilters breakfilters i18n %}
+<style>#attendance-activity-container { display: flex; align-items: center; gap: 4px; }</style>
 
 {% if request.user.employee_get %}
-    {% with get_forecasted_at_work=request.user.employee_get.get_forecasted_at_work geo_on=request|is_geofencing_enabled %}
+    {% with get_forecasted_at_work=request.user.employee_get.get_forecasted_at_work geo_on=request|is_geofencing_enabled active_break=request.user|open_break %}
         {% if request.session.selected_company == "all" or request.user.employee_get.employee_work_info.company_id.id == request.session.selected_company|default:"-1"|add:"0" %}
             <!-- "CHEKING WETHER Check in/check out enabled" -->
             {% if request|is_check_in_enabled %}
-                {% if request.user|is_clocked_in and get_forecasted_at_work.has_attendance %}
+                {% if active_break %}
+                    <style>
+    .brk-row { display: inline-flex; align-items: center; gap: 4px; position: relative; }
+    .brk-end-btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: .9rem; font-weight: 500; white-space: nowrap; cursor: pointer; }
+    .brk-end-btn .brk-timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .brk-reason { font-size: 11px; color: #e9910d; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .brk-arrow { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 38px; padding: 0; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: 10px; cursor: pointer; }
+    .brk-menu { display: none; position: absolute; top: 44px; right: 0; width: 250px; padding: 8px; background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 1060; }
+    .brk-menu.brk-open { display: block; }
+    .brk-note { width: 100%; height: 34px; margin-bottom: 6px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; color: #333; background: #fff; }
+    .brk-item { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; color: #333; cursor: pointer; }
+    .brk-item:hover { background: rgb(233 145 13 / 10%); color: #e9910d; }
+    @media (max-width: 991px) { .brk-row { display: none; } }
+</style>
+                    <div class="brk-row">
+                        <button
+                            type="button"
+                            class="brk-end-btn"
+                            title="{{ active_break.get_reason_display }}{% if active_break.note %}: {{ active_break.note }}{% endif %}"
+                            hx-get="{% url 'break-end' %}"
+                            hx-target="#attendance-activity-container"
+                            hx-swap="innerHTML"
+                        >
+                            <i class="fa-solid fa-mug-hot"></i>
+                            <span>{% trans "End Break" %}</span>
+                            <span class="brk-timer" id="break-timer">00:00:00</span>
+                        </button>
+                    </div>
+                    <span
+                        class="at_work_seconds"
+                        data-at-work-seconds="{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}"
+                        data-run="0"
+                    ></span>
+                    <script>
+                        (function () {
+                            var secs = {{ active_break|break_elapsed_seconds|default:0 }};
+                            function fmt(s) {
+                                var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+                                return (h < 10 ? "0" + h : h) + ":" + (m < 10 ? "0" + m : m) + ":" + (r < 10 ? "0" + r : r);
+                            }
+                            if (window.__breakInterval) clearInterval(window.__breakInterval);
+                            var el = document.getElementById("break-timer");
+                            if (el) el.textContent = fmt(secs);
+                            window.__breakInterval = setInterval(function () {
+                                var e = document.getElementById("break-timer");
+                                if (!e) { clearInterval(window.__breakInterval); return; }
+                                secs += 1;
+                                e.textContent = fmt(secs);
+                            }, 1000);
+                        })();
+                    </script>
+                {% elif request.user|is_clocked_in and get_forecasted_at_work.has_attendance %}
                     {% comment %} <button class="check checkout" hx-get="{% url 'clock-out' %}"  hx-target='#attendance-activity-container' hx-swap='innerHTML'>
                         <span class="date">
                             <i class="fa-solid fa-right-from-bracket pe-2"></i><div class="time-runner"></div>
@@ -52,6 +104,60 @@
                         data-run="{{ run|default:1 }}"
                     >
                     </span>
+                    <style>
+    .brk-row { display: inline-flex; align-items: center; gap: 4px; position: relative; }
+    .brk-end-btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: .9rem; font-weight: 500; white-space: nowrap; cursor: pointer; }
+    .brk-end-btn .brk-timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .brk-reason { font-size: 11px; color: #e9910d; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .brk-arrow { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 38px; padding: 0; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: 10px; cursor: pointer; }
+    .brk-menu { display: none; position: absolute; top: 44px; right: 0; width: 250px; padding: 8px; background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 1060; }
+    .brk-menu.brk-open { display: block; }
+    .brk-note { width: 100%; height: 34px; margin-bottom: 6px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; color: #333; background: #fff; }
+    .brk-item { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; color: #333; cursor: pointer; }
+    .brk-item:hover { background: rgb(233 145 13 / 10%); color: #e9910d; }
+    @media (max-width: 991px) { .brk-row { display: none; } }
+</style>
+                    <div class="brk-row" id="brk-dropdown-wrap">
+                        <button type="button" class="brk-arrow" id="brk-arrow" title="{% trans 'Start Break' %}">
+                            <i class="fa-solid fa-chevron-down"></i>
+                        </button>
+                        <div class="brk-menu" id="brk-menu">
+                            <input type="text" id="brk-note" class="brk-note" maxlength="300" placeholder="{% trans 'Note (optional): how long, details' %}" />
+                            <button type="button" class="brk-item" data-reason="personal_emergency">{% trans "Personal Emergency" %}</button>
+                            <button type="button" class="brk-item" data-reason="prayer">{% trans "Prayer" %}</button>
+                            <button type="button" class="brk-item" data-reason="internet_electricity">{% trans "Internet/Electricity Issue" %}</button>
+                            <button type="button" class="brk-item" data-reason="technical_issue">{% trans "Computer Device not working/Technical Issue" %}</button>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            var arrow = document.getElementById("brk-arrow");
+                            var menu = document.getElementById("brk-menu");
+                            if (!arrow || !menu) return;
+                            arrow.addEventListener("click", function (ev) {
+                                ev.stopPropagation();
+                                menu.classList.toggle("brk-open");
+                            });
+                            menu.addEventListener("click", function (ev) { ev.stopPropagation(); });
+                            menu.querySelectorAll(".brk-item").forEach(function (btn) {
+                                btn.addEventListener("click", function () {
+                                    var note = document.getElementById("brk-note").value || "";
+                                    menu.classList.remove("brk-open");
+                                    htmx.ajax("GET", "{% url 'break-start' %}?reason=" + encodeURIComponent(btn.dataset.reason) + "&note=" + encodeURIComponent(note), {
+                                        target: "#attendance-activity-container",
+                                        swap: "innerHTML",
+                                    });
+                                });
+                            });
+                            if (!window.__brkCloseBound) {
+                                window.__brkCloseBound = true;
+                                document.addEventListener("click", function () {
+                                    var m = document.getElementById("brk-menu");
+                                    if (m) m.classList.remove("brk-open");
+                                });
+                            }
+                        })();
+                    </script>
                 {% else %}
                     {% comment %} <button class="check checkin" hx-get="{% url 'clock-in' %}"  hx-target='#attendance-activity-container' hx-swap='innerHTML'>
                         <span class="date">

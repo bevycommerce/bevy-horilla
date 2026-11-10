@@ -59,6 +59,10 @@ SUBMENUS = [
         "match_prefixes": ["/attendance/attendance-activity-single-view/"],
     },
     {
+        "menu": _("Break Log"),
+        "redirect": reverse_lazy("break-log-view"),
+    },
+    {
         "menu": _("Late Arrival & Early Departure"),
         "redirect": reverse_lazy("late-come-early-out-view"),
         "accessibility": "attendance.sidebar.tracking_accessibility",

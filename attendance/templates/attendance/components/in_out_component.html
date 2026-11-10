@@ -1,11 +1,51 @@
-{% load horillafilters attendancefilters i18n %}
+{% load horillafilters attendancefilters breakfilters i18n %}
 {% if request.user.employee_get %}
-    {% with get_forecasted_at_work=request.user.employee_get.get_forecasted_at_work geo_on=request|is_geofencing_enabled %}
+    {% with get_forecasted_at_work=request.user.employee_get.get_forecasted_at_work geo_on=request|is_geofencing_enabled active_break=request.user|open_break %}
         {% if request.session.selected_company == "all" or request.user.employee_get.employee_work_info.company_id.id == request.session.selected_company|default:"-1"|add:"0" %}
             <!-- "CHEKING WETHER Check in/check out enabled" -->
             {% if request|is_check_in_enabled %}
                 <!-- "CHEKING WETHER ITS IS THE CURRENT EMPLOYEES COMPANY OR ALL COMPANY, THEN ONLY SHOWS THE CHECK-IN, CHECK-OUT BUTTON" -->
-                {% if request.user|is_clocked_in and get_forecasted_at_work.has_attendance %}
+                {% if active_break %}
+                    <!-- Break is running: the work timer is paused, only the break timer runs -->
+                    <button
+                        class="oh-btn oh-btn--warning mr-2"
+                        hx-get="{% url 'break-end' %}"
+                        hx-target="#attendance-activity-container"
+                        hx-swap="innerHTML"
+                    >
+                        <ion-icon class="oh-navbar__clock-icon mr-2 text-white" name="cafe-outline"></ion-icon>
+                        <span>{% trans "End Break" %} ({{ active_break.get_reason_display }})</span>
+                        <div id="break-timer" style="display: inline-block; margin-left: 8px"></div>
+                    </button>
+                    <script>
+                        run = 0;
+                        (function () {
+                            var seconds = {{ active_break|break_elapsed_seconds }};
+                            function fmt(s) {
+                                var h = Math.floor(s / 3600);
+                                var m = Math.floor((s % 3600) / 60);
+                                var sec = Math.floor(s % 60);
+                                return (h < 10 ? "0" + h : h) + ":" + (m < 10 ? "0" + m : m) + ":" + (sec < 10 ? "0" + sec : sec);
+                            }
+                            if (window.__breakInterval) {
+                                clearInterval(window.__breakInterval);
+                            }
+                            var el = document.getElementById("break-timer");
+                            if (el) {
+                                el.textContent = fmt(seconds);
+                            }
+                            window.__breakInterval = setInterval(function () {
+                                var e = document.getElementById("break-timer");
+                                if (!e) {
+                                    clearInterval(window.__breakInterval);
+                                    return;
+                                }
+                                seconds += 1;
+                                e.textContent = fmt(seconds);
+                            }, 1000);
+                        })();
+                    </script>
+                {% elif request.user|is_clocked_in and get_forecasted_at_work.has_attendance %}
                     <button
                         class="oh-btn oh-btn--warning mr-2{% if geo_on %} geo-clock-btn{% endif %}"
                         {% if request|is_timerunner_enabled and get_forecasted_at_work.has_attendance %}
@@ -35,7 +75,55 @@
                             </div>
                         {% endif %}
                     </button>
+                    <!-- Break dropdown: click the arrow, then choose the reason to start a break -->
+                    <div style="position: relative; display: inline-block; margin-right: 8px; vertical-align: middle">
+                        <button
+                            type="button"
+                            title="{% trans 'Start a break' %}"
+                            style="height: 36px; padding: 0 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer"
+                            onclick="event.stopPropagation(); var m = document.getElementById('break-menu'); m.style.display = (m.style.display === 'block') ? 'none' : 'block';"
+                        >
+                            <ion-icon name="chevron-down-outline"></ion-icon>
+                        </button>
+                        <div
+                            id="break-menu"
+                            style="display: none; position: absolute; right: 0; top: 42px; min-width: 230px; background: #fff; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); z-index: 1000; padding: 4px 0"
+                        >
+                            <div style="padding: 6px 12px; font-size: 12px; color: #888">{% trans "Start a break" %}</div>
+                            <button type="button" class="break-reason-item" data-reason="personal_emergency" style="display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 13px; background: none; border: 0; cursor: pointer">{% trans "Personal Emergency" %}</button>
+                            <button type="button" class="break-reason-item" data-reason="prayer" style="display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 13px; background: none; border: 0; cursor: pointer">{% trans "Prayer" %}</button>
+                            <button type="button" class="break-reason-item" data-reason="internet_electricity" style="display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 13px; background: none; border: 0; cursor: pointer">{% trans "Internet/Electricity Issue" %}</button>
+                        </div>
+                    </div>
                     <script>
+                        (function () {
+                            var menu = document.getElementById("break-menu");
+                            if (menu) {
+                                menu.querySelectorAll(".break-reason-item").forEach(function (item) {
+                                    item.addEventListener("click", function () {
+                                        menu.style.display = "none";
+                                        htmx.ajax(
+                                            "GET",
+                                            "{% url 'break-start' %}?reason=" + encodeURIComponent(item.dataset.reason),
+                                            { target: "#attendance-activity-container", swap: "innerHTML" }
+                                        );
+                                    });
+                                });
+                            }
+                            // close the menu when clicking anywhere else (bound once)
+                            if (!window.__breakMenuBound) {
+                                window.__breakMenuBound = true;
+                                document.addEventListener("click", function () {
+                                    var m = document.getElementById("break-menu");
+                                    if (m) {
+                                        m.style.display = "none";
+                                    }
+                                });
+                            }
+                        })();
+                    </script>
+                    <script>
+                        at_work_seconds = {{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }};
                         run = 1
                     </script>
                 {% else %}

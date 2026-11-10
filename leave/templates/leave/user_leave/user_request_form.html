@@ -31,7 +31,10 @@
     hx-encoding="multipart/form-data"
     id="userLeaveForm"
 >
-    <div class="oh-modal__dialog-body">{{ form.as_p }}</div>
+    <div class="oh-modal__dialog-body">
+        {{ form.as_p }}
+        {% include "leave/approver_picker.html" %}
+    </div>
 </form>
 
 {% if "recruitment"|app_installed %}

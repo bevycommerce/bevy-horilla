@@ -309,7 +309,7 @@ class CandidateFilter(HorillaFilterSet):
         This method is used to include the candidates when they in the recruitment/stages
         """
         queryset = (
-            queryset.filter(name__icontains=value)
+            queryset.filter(Q(name__icontains=value) | Q(email__icontains=value))
             | queryset.filter(stage_id__stage__icontains=value)
             | queryset.filter(stage_id__recruitment_id__title__icontains=value)
         ).distinct()
@@ -322,7 +322,7 @@ class CandidateFilter(HorillaFilterSet):
         if self.data.get("search_field"):
             return queryset
         queryset = (
-            queryset.filter(name__icontains=value)
+            queryset.filter(Q(name__icontains=value) | Q(email__icontains=value))
             | queryset.filter(stage_id__stage__icontains=value)
             | queryset.filter(stage_id__recruitment_id__title__icontains=value)
         )
@@ -353,7 +353,9 @@ class CandidateFilter(HorillaFilterSet):
         search_field = self.data.get("search_field")
         search = self.data.get("search", "")
         if search_field == "candidate":
-            return queryset.filter(name__icontains=search)
+            return queryset.filter(
+                Q(name__icontains=search) | Q(email__icontains=search)
+            )
         if search_field == "stage":
             return queryset.filter(stage_id__stage__icontains=search)
         if search_field == "recruitment_managers":
@@ -738,10 +740,16 @@ class RecruitmentFilter(HorillaFilterSet):
             queryset.filter(open_positions__job_position__icontains=value)
             | queryset.filter(title__icontains=value)
             | queryset.filter(stage_set__stage__icontains=value)
-            | queryset.filter(stage_set__candidate__name__icontains=value)
+            | queryset.filter(
+                Q(stage_set__candidate__name__icontains=value)
+                | Q(stage_set__candidate__email__icontains=value)
+            )
             # A candidate who has not been moved into a stage yet (stage_id is
             # null) is missed by the stage_set__candidate lookup above.
-            | queryset.filter(candidate__name__icontains=value)
+            | queryset.filter(
+                Q(candidate__name__icontains=value)
+                | Q(candidate__email__icontains=value)
+            )
         )
         if first_name and last_name:
             queryset = queryset.filter(
@@ -767,7 +775,10 @@ class RecruitmentFilter(HorillaFilterSet):
         search_field = self.data.get("search_field")
         search = self.data.get("search", "")
         if search_field == "candidate":
-            return queryset.filter(candidate__name__icontains=search).distinct()
+            return queryset.filter(
+                Q(candidate__name__icontains=search)
+                | Q(candidate__email__icontains=search)
+            ).distinct()
         if search_field == "stage":
             return queryset.filter(stage_set__stage__icontains=search).distinct()
         if search_field == "recruitment_managers":
@@ -784,7 +795,10 @@ class RecruitmentFilter(HorillaFilterSet):
         queryset = (
             queryset.filter(title__icontains=value)
             | queryset.filter(stage_set__stage__icontains=value)
-            | queryset.filter(candidate__name__icontains=value)
+            | queryset.filter(
+                Q(candidate__name__icontains=value)
+                | Q(candidate__email__icontains=value)
+            )
         )
         return queryset.distinct()
 
@@ -979,6 +993,7 @@ class StageFilter(HorillaFilterSet):
             Q(stage__icontains=value)
             | Q(recruitment_id__title__icontains=value)
             | Q(candidate__name__icontains=value)
+            | Q(candidate__email__icontains=value)
         )
         if first_name and last_name:
             query |= Q(
@@ -996,7 +1011,10 @@ class StageFilter(HorillaFilterSet):
         """
         queryset = (
             queryset.filter(stage__icontains=value)
-            | queryset.filter(candidate__name__icontains=value)
+            | queryset.filter(
+                Q(candidate__name__icontains=value)
+                | Q(candidate__email__icontains=value)
+            )
             | queryset.filter(recruitment_id__title__icontains=value)
         )
         return queryset.distinct()

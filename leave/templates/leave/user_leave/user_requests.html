@@ -1,4 +1,5 @@
 {% load i18n %}
+{% load approverfilters %}
 {% load static %}
 {% if messages %}
 <div class="oh-wrapper">
@@ -124,6 +125,11 @@
                         {% else %}
                             {{leave_request.get_status_display}}
                         {% endif %}
+                        {% for ap in leave_request|approver_rows %}
+                            <div style="font-size: 11px; margin-top: 2px; white-space: nowrap" {% if ap.comment %}title="{{ ap.comment }}"{% endif %}>
+                                {{ ap.name }}: <span style="color: {{ ap.color }}; font-weight: 600">{{ ap.label }}</span>
+                            </div>
+                        {% endfor %}
                     </div>
                     <div class="oh-sticky-table__td" onclick="event.stopPropagation();">
 

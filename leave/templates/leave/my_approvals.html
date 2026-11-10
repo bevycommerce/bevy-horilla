@@ -1,0 +1,166 @@
+{% extends 'index.html' %}
+{% load i18n %}
+{% block content %}
+    <div class="oh-wrapper">
+        <h2 style="font-size: 18px; font-weight: 600; margin: 16px 0 4px">{% trans "Leave Approvals" %}</h2>
+        <p style="font-size: 12px; color: #888; margin-bottom: 14px">{% trans "Leave requests where you were chosen as an approver. The leave is approved when every approver approves." %}</p>
+
+        <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 8px">{% trans "Waiting for you" %}</h3>
+        {% for item in pending %}
+            <div class="lv-card" data-row="{{ item.id }}" style="background: #fff; border: 1px solid #e5e5e5; border-left: 4px solid #e9910d; border-radius: 8px; padding: 14px 16px; margin-bottom: 10px">
+                <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px">
+                    <div>
+                        <div style="font-size: 14px; font-weight: 600">{{ item.employee }}</div>
+                        <div style="font-size: 13px; color: #444">{{ item.leave_type }}, {{ item.start }} to {{ item.end }} ({{ item.days }} {% trans "days" %})</div>
+                        {% if item.description %}<div style="font-size: 12px; color: #666; margin-top: 4px">{{ item.description }}</div>{% endif %}
+                        {% if item.others %}
+                            <div style="font-size: 12px; color: #888; margin-top: 6px">
+                                {% trans "Other approvers" %}:
+                                {% for o in item.others %}{{ o.name }} ({{ o.status }}){% if not forloop.last %}, {% endif %}{% endfor %}
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap">
+                        <button type="button" class="lv-approve" style="height: 34px; padding: 0 14px; border: 0; border-radius: 5px; background: #1a8f3c; color: #fff; font-size: 13px; cursor: pointer">{% trans "Approve" %}</button>
+                        <button type="button" class="lv-forward-toggle" style="height: 34px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(233 145 13 / 12%); color: #b86f00; font-size: 13px; cursor: pointer">{% trans "Approve and add approver" %}</button>
+                        <button type="button" class="lv-reject-toggle" style="height: 34px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(217 48 37 / 10%); color: #d93025; font-size: 13px; cursor: pointer">{% trans "Reject" %}</button>
+                    </div>
+                </div>
+                <div class="lv-forward" style="display: none; margin-top: 10px; position: relative; max-width: 360px">
+                    <input type="text" class="lv-forward-input" autocomplete="off" placeholder="{% trans 'Type the name of the person who also has to approve' %}" style="width: 100%; height: 36px; padding: 0 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px" />
+                    <div class="lv-forward-list" style="display: none; position: absolute; left: 0; right: 0; top: 38px; background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 50; max-height: 200px; overflow-y: auto"></div>
+                    <div class="lv-forward-chosen" style="font-size: 12px; margin-top: 6px; color: #b86f00"></div>
+                    <button type="button" class="lv-forward-confirm" style="margin-top: 8px; height: 34px; padding: 0 14px; border: 0; border-radius: 5px; background: #1a8f3c; color: #fff; font-size: 13px; cursor: pointer">{% trans "Approve and send" %}</button>
+                </div>
+                <div class="lv-reject" style="display: none; margin-top: 10px; max-width: 360px">
+                    <input type="text" class="lv-reject-reason" maxlength="255" placeholder="{% trans 'Reason for rejecting' %}" style="width: 100%; height: 36px; padding: 0 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px" />
+                    <button type="button" class="lv-reject-confirm" style="margin-top: 8px; height: 34px; padding: 0 14px; border: 0; border-radius: 5px; background: #d93025; color: #fff; font-size: 13px; cursor: pointer">{% trans "Confirm reject" %}</button>
+                </div>
+                <div class="lv-msg" style="font-size: 12px; margin-top: 8px; color: #d93025"></div>
+            </div>
+        {% empty %}
+            <div style="padding: 18px; border: 1px dashed #ddd; border-radius: 8px; color: #888; font-size: 13px">{% trans "Nothing is waiting for your approval." %}</div>
+        {% endfor %}
+
+        <h3 style="font-size: 14px; font-weight: 600; margin: 22px 0 8px">{% trans "Decided by you" %}</h3>
+        <div style="overflow-x: auto; border: 1px solid #ebebeb; border-radius: 6px">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px">
+                <thead>
+                    <tr style="background: #f5f5f5; text-align: left">
+                        <th style="padding: 10px 12px">{% trans "Employee" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Leave Type" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Dates" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Days" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Your decision" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Request status" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in decided %}
+                        <tr style="border-top: 1px solid #ebebeb">
+                            <td style="padding: 10px 12px">{{ item.employee }}</td>
+                            <td style="padding: 10px 12px">{{ item.leave_type }}</td>
+                            <td style="padding: 10px 12px">{{ item.start }} to {{ item.end }}</td>
+                            <td style="padding: 10px 12px">{{ item.days }}</td>
+                            <td style="padding: 10px 12px">{{ item.my_status }}</td>
+                            <td style="padding: 10px 12px">{{ item.request_status }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="6" style="padding: 18px; text-align: center; color: #888">{% trans "No decisions yet." %}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var decideUrl = "{% url 'leave-approver-decide' %}";
+            var searchUrl = "{% url 'leave-approver-search' %}";
+            var csrf = "{{ csrf_token }}";
+
+            function send(card, data) {
+                var msg = card.querySelector(".lv-msg");
+                var body = new FormData();
+                body.append("row_id", card.dataset.row);
+                Object.keys(data).forEach(function (k) { body.append(k, data[k]); });
+                fetch(decideUrl, { method: "POST", body: body, credentials: "same-origin", headers: { "X-CSRFToken": csrf } })
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        if (d.ok) {
+                            msg.style.color = "#1a8f3c";
+                            msg.textContent = d.message;
+                            setTimeout(function () { window.location.reload(); }, 1200);
+                        } else {
+                            msg.style.color = "#d93025";
+                            msg.textContent = d.message || "Could not save.";
+                        }
+                    })
+                    .catch(function () { msg.style.color = "#d93025"; msg.textContent = "Could not save."; });
+            }
+
+            document.querySelectorAll(".lv-card").forEach(function (card) {
+                var forwardBox = card.querySelector(".lv-forward");
+                var rejectBox = card.querySelector(".lv-reject");
+                var chosenId = "";
+                card.querySelector(".lv-approve").addEventListener("click", function () {
+                    send(card, { action: "approve" });
+                });
+                card.querySelector(".lv-forward-toggle").addEventListener("click", function () {
+                    rejectBox.style.display = "none";
+                    forwardBox.style.display = forwardBox.style.display === "none" ? "block" : "none";
+                });
+                card.querySelector(".lv-reject-toggle").addEventListener("click", function () {
+                    forwardBox.style.display = "none";
+                    rejectBox.style.display = rejectBox.style.display === "none" ? "block" : "none";
+                });
+                card.querySelector(".lv-reject-confirm").addEventListener("click", function () {
+                    send(card, { action: "reject", reason: card.querySelector(".lv-reject-reason").value });
+                });
+                card.querySelector(".lv-forward-confirm").addEventListener("click", function () {
+                    var msg = card.querySelector(".lv-msg");
+                    if (!chosenId) { msg.style.color = "#d93025"; msg.textContent = "Pick the person first."; return; }
+                    send(card, { action: "approve", forward_to: chosenId });
+                });
+
+                var input = card.querySelector(".lv-forward-input");
+                var list = card.querySelector(".lv-forward-list");
+                var chosen = card.querySelector(".lv-forward-chosen");
+                var timer = null;
+                input.addEventListener("input", function () {
+                    clearTimeout(timer);
+                    var q = input.value.trim();
+                    chosenId = ""; chosen.textContent = "";
+                    if (!q) { list.style.display = "none"; return; }
+                    timer = setTimeout(function () {
+                        fetch(searchUrl + "?q=" + encodeURIComponent(q), { credentials: "same-origin" })
+                            .then(function (r) { return r.json(); })
+                            .then(function (d) {
+                                list.textContent = "";
+                                (d.results || []).forEach(function (item) {
+                                    var row = document.createElement("div");
+                                    row.style.cssText = "padding:8px 12px;cursor:pointer;font-size:13px";
+                                    row.textContent = item.name + (item.badge ? " (" + item.badge + ")" : "");
+                                    row.addEventListener("mousedown", function (ev) {
+                                        ev.preventDefault();
+                                        chosenId = String(item.id);
+                                        chosen.textContent = "Selected: " + item.name;
+                                        input.value = item.name;
+                                        list.style.display = "none";
+                                    });
+                                    list.appendChild(row);
+                                });
+                                if (!list.children.length) {
+                                    var none = document.createElement("div");
+                                    none.style.cssText = "padding:8px 12px;font-size:13px;color:#888";
+                                    none.textContent = "No match";
+                                    list.appendChild(none);
+                                }
+                                list.style.display = "block";
+                            });
+                    }, 250);
+                });
+                input.addEventListener("blur", function () { setTimeout(function () { list.style.display = "none"; }, 150); });
+            });
+        })();
+    </script>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% load i18n %}
+<div id="lvAppr" style="margin-top: 14px">
+    <label style="font-weight: 500; font-size: 14px">{% trans "Approvers" %}</label>
+    <div id="lvApprList" style="margin: 6px 0; font-size: 13px; color: #555">{% trans "Checking who has to approve..." %}</div>
+    <small style="color: #888; display: block">{% trans "Chosen automatically. Every person listed has to approve your leave." %}</small>
+</div>
+<script>
+    (function () {
+        var box = document.getElementById("lvApprList");
+        if (!box) return;
+        fetch("{% url 'leave-approver-preview' %}", { credentials: "same-origin" })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                box.textContent = "";
+                var list = d.approvers || [];
+                if (!list.length) {
+                    box.textContent = "No approver found. Your reporting manager approval applies as usual.";
+                    return;
+                }
+                list.forEach(function (item) {
+                    var row = document.createElement("div");
+                    row.style.cssText = "padding:4px 0";
+                    var name = document.createElement("strong");
+                    name.textContent = item.name;
+                    row.appendChild(name);
+                    row.appendChild(document.createTextNode(" (" + item.reasons.join(", ") + ")"));
+                    box.appendChild(row);
+                });
+            })
+            .catch(function () { box.textContent = ""; });
+    })();
+</script>

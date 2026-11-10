@@ -1,0 +1,203 @@
+{% load i18n %}
+<style>
+    .ws-card {
+        --ws-break: #e9910d;
+        --ws-green: #16a34a;
+        --ws-red: #dc2626;
+        --ws-text: #1f2937;
+        --ws-muted: #6b7280;
+        --ws-border: #e5e7eb;
+        --ws-bg: #ffffff;
+        margin-bottom: 20px;
+        padding: 20px 24px;
+        border: 1px solid var(--ws-border);
+        border-radius: 12px;
+        background: var(--ws-bg);
+        color: var(--ws-text);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+    .dark .ws-card {
+        --ws-text: #e5e7eb;
+        --ws-muted: #9ca3af;
+        --ws-border: #2d2d2d;
+        --ws-bg: #111111;
+    }
+    .ws-card__top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+    .ws-card__title { margin: 0; font-size: 16px; font-weight: 700; }
+    .ws-badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; background: #6b7280; }
+    .ws-badge--working { background: var(--ws-green); }
+    .ws-badge--on_break { background: var(--ws-break); }
+    .ws-badge--away { background: #3b82f6; }
+    .ws-badge--signed_out { background: #6b7280; }
+    .ws-body { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; margin-top: 16px; }
+    .ws-timer-block { min-width: 200px; }
+    .ws-timer { font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .ws-timer--break { color: var(--ws-break); }
+    .ws-timer-label { margin-top: 4px; font-size: 12px; color: var(--ws-muted); }
+    .ws-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .ws-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 16px; border: 1px solid var(--ws-border); border-radius: 5px; background: var(--ws-bg); color: var(--ws-text); font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .ws-btn:hover { filter: brightness(0.96); }
+    .ws-btn[disabled], .ws-btn.htmx-request { opacity: 0.55; cursor: wait; pointer-events: none; }
+    .ws-btn--primary { height: 52px; padding: 0 32px; border-color: var(--ws-green); background: var(--ws-green); color: #fff; font-size: 16px; }
+    .ws-btn--danger { border-color: var(--ws-red); background: var(--ws-red); color: #fff; }
+    .ws-btn--break { border-color: var(--ws-break); background: var(--ws-break); color: #fff; }
+    .ws-btn--ghost { color: var(--ws-text); }
+    .ws-menu { position: relative; display: inline-block; }
+    .ws-menu > summary { list-style: none; }
+    .ws-menu > summary::-webkit-details-marker { display: none; }
+    .ws-menu__panel { position: absolute; right: 0; top: 44px; z-index: 50; width: 260px; padding: 12px; border: 1px solid var(--ws-border); border-radius: 8px; background: var(--ws-bg); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14); }
+    .ws-menu__panel label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--ws-muted); }
+    .ws-menu__panel select, .ws-menu__panel input[type="text"] { width: 100%; height: 34px; margin-bottom: 10px; padding: 0 8px; border: 1px solid var(--ws-border); border-radius: 5px; background: var(--ws-bg); color: var(--ws-text); font-size: 13px; }
+    .ws-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 14px; font-size: 12px; color: var(--ws-muted); }
+    .ws-foot a { color: var(--ws-muted); text-decoration: underline; }
+    .ws-foot strong { color: var(--ws-text); }
+    .ws-note { margin-top: 12px; padding: 8px 12px; border-radius: 5px; font-size: 13px; }
+    .ws-note--ok { background: #ecfdf5; color: #065f46; }
+    .ws-note--error { background: #fef2f2; color: #991b1b; }
+    .dark .ws-note--ok { background: #052e1c; color: #a7f3d0; }
+    .dark .ws-note--error { background: #3b0d0d; color: #fecaca; }
+    @media (max-width: 640px) {
+        .ws-card { padding: 16px; }
+        .ws-body { flex-direction: column; align-items: stretch; }
+        .ws-actions { flex-direction: column; align-items: stretch; }
+        .ws-btn, .ws-btn--primary { width: 100%; }
+        .ws-menu { display: block; }
+        .ws-menu__panel { position: static; width: 100%; margin-top: 8px; }
+        .ws-timer { font-size: 34px; }
+    }
+</style>
+
+<section class="ws-card" id="ws-card" data-status="{{ state.status }}" data-error-code="{{ error_code }}">
+    <div class="ws-card__top">
+        <h2 class="ws-card__title">{% trans "My Workspace" %}</h2>
+        <span class="ws-badge ws-badge--{{ state.status }}" id="ws-status-badge">
+            {% if state.status == "working" %}{% trans "Working" %}
+            {% elif state.status == "on_break" %}{% trans "On Break" %}
+            {% elif state.status == "away" %}{% trans "Away" %}
+            {% elif state.status == "signed_out" %}{% trans "Signed Out" %}
+            {% else %}{% trans "Not Signed In" %}{% endif %}
+        </span>
+    </div>
+
+    <div class="ws-body">
+        {% if state.status == "not_signed_in" or state.status == "signed_out" %}
+            <div class="ws-timer-block">
+                {% if state.status == "signed_out" %}
+                    <div class="ws-timer" id="ws-timer" data-seconds="{{ state.worked_seconds }}" data-running="0">00:00:00</div>
+                    <div class="ws-timer-label">{% trans "Worked today" %}</div>
+                {% else %}
+                    <div class="ws-timer-label">{% trans "You have not signed in yet today." %}</div>
+                {% endif %}
+            </div>
+            <div class="ws-actions">
+                <form hx-post="{% url 'workspace-sign-in' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <input type="hidden" name="latitude" class="ws-lat" />
+                    <input type="hidden" name="longitude" class="ws-lng" />
+                    <button type="submit" class="ws-btn ws-btn--primary" id="ws-sign-in">
+                        {% if state.status == "signed_out" %}{% trans "Sign In Again" %}{% else %}{% trans "Start Your Day" %}{% endif %}
+                    </button>
+                </form>
+                <a href="#" class="ws-btn" data-todo="daily-updates-module">{% trans "Write Today's Update" %}</a>
+            </div>
+        {% elif state.status == "on_break" %}
+            <div class="ws-timer-block">
+                <div class="ws-timer ws-timer--break" id="ws-timer" data-seconds="{{ state.break.seconds }}" data-running="1">00:00:00</div>
+                <div class="ws-timer-label">{% trans "On break" %}: {{ state.break.reason_label }}{% if state.break.note %} ({{ state.break.note }}){% endif %}</div>
+            </div>
+            <div class="ws-actions">
+                <form hx-post="{% url 'workspace-break-end' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <button type="submit" class="ws-btn ws-btn--break">{% trans "End Break" %}</button>
+                </form>
+                <form hx-post="{% url 'workspace-sign-out' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <input type="hidden" name="latitude" class="ws-lat" />
+                    <input type="hidden" name="longitude" class="ws-lng" />
+                    <button type="submit" class="ws-btn ws-btn--danger">{% trans "Sign Out" %}</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="ws-timer-block">
+                <div class="ws-timer" id="ws-timer" data-seconds="{{ state.worked_seconds }}" data-running="{% if state.timer_running %}1{% else %}0{% endif %}">00:00:00</div>
+                <div class="ws-timer-label">{% trans "Worked today" %}{% if state.status == "away" %} ({% trans "Away" %}){% endif %}</div>
+            </div>
+            <div class="ws-actions">
+                <form hx-post="{% url 'workspace-sign-out' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <input type="hidden" name="latitude" class="ws-lat" />
+                    <input type="hidden" name="longitude" class="ws-lng" />
+                    <button type="submit" class="ws-btn ws-btn--danger">{% trans "Sign Out" %}</button>
+                </form>
+                <details class="ws-menu">
+                    <summary class="ws-btn ws-btn--break">{% trans "Take a Break" %}</summary>
+                    <form class="ws-menu__panel" hx-post="{% url 'workspace-break-start' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                        <label for="ws-break-reason">{% trans "Reason" %}</label>
+                        <select name="reason" id="ws-break-reason" required>
+                            {% for reason in break_reasons %}
+                                <option value="{{ reason.value }}">{{ reason.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <label for="ws-break-note">{% trans "Note (optional)" %}</label>
+                        <input type="text" name="note" id="ws-break-note" maxlength="300" />
+                        <button type="submit" class="ws-btn ws-btn--break" style="width: 100%">{% trans "Start Break" %}</button>
+                    </form>
+                </details>
+                <form hx-post="{% url 'workspace-away' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <input type="hidden" name="away" value="{% if state.status == 'away' %}0{% else %}1{% endif %}" />
+                    <button type="submit" class="ws-btn">{% if state.status == "away" %}{% trans "I'm Back" %}{% else %}{% trans "Away" %}{% endif %}</button>
+                </form>
+                <a href="#" class="ws-btn" data-todo="daily-updates-module">{% trans "Write Today's Update" %}</a>
+            </div>
+        {% endif %}
+    </div>
+
+    {% if message %}<div class="ws-note ws-note--ok" role="status">{{ message }}</div>{% endif %}
+    {% if error %}
+        <div class="ws-note ws-note--error" role="alert">
+            {{ error }}
+            {% if error_code == "location_restricted" %}<br />{% trans "Please allow location access in your browser, then try again." %}{% endif %}
+        </div>
+    {% endif %}
+
+    <div class="ws-foot">
+        {% if state.signed_in_at %}<span>{% trans "Signed in at" %} <strong>{{ state.signed_in_at|time:"H:i" }}</strong></span>{% endif %}
+        {% if state.status == "signed_out" and state.signed_out_at %}<span>{% trans "Signed out at" %} <strong>{{ state.signed_out_at|time:"H:i" }}</strong></span>{% endif %}
+        <a href="{% url 'workspace-fix-times' %}">{% trans "Fix My Times" %}</a>
+    </div>
+</section>
+
+<script>
+    (function () {
+        function pad(n) { return n < 10 ? "0" + n : "" + n; }
+        function fmt(s) {
+            return pad(Math.floor(s / 3600)) + ":" + pad(Math.floor((s % 3600) / 60)) + ":" + pad(Math.floor(s % 60));
+        }
+        if (window.__wsTimer) { clearInterval(window.__wsTimer); window.__wsTimer = null; }
+        var el = document.getElementById("ws-timer");
+        if (el) {
+            var base = parseInt(el.getAttribute("data-seconds"), 10) || 0;
+            var running = el.getAttribute("data-running") === "1";
+            var t0 = Date.now();
+            var paint = function () {
+                var e = document.getElementById("ws-timer");
+                if (!e) { clearInterval(window.__wsTimer); return; }
+                e.textContent = fmt(base + (running ? Math.floor((Date.now() - t0) / 1000) : 0));
+            };
+            paint();
+            if (running) { window.__wsTimer = setInterval(paint, 1000); }
+        }
+
+        // Location (only needed when the company uses location checks). Filled silently when the
+        // browser already allows it; asked for only after the server says the location is required.
+        var card = document.getElementById("ws-card");
+        function fill(pos) {
+            document.querySelectorAll("#ws-card .ws-lat").forEach(function (i) { i.value = pos.coords.latitude; });
+            document.querySelectorAll("#ws-card .ws-lng").forEach(function (i) { i.value = pos.coords.longitude; });
+        }
+        function locate() {
+            if (navigator.geolocation) { navigator.geolocation.getCurrentPosition(fill, function () {}, { maximumAge: 60000, timeout: 10000 }); }
+        }
+        if (card && card.getAttribute("data-error-code") === "location_restricted") {
+            locate();
+        } else if (navigator.permissions && navigator.geolocation) {
+            navigator.permissions.query({ name: "geolocation" }).then(function (r) { if (r.state === "granted") { locate(); } }).catch(function () {});
+        }
+    })();
+</script>

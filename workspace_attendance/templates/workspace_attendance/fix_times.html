@@ -1,0 +1,41 @@
+{% extends "index.html" %}
+{% load i18n %}
+{% block content %}
+    <style>
+        .ws-fix { max-width: 860px; }
+        .ws-fix h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+        .ws-fix__intro { margin: 0 0 12px; font-size: 14px; opacity: 0.8; }
+        .ws-fix__notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 5px; background: #fff7ed; color: #9a3412; font-size: 13px; }
+        .dark .ws-fix__notice { background: #3a1f08; color: #fed7aa; }
+        .ws-fix-row { margin-bottom: 8px; padding: 12px 14px; border: 1px solid #e5e7eb; border-radius: 8px; }
+        .dark .ws-fix-row { border-color: #2d2d2d; }
+        .ws-fix-row--missing { border-color: #e9910d; background: #fffbeb; }
+        .dark .ws-fix-row--missing { background: #2a1d05; }
+        .ws-fix-row__day { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+        .ws-fix-muted { font-size: 12px; opacity: 0.6; }
+        .ws-fix-flag { padding: 2px 10px; border-radius: 999px; background: #e9910d; color: #fff; font-size: 11px; font-weight: 600; }
+        .ws-fix-row__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+        .ws-fix-row__form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; opacity: 0.85; }
+        .ws-fix-row__form input[type="time"] { height: 34px; padding: 0 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 13px; background: transparent; color: inherit; }
+        .ws-btn { display: inline-flex; align-items: center; justify-content: center; height: 34px; padding: 0 16px; border: 1px solid #e9910d; border-radius: 5px; background: #e9910d; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .ws-btn.htmx-request, .ws-btn[disabled] { opacity: 0.55; cursor: wait; }
+        .ws-note { margin-top: 10px; padding: 8px 12px; border-radius: 5px; font-size: 13px; }
+        .ws-note--ok { background: #ecfdf5; color: #065f46; }
+        .ws-note--error { background: #fef2f2; color: #991b1b; }
+        .dark .ws-note--ok { background: #052e1c; color: #a7f3d0; }
+        .dark .ws-note--error { background: #3b0d0d; color: #fecaca; }
+        @media (max-width: 640px) { .ws-fix-row__form { flex-direction: column; align-items: stretch; } }
+    </style>
+    <div class="ws-fix">
+        <h1>{% trans "Fix My Times" %}</h1>
+        <p class="ws-fix__intro">{% blocktrans %}You can correct your own sign in and sign out times for the last {{ window_days }} days. Changes are saved immediately and kept in history.{% endblocktrans %}</p>
+        <div class="ws-fix__notice">{% trans "Please note: overtime pay still needs HR approval, even after you fix your times." %}</div>
+        {% if not has_employee %}
+            <p>{% trans "Your account has no employee profile, so there are no times to fix." %}</p>
+        {% endif %}
+        {% for row in rows %}
+            {% include "workspace_attendance/fix_times_row.html" %}
+        {% endfor %}
+        <p><a href="{% url 'home-page' %}">{% trans "Back to home" %}</a></p>
+    </div>
+{% endblock %}

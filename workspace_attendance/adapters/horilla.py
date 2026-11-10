@@ -568,6 +568,33 @@ class HorillaAdapter(BaseAdapter):
         return attendance, changes
 
     # ---------------------------------------------------------- schedule
+    def is_day_off(self, employee, day_date):
+        """True on a holiday, a company leave day or an approved leave of the employee."""
+        from base.methods import is_company_leave, is_holiday
+
+        if is_holiday(day_date, employee) or is_company_leave(day_date):
+            return True
+        try:
+            from leave.models import LeaveRequest
+        except ImportError:  # leave app not installed
+            return False
+        return LeaveRequest.objects.filter(
+            employee_id=employee, status="approved", start_date__lte=day_date, end_date__gte=day_date
+        ).exists()
+
+    def notify(self, employee, message, url=None):
+        """Send an in-portal notification (bell icon) to the employee."""
+        from notifications.signals import notify
+
+        from horilla_auth.models import HorillaUser
+
+        recipient = employee.employee_user_id
+        if recipient is None:
+            return False
+        sender = HorillaUser.objects.filter(username="Horilla Bot").first() or recipient
+        notify.send(sender, recipient=recipient, verb=message, icon="alarm-outline", redirect=url or "/")
+        return True
+
     def shift_window(self, employee, day_date):
         shift = getattr(employee.employee_work_info, "shift_id", None)
         if shift is None:

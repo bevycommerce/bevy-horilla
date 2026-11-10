@@ -68,7 +68,15 @@ class BaseAdapter:
     def mark_valid_for_payroll(self, attendance):
         raise NotImplementedError
 
-    # --- schedule (used by reminders) ---------------------------------
+    # --- schedule and notifications (used by reminders) ---------------
+    def is_day_off(self, employee, day):
+        """True on holidays, company leave days and approved leave."""
+        raise NotImplementedError
+
+    def notify(self, employee, message, url=None):
+        """Put a message in the portal notification centre."""
+        raise NotImplementedError
+
     def shift_window(self, employee, day):
         """(start_datetime, end_datetime) of the employee's shift on that day, or None when off."""
         raise NotImplementedError

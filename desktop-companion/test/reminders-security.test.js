@@ -64,3 +64,12 @@ test('no late or on-time wording in the window', () => {
 test('delete confirm text is exactly the agreed sentence', () => {
   assert.match(read('renderer', 'index.html'), /Delete this update\? It will be removed completely and cannot be brought back\./);
 });
+
+test('window can be dragged by its top bar; buttons stay clickable', () => {
+  const css = read('renderer', 'styles.css');
+  assert.match(css, /\.top \{[^}]*-webkit-app-region: drag/);
+  assert.match(css, /\.top button[^{]*\{ -webkit-app-region: no-drag/);
+  const win = read('main', 'window.js');
+  assert.doesNotMatch(win, /on\('blur'/);
+  assert.match(win, /on\('moved'/);
+});

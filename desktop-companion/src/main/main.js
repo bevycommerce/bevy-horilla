@@ -21,7 +21,7 @@ function start() {
   const { createTokenStore } = require('../core/token-store');
   const { createPendingQueue } = require('../core/pending-queue');
   const { createShownStore } = require('../core/shown-store');
-  const { createSettingsStore } = require('../core/settings-store');
+  const { createSettingsStore, NO_POSITION } = require('../core/settings-store');
   const { createWorkspace } = require('../core/workspace');
   const { createController } = require('../core/controller');
   const { createPopup } = require('./window');
@@ -87,6 +87,11 @@ function start() {
     popup = createPopup({
       iconPath: path.join(assets, 'icon.png'),
       getTrayBounds: () => (trayHandle ? trayHandle.getBounds() : null),
+      getSavedPosition: () => {
+        const { windowX, windowY } = settings.get();
+        return windowX === NO_POSITION || windowY === NO_POSITION ? null : { x: windowX, y: windowY };
+      },
+      savePosition: ({ x, y }) => settings.set({ windowX: x, windowY: y }),
       isDev: !app.isPackaged,
     });
 

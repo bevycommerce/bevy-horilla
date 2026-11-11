@@ -95,7 +95,8 @@ button { font-family: inherit; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
 /* header */
-.top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+.top { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; -webkit-app-region: drag; user-select: none; cursor: grab; }
+.top button, .top a, .top input, .top-buttons { -webkit-app-region: no-drag; }
 .app-icon { width: 36px; height: 36px; border-radius: 9px; flex: none; }
 .who { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .who-name { font-weight: 600; font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

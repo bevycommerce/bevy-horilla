@@ -7,9 +7,13 @@ const WIDTH = 380;
 const HEIGHT = 560;
 
 /** The small popup near the tray icon. */
-function createPopup({ iconPath, getTrayBounds, isDev }) {
+/**
+ * Owner rule (2026-11-11): the window can be dragged anywhere by its top bar and
+ * stays open until Close (or a tray click). It remembers where it was put.
+ * getSavedPosition() -> {x, y} | null, savePosition({x, y}).
+ */
+function createPopup({ iconPath, getTrayBounds, isDev, getSavedPosition = () => null, savePosition = () => {} }) {
   let pinned = false;
-  let lastBlurHideAt = 0;
 
   const win = new BrowserWindow({
     width: WIDTH,
@@ -42,11 +46,13 @@ function createPopup({ iconPath, getTrayBounds, isDev }) {
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  win.on('blur', () => {
-    if (!pinned && win.isVisible()) {
-      lastBlurHideAt = Date.now();
-      win.hide();
-    }
+  let saveTimer = null;
+  win.on('moved', () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const [x, y] = win.getPosition();
+      savePosition({ x, y });
+    }, 300);
   });
 
   // Closing the window only hides it. Quit is in the tray menu.
@@ -58,7 +64,22 @@ function createPopup({ iconPath, getTrayBounds, isDev }) {
     }
   });
 
+  function savedPositionStillOnScreen() {
+    const saved = getSavedPosition();
+    if (!saved) return null;
+    const area = screen.getDisplayMatching({ x: saved.x, y: saved.y, width: WIDTH, height: HEIGHT }).workArea;
+    const visibleX = Math.min(saved.x + WIDTH, area.x + area.width) - Math.max(saved.x, area.x);
+    const visibleY = Math.min(saved.y + HEIGHT, area.y + area.height) - Math.max(saved.y, area.y);
+    // at least the top bar must be reachable, otherwise fall back to the tray position
+    return visibleX >= 120 && visibleY >= 60 && saved.y >= area.y ? saved : null;
+  }
+
   function position() {
+    const saved = savedPositionStillOnScreen();
+    if (saved) {
+      win.setPosition(saved.x, saved.y, false);
+      return;
+    }
     const bounds = getTrayBounds ? getTrayBounds() : null;
     const point = bounds && (bounds.width || bounds.height)
       ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
@@ -87,12 +108,8 @@ function createPopup({ iconPath, getTrayBounds, isDev }) {
   }
 
   function toggle() {
-    if (win.isVisible()) {
-      win.hide();
-    } else if (Date.now() - lastBlurHideAt > 300) {
-      // a click on the tray icon first blurs (hides) the window; do not instantly reopen it
-      show();
-    }
+    if (win.isVisible()) win.hide();
+    else show();
   }
 
   return {

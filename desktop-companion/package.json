@@ -1,6 +1,6 @@
 {
   "name": "bevy-workspace-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "BevyLoop Desktop Companion: tray app for attendance, daily updates and reminders.",
   "main": "src/main/main.js",
   "author": "Bevy Commerce",

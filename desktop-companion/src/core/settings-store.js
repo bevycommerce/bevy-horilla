@@ -3,7 +3,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const DEFAULTS = { serverUrl: '', notificationsEnabled: true, userName: '', loginName: '' };
+// windowX / windowY: where the person last dragged the window (NO_POSITION = not moved yet)
+const NO_POSITION = -99999;
+const DEFAULTS = { serverUrl: '', notificationsEnabled: true, userName: '', loginName: '', windowX: NO_POSITION, windowY: NO_POSITION };
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : NO_POSITION);
 
 function createSettingsStore({ filePath, fsImpl = fs }) {
   let data = { ...DEFAULTS };
@@ -15,6 +18,8 @@ function createSettingsStore({ filePath, fsImpl = fs }) {
         notificationsEnabled: parsed.notificationsEnabled !== false,
         userName: typeof parsed.userName === 'string' ? parsed.userName : '',
         loginName: typeof parsed.loginName === 'string' ? parsed.loginName : '',
+        windowX: num(parsed.windowX),
+        windowY: num(parsed.windowY),
       };
     }
   } catch (e) {
@@ -33,4 +38,4 @@ function createSettingsStore({ filePath, fsImpl = fs }) {
   };
 }
 
-module.exports = { createSettingsStore };
+module.exports = { createSettingsStore, NO_POSITION };

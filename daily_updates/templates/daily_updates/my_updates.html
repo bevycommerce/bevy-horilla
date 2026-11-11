@@ -1,0 +1,15 @@
+{% extends "index.html" %}
+{% load i18n %}
+{% block content %}
+    {% include "daily_updates/_styles.html" %}
+    <div class="du-page">
+        <h1>{% trans "My Daily Updates" %}</h1>
+        <div class="du-notice">{% trans "Work updates you submit are visible to everyone in the company." %}</div>
+        {% if no_employee %}
+            <p>{% trans "Your account has no employee profile, so there is nothing to write here." %}</p>
+        {% else %}
+            {% include "daily_updates/_my_day.html" %}
+        {% endif %}
+        <p><a href="{% url 'daily-updates-company' %}">{% trans "See Company Updates" %}</a></p>
+    </div>
+{% endblock %}

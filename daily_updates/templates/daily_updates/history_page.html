@@ -1,0 +1,9 @@
+{% extends "index.html" %}
+{% load i18n %}
+{% block content %}
+    {% include "daily_updates/_styles.html" %}
+    <div class="du-page">
+        {% include "daily_updates/_history.html" %}
+        <p><a href="{% url 'daily-updates' %}">{% trans "Back to My Updates" %}</a> &middot; <a href="{% url 'daily-updates-company' %}">{% trans "Company Updates" %}</a></p>
+    </div>
+{% endblock %}

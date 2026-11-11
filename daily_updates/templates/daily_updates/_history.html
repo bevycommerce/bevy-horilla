@@ -1,0 +1,21 @@
+{% load i18n %}
+<div class="du-card du-card--soft">
+    {% if error %}
+        <div class="du-note du-note--error" role="alert">{{ error }}</div>
+    {% else %}
+        <h2>{% trans "History" %}: {{ update.type_label }}, {% trans "work date" %} {{ update.work_date_obj|date:"d M Y" }}</h2>
+        <p class="du-muted">{{ owner.name }}</p>
+        <div class="du-item">
+            <div class="du-item__head"><strong>{% trans "Current version" %}</strong>{% if update.edited_dt %}<span class="du-muted">{% trans "Edited" %} {{ update.edited_dt|date:"d M Y, H:i" }}</span>{% else %}<span class="du-muted">{% trans "Submitted" %} {{ update.submitted_dt|date:"d M Y, H:i" }}</span>{% endif %}</div>
+            {% include "daily_updates/_update_body.html" with u=update %}
+        </div>
+        {% for v in versions %}
+            <div class="du-item">
+                <div class="du-item__head"><strong>{% trans "Version" %} {{ v.revision }}</strong><span class="du-muted">{% trans "Written" %} {{ v.content_dt|date:"d M Y, H:i" }}, {% trans "replaced" %} {{ v.replaced_dt|date:"d M Y, H:i" }}</span></div>
+                {% include "daily_updates/_update_body.html" with u=v %}
+            </div>
+        {% empty %}
+            <p class="du-muted">{% trans "This update has not been edited. There are no earlier versions." %}</p>
+        {% endfor %}
+    {% endif %}
+</div>

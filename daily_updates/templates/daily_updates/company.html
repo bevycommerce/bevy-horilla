@@ -1,0 +1,11 @@
+{% extends "index.html" %}
+{% load i18n %}
+{% block content %}
+    {% include "daily_updates/_styles.html" %}
+    <div class="du-page">
+        <h1>{% trans "Company Updates" %}</h1>
+        <div class="du-notice">{% trans "Work updates you submit are visible to everyone in the company." %}</div>
+        {% include "daily_updates/_company_body.html" %}
+        <p><a href="{% url 'daily-updates' %}">{% trans "Write my update" %}</a></p>
+    </div>
+{% endblock %}

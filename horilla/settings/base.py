@@ -468,6 +468,7 @@ SIDEBARS = [
     "leave",
     "payroll",
     "expense",
+    "daily_updates",
     "recruitment",
     "onboarding",
     "offboarding",

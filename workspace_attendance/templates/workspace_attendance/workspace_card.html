@@ -97,7 +97,7 @@
                         {% if state.status == "signed_out" %}{% trans "Sign In Again" %}{% else %}{% trans "Start Your Day" %}{% endif %}
                     </button>
                 </form>
-                <a href="#" class="ws-btn" data-todo="daily-updates-module">{% trans "Write Today's Update" %}</a>
+                <a href="{% url 'daily-updates' %}" class="ws-btn">{% trans "Write Today's Update" %}</a>
             </div>
         {% elif state.status == "on_break" %}
             <div class="ws-timer-block">
@@ -125,6 +125,7 @@
                     <input type="hidden" name="longitude" class="ws-lng" />
                     <button type="submit" class="ws-btn ws-btn--danger">{% trans "Sign Out" %}</button>
                 </form>
+                {% if show_break %}
                 <details class="ws-menu">
                     <summary class="ws-btn ws-btn--break">{% trans "Take a Break" %}</summary>
                     <form class="ws-menu__panel" hx-post="{% url 'workspace-break-start' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
@@ -139,11 +140,12 @@
                         <button type="submit" class="ws-btn ws-btn--break" style="width: 100%">{% trans "Start Break" %}</button>
                     </form>
                 </details>
+                {% endif %}
                 <form hx-post="{% url 'workspace-away' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
                     <input type="hidden" name="away" value="{% if state.status == 'away' %}0{% else %}1{% endif %}" />
                     <button type="submit" class="ws-btn">{% if state.status == "away" %}{% trans "I'm Back" %}{% else %}{% trans "Away" %}{% endif %}</button>
                 </form>
-                <a href="#" class="ws-btn" data-todo="daily-updates-module">{% trans "Write Today's Update" %}</a>
+                <a href="{% url 'daily-updates' %}" class="ws-btn">{% trans "Write Today's Update" %}</a>
             </div>
         {% endif %}
     </div>

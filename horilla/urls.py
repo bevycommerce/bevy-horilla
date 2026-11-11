@@ -155,6 +155,7 @@ urlpatterns = [
     path("employee/", include("employee.urls")),
     path("expense/", include("expense.urls")),
     path("workspace/", include("workspace_attendance.urls")),
+    path("daily-updates/", include("daily_updates.urls")),
     path("master-import/", include("master_import.urls")),
     path("horilla-widget/", include("horilla_widgets.urls")),
     re_path(

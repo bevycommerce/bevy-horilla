@@ -1,0 +1,97 @@
+{% load i18n %}
+<div id="du-company">
+    <nav class="du-tabs" aria-label="{% trans 'Company updates sections' %}">
+        {% for name, label, qs in tab_links %}
+            <a class="du-tab{% if name == tab %} du-tab--active{% endif %}" href="{% url 'daily-updates-company' %}?{{ qs }}"
+               hx-get="{% url 'daily-updates-company-tab' %}?{{ qs }}" hx-target="#du-company" hx-swap="outerHTML">{{ label }}</a>
+        {% endfor %}
+    </nav>
+
+    <form class="du-filters" method="get" action="{% url 'daily-updates-company' %}"
+          hx-get="{% url 'daily-updates-company-tab' %}" hx-target="#du-company" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="tab" value="{{ tab }}" />
+        <label>{% trans "Employee name" %}<input class="du-input" type="text" name="q" value="{{ f.q }}" maxlength="100" /></label>
+        <label>{% trans "Department" %}
+            <select class="du-select" name="dept">
+                <option value="">{% trans "All departments" %}</option>
+                {% for d in departments %}<option value="{{ d.id }}"{% if d.id == f.department_id %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+            </select>
+        </label>
+        {% if tab == "today" or tab == "attendance" %}
+            <label>{% trans "Date" %}<input class="du-input" type="date" name="date" value="{{ f.day|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" /></label>
+        {% else %}
+            <label>{% trans "From" %}<input class="du-input" type="date" name="from" value="{{ f.start|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" /></label>
+            <label>{% trans "To" %}<input class="du-input" type="date" name="to" value="{{ f.end|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" /></label>
+        {% endif %}
+        <label>{% trans "Update type" %}
+            <select class="du-select" name="type">
+                <option value="">{% trans "All" %}</option>
+                {% for value, label in type_choices %}<option value="{{ value }}"{% if value == f.type %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+        </label>
+        <button type="submit" class="du-btn du-btn--primary">{% trans "Apply filters" %}</button>
+    </form>
+
+    {% if error %}<div class="du-note du-note--error" role="alert">{{ error }}</div>{% endif %}
+
+    {% if tab == "today" or tab == "attendance" %}
+        <p class="du-muted">{% trans "Showing" %} <strong>{{ f.day|date:"l, d M Y" }}</strong>.{% if f.type %} {% trans "Only people who sent this type of update are listed. The tiles count everyone matching the name and department." %}{% endif %}</p>
+        {% if tab == "today" and totals %}
+            <div class="du-tiles">
+                <div class="du-tile"><strong>{{ totals.working }}</strong><span>{% trans "Working" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.on_break }}</strong><span>{% trans "On break" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.signed_out }}</strong><span>{% trans "Signed out" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.not_signed_in }}</strong><span>{% trans "Not signed in" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.late }}</strong><span>{% trans "Late" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.missing }}</strong><span>{% trans "Missing actions" %}</span></div>
+                <div class="du-tile"><strong>{{ totals.updates }}</strong><span>{% trans "Updates today" %}</span></div>
+            </div>
+        {% endif %}
+        {% for row in rows %}
+            <div class="du-row">
+                <div class="du-row__top">
+                    {% include "daily_updates/_person.html" with person=row.employee %}
+                    <span class="du-badge du-badge--{{ row.status }}">
+                        {% if row.status == "working" %}{% trans "Working" %}{% elif row.status == "on_break" %}{% trans "On break" %}{% elif row.status == "signed_out" %}{% trans "Signed out" %}{% else %}{% trans "Not signed in" %}{% endif %}
+                    </span>
+                    <span class="du-times">{% trans "In" %} <strong>{{ row.sign_in|default:"-" }}</strong> &middot; {% trans "Out" %} <strong>{{ row.sign_out|default:"-" }}</strong>{% if tab == "attendance" and row.worked %} &middot; {% trans "Worked" %} <strong>{{ row.worked }}</strong>{% endif %}</span>
+                    <span>
+                        {% if row.late %}<span class="du-badge du-badge--late">{% trans "Late" %}</span>{% endif %}
+                        {% if "sign_in" in row.missing %}<span class="du-badge du-badge--missing">{% trans "No sign in" %}</span>{% endif %}
+                        {% if "sign_out" in row.missing %}<span class="du-badge du-badge--missing">{% trans "No sign out" %}</span>{% endif %}
+                    </span>
+                </div>
+                {% if tab == "today" %}
+                    <div class="du-updates">
+                        {% if row.midday_skip == "later" %}<div class="du-muted">{% trans "Midday skipped (will write later)" %}</div>{% elif row.midday_skip == "combine" %}<div class="du-muted">{% trans "Midday skipped (combined with End of Day)" %}</div>{% endif %}
+                        {% for u in row.update_list %}
+                            <details>
+                                <summary><strong>{{ u.type_label }}</strong> &middot; {% trans "Submitted" %} {{ u.submitted_dt|date:"H:i" }} {% include "daily_updates/_badges.html" %}</summary>
+                                {% include "daily_updates/_update_body.html" %}
+                            </details>
+                        {% empty %}
+                            <div class="du-muted">{% trans "No updates yet." %}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        {% empty %}
+            <p class="du-muted">{% trans "No employees match these filters." %}</p>
+        {% endfor %}
+    {% else %}
+        <p class="du-muted">{% trans "Showing work dates" %} <strong>{{ f.start|date:"d M Y" }}</strong> {% trans "to" %} <strong>{{ f.end|date:"d M Y" }}</strong>.</p>
+        {% if limit_reached %}<div class="du-note du-note--error">{% trans "Only the newest 300 updates are shown. Please narrow the dates or filters." %}</div>{% endif %}
+        {% if tab == "history" %}
+            {% regroup feed by update.work_date_obj as groups %}
+            {% for group in groups %}
+                <div class="du-daygroup">{{ group.grouper|date:"l, d M Y" }}</div>
+                {% for item in group.list %}{% include "daily_updates/_feed_card.html" %}{% endfor %}
+            {% empty %}
+                <p class="du-muted">{% trans "No updates found for these filters." %}</p>
+            {% endfor %}
+        {% else %}
+            {% for item in feed %}{% include "daily_updates/_feed_card.html" %}
+            {% empty %}<p class="du-muted">{% trans "No updates found for these filters." %}</p>{% endfor %}
+        {% endif %}
+    {% endif %}
+</div>

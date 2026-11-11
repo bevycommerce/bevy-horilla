@@ -1,0 +1,8 @@
+{% comment %}Safe employee card only: photo, name, department, job position.{% endcomment %}
+<div class="du-person">
+    {% if person.photo %}<img class="du-photo" src="{{ person.photo }}" alt="" loading="lazy" />{% else %}<span class="du-photo du-photo--blank" aria-hidden="true">{{ person.name|slice:":1" }}</span>{% endif %}
+    <div>
+        <strong>{{ person.name }}</strong>
+        <div class="du-muted">{{ person.department }}{% if person.department and person.job_position %} &middot; {% endif %}{{ person.job_position }}</div>
+    </div>
+</div>

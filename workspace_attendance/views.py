@@ -61,6 +61,7 @@ def _render_card(request, employee, message="", error="", error_code=""):
         "state": services.get_state(employee),
         "break_reasons": get_adapter().break_reasons(),
         "window_days": conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS"),
+        "show_break": conf.get("WORKSPACE_SHOW_BREAK"),
         "message": message,
         "error": error,
         "error_code": error_code,

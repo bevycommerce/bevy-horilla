@@ -1,0 +1,10 @@
+{% load i18n %}
+<form hx-post="{% url 'daily-updates-edit' u.pk %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />
+    <div class="du-field"><label for="du-e{{ u.pk }}-summary">{% trans "Note" %}</label><textarea class="du-textarea" id="du-e{{ u.pk }}-summary" name="summary" maxlength="5000" required>{% if u.draft %}{{ u.draft.summary }}{% else %}{{ u.summary }}{% endif %}</textarea></div>
+    <div class="du-field"><label for="du-e{{ u.pk }}-completed">{% trans "Completed" %}</label><textarea class="du-textarea" id="du-e{{ u.pk }}-completed" name="completed" maxlength="3000">{% if u.draft %}{{ u.draft.completed }}{% else %}{{ u.completed }}{% endif %}</textarea></div>
+    <div class="du-field"><label for="du-e{{ u.pk }}-ongoing">{% trans "Ongoing" %}</label><textarea class="du-textarea" id="du-e{{ u.pk }}-ongoing" name="ongoing" maxlength="3000">{% if u.draft %}{{ u.draft.ongoing }}{% else %}{{ u.ongoing }}{% endif %}</textarea></div>
+    <div class="du-field"><label for="du-e{{ u.pk }}-blockers">{% trans "Blockers" %}</label><textarea class="du-textarea" id="du-e{{ u.pk }}-blockers" name="blockers" maxlength="3000">{% if u.draft %}{{ u.draft.blockers }}{% else %}{{ u.blockers }}{% endif %}</textarea></div>
+    <p class="du-muted">{% trans "Earlier versions are kept in History." %}</p>
+    <button type="submit" class="du-btn du-btn--primary">{% trans "Save changes" %}</button>
+</form>

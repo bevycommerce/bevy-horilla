@@ -65,7 +65,7 @@ class CardRenderTests(CardTestBase):
         states = {
             "not_signed_in": ("Start Your Day", "Not Signed In"),
             "signed_out": ("Sign In Again", "Signed Out"),
-            "working": ("Sign Out", "Take a Break"),
+            "working": ("Sign Out", "Away"),
             "away": ("Back", "Away"),
             "on_break": ("End Break", "Prayer"),
         }
@@ -79,6 +79,17 @@ class CardRenderTests(CardTestBase):
             for label in labels:
                 self.assertIn(label, html, f"{status}: {label}")
             self.assertIn("Write Today", html) if status != "on_break" else None
+            if status == "working":
+                self.assertNotIn("Take a Break", html)  # hidden by default (WORKSPACE_SHOW_BREAK)
+
+    def test_break_button_comes_back_with_setting(self):
+        state = {"status": "working", "worked_seconds": 1, "timer_running": True,
+                 "signed_in_at": timezone.localtime(), "signed_out_at": None, "break": None}
+        html = render_to_string(
+            "workspace_attendance/workspace_card.html",
+            {"state": state, "break_reasons": [{"value": "prayer", "label": "Prayer"}], "window_days": 30, "show_break": True},
+        )
+        self.assertIn("Take a Break", html)
 
 
 class CardActionTests(CardTestBase):

@@ -16,6 +16,10 @@ DEFAULTS = {
     "WORKSPACE_AUTO_VALIDATE": True,
     # How long a stored idempotency key is kept.
     "WORKSPACE_IDEMPOTENCY_DAYS": 7,
+    # Show the "Take a Break" button on the Workspace card and desktop app.
+    # Off by owner decision (2026-11-11). The header break feature is not affected,
+    # and a break started there is still shown on the card with "End Break".
+    "WORKSPACE_SHOW_BREAK": False,
 }
 
 

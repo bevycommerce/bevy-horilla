@@ -1,0 +1,106 @@
+{% load i18n %}
+<div id="du-day">
+    <form class="du-daybar" method="get" action="{% url 'daily-updates' %}">
+        <div>
+            <div class="du-muted">{% trans "Work date" %}</div>
+            <div class="du-workdate">{{ work_date|date:"l, d M Y" }}{% if is_today %} ({% trans "today" %}){% endif %}</div>
+        </div>
+        <label>{% trans "Choose another day" %}
+            <input class="du-input" type="date" name="date" value="{{ work_date|date:'Y-m-d' }}" min="{{ oldest|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" onchange="this.form.submit()" />
+        </label>
+        <button type="submit" class="du-btn">{% trans "Show this day" %}</button>
+        {% if not is_today %}<a class="du-btn" href="{% url 'daily-updates' %}">{% trans "Back to today" %}</a>{% endif %}
+    </form>
+    {% if not is_today %}
+        <p class="du-muted">{% trans "You are writing for an earlier day. The update will be marked Backdated and keeps today's date as the time it was sent." %}</p>
+    {% endif %}
+
+    {% if message %}<div class="du-note du-note--ok" role="status">{{ message }}</div>{% endif %}
+    {% if error %}<div class="du-note du-note--error" role="alert">{{ error }}</div>{% endif %}
+
+    <p class="du-status-line">
+        {% trans "Midday" %}:
+        {% if day.combined %}{% trans "included in your combined note" %}
+        {% elif day.midday %}{% trans "sent" %}
+        {% elif day.skip %}{% if day.skip.choice == "later" %}{% trans "skipped, to write later" %}{% else %}{% trans "skipped, to combine with End of Day" %}{% endif %}
+        {% else %}{% trans "not sent yet" %}{% endif %}
+        &middot; {% trans "End of Day" %}:
+        {% if day.combined %}{% trans "included in your combined note" %}{% elif day.eod %}{% trans "sent" %}{% else %}{% trans "not sent yet" %}{% endif %}
+    </p>
+
+    {# ---------------- Midday #}
+    {% if day.midday_pending_later %}
+        <section class="du-card">
+            <h2>{% trans "Your Midday note (it will be marked late)" %}</h2>
+            {% include "daily_updates/_new_form.html" with form_type="midday" values=drafts.midday prompt=_("What did you work on?") button=_("Submit Midday note") %}
+        </section>
+    {% elif day.can_submit_midday %}
+        {% if day.recommend_combined and not regular %}
+            <section class="du-card du-card--soft">
+                <p class="du-text">{% trans "You chose to combine Midday with End of Day. Write one note for the whole day below." %}</p>
+            </section>
+        {% else %}
+            <section class="du-card">
+                <h2>{% trans "Midday update" %}</h2>
+                {% include "daily_updates/_new_form.html" with form_type="midday" values=drafts.midday prompt=_("What are you working on?") button=_("Submit") %}
+                {% if day.can_skip_midday %}
+                    <details class="du-skipbox">
+                        <summary>{% trans "Skip Midday" %}</summary>
+                        <p class="du-muted">{% trans "Skipping never blocks Sign Out. End-of-Day reminders will continue as usual." %}</p>
+                        <div class="du-actions">
+                            <form hx-post="{% url 'daily-updates-skip' %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button">
+                                <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />
+                                <input type="hidden" name="choice" value="later" />
+                                <button type="submit" class="du-btn">{% trans "Write Midday note later" %}</button>
+                            </form>
+                            <form hx-post="{% url 'daily-updates-skip' %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button">
+                                <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />
+                                <input type="hidden" name="choice" value="combine" />
+                                <button type="submit" class="du-btn">{% trans "Combine with End of Day" %}</button>
+                            </form>
+                        </div>
+                    </details>
+                {% endif %}
+            </section>
+        {% endif %}
+    {% endif %}
+
+    {# ---------------- End of day #}
+    {% if day.recommend_combined and not regular %}
+        <section class="du-card">
+            <h2>{% trans "Write your whole day in one note" %}</h2>
+            {% include "daily_updates/_new_form.html" with form_type="combined" values=drafts.combined prompt=_("What did you work on today?") button=_("Submit combined note") %}
+            <p class="du-muted"><button type="button" class="du-link" hx-get="{% url 'daily-updates' %}?part=day&date={{ work_date|date:'Y-m-d' }}&regular=1" hx-target="#du-day" hx-swap="outerHTML">{% trans "Use the regular End-of-Day form instead" %}</button></p>
+        </section>
+    {% elif day.can_submit_eod %}
+        <section class="du-card">
+            <h2>{% trans "End of Day update" %}</h2>
+            {% include "daily_updates/_new_form.html" with form_type="eod" values=drafts.eod prompt=_("What did you do today?") button=_("Submit End of Day") carry=day.carry_forward %}
+        </section>
+    {% endif %}
+
+    {# ---------------- Recent #}
+    <section class="du-card">
+        <h2>{% blocktrans %}My recent updates (last 14 days){% endblocktrans %}</h2>
+        {% for u in recent %}
+            <article class="du-item" id="du-update-{{ u.pk }}">
+                <div class="du-item__head">
+                    <strong>{{ u.get_update_type_display }}</strong>
+                    <span>{% trans "Work date" %}: {{ u.work_date|date:"d M Y" }}</span>
+                    <span class="du-muted">{% trans "Submitted" %} {{ u.submitted_at|date:"d M Y, H:i" }}</span>
+                    {% include "daily_updates/_badges.html" %}
+                </div>
+                {% include "daily_updates/_update_body.html" %}
+                {% if u.last_edited_at %}<div class="du-muted">{% trans "Last edited" %} {{ u.last_edited_at|date:"d M Y, H:i" }}</div>{% endif %}
+                <details class="du-details"{% if u.draft %} open{% endif %}>
+                    <summary>{% trans "Edit" %}</summary>
+                    {% include "daily_updates/_edit_form.html" %}
+                </details>
+                <button type="button" class="du-link" hx-get="{% url 'daily-updates-history' u.pk %}" hx-target="#du-history-{{ u.pk }}" hx-swap="innerHTML">{% trans "History" %}</button>
+                <div id="du-history-{{ u.pk }}"></div>
+            </article>
+        {% empty %}
+            <p class="du-muted">{% trans "You have not sent any updates in the last 14 days." %}</p>
+        {% endfor %}
+    </section>
+</div>

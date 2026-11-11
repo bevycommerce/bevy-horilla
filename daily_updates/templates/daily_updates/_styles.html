@@ -1,0 +1,68 @@
+<style>
+    .du-page { max-width: 980px; --du-border: #e5e7eb; --du-bg: #ffffff; --du-soft: #f9fafb; --du-text: #1f2937; --du-muted: #6b7280; --du-accent: #e9910d; }
+    .dark .du-page { --du-border: #2d2d2d; --du-bg: #111111; --du-soft: #1a1a1a; --du-text: #e5e7eb; --du-muted: #9ca3af; }
+    .du-page h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+    .du-page h2 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
+    .du-muted { font-size: 12px; color: var(--du-muted); }
+    .du-notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 5px; background: #eff6ff; color: #1e40af; font-size: 13px; }
+    .dark .du-notice { background: #0f1d36; color: #bfdbfe; }
+    .du-card { margin-bottom: 16px; padding: 16px 18px; border: 1px solid var(--du-border); border-radius: 10px; background: var(--du-bg); color: var(--du-text); }
+    .du-card--soft { background: var(--du-soft); }
+    .du-daybar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+    .du-daybar label, .du-field label, .du-filters label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--du-muted); }
+    .du-workdate { font-size: 15px; font-weight: 700; color: var(--du-text); }
+    .du-input, .du-textarea, .du-select { padding: 6px 8px; border: 1px solid var(--du-border); border-radius: 5px; background: var(--du-bg); color: var(--du-text); font-size: 13px; font-family: inherit; }
+    .du-input, .du-select { height: 34px; }
+    .du-textarea { width: 100%; min-height: 84px; resize: vertical; box-sizing: border-box; }
+    .du-field { margin-bottom: 10px; }
+    .du-field label { color: var(--du-text); font-size: 13px; font-weight: 600; }
+    .du-btn { display: inline-flex; align-items: center; justify-content: center; height: 34px; padding: 0 16px; border: 1px solid var(--du-border); border-radius: 5px; background: var(--du-bg); color: var(--du-text); font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .du-btn--primary { border-color: var(--du-accent); background: var(--du-accent); color: #fff; }
+    .du-btn.htmx-request, .du-btn[disabled] { opacity: 0.55; cursor: wait; }
+    .du-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+    .du-details > summary { cursor: pointer; font-size: 13px; color: var(--du-muted); margin: 6px 0; }
+    .du-skipbox { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--du-border); border-radius: 8px; }
+    .du-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 5px; font-size: 13px; }
+    .du-note--ok { background: #ecfdf5; color: #065f46; }
+    .du-note--error { background: #fef2f2; color: #991b1b; }
+    .dark .du-note--ok { background: #052e1c; color: #a7f3d0; }
+    .dark .du-note--error { background: #3b0d0d; color: #fecaca; }
+    .du-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #fff; background: #6b7280; margin-right: 4px; }
+    .du-badge--late { background: #dc2626; }
+    .du-badge--backdated { background: #7c3aed; }
+    .du-badge--edited { background: #2563eb; }
+    .du-badge--working { background: #16a34a; }
+    .du-badge--on_break { background: #e9910d; }
+    .du-badge--signed_out { background: #6b7280; }
+    .du-badge--not_signed_in { background: #9ca3af; }
+    .du-badge--missing { background: #b45309; }
+    .du-status-line { margin: 0 0 12px; font-size: 13px; color: var(--du-muted); }
+    .du-item { padding: 12px 0; border-top: 1px solid var(--du-border); }
+    .du-item:first-child { border-top: 0; }
+    .du-item__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+    .du-text { white-space: pre-wrap; font-size: 14px; margin: 4px 0; word-break: break-word; }
+    .du-label { font-size: 12px; font-weight: 700; color: var(--du-muted); margin-top: 6px; }
+    .du-link { background: none; border: 0; padding: 0; color: #2563eb; font-size: 12px; text-decoration: underline; cursor: pointer; }
+    .dark .du-link { color: #93c5fd; }
+    .du-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .du-tab { padding: 7px 16px; border: 1px solid var(--du-border); border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--du-text); text-decoration: none; background: var(--du-bg); }
+    .du-tab--active { background: var(--du-accent); border-color: var(--du-accent); color: #fff; }
+    .du-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+    .du-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .du-tile { padding: 10px 12px; border: 1px solid var(--du-border); border-radius: 8px; background: var(--du-bg); }
+    .du-tile strong { display: block; font-size: 22px; }
+    .du-tile span { font-size: 12px; color: var(--du-muted); }
+    .du-row { padding: 12px 14px; margin-bottom: 8px; border: 1px solid var(--du-border); border-radius: 8px; background: var(--du-bg); }
+    .du-row__top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+    .du-person { display: flex; align-items: center; gap: 10px; min-width: 200px; flex: 1; }
+    .du-photo { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #e5e7eb; flex: none; }
+    .du-photo--blank { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: #4b5563; }
+    .du-times { font-size: 13px; font-variant-numeric: tabular-nums; }
+    .du-updates { margin-top: 8px; }
+    .du-updates details { margin-top: 6px; padding: 6px 10px; border: 1px solid var(--du-border); border-radius: 6px; }
+    .du-updates summary { cursor: pointer; font-size: 13px; }
+    .du-dates { display: flex; flex-wrap: wrap; gap: 18px; margin: 4px 0 6px; font-size: 13px; }
+    .du-dates span { color: var(--du-muted); font-size: 11px; text-transform: uppercase; display: block; }
+    .du-daygroup { margin: 14px 0 6px; font-size: 14px; font-weight: 700; }
+    @media (max-width: 640px) { .du-daybar, .du-filters { flex-direction: column; align-items: stretch; } .du-btn { width: 100%; } }
+</style>

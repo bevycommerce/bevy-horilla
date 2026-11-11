@@ -53,5 +53,7 @@ urlpatterns = [
     # Screen-shaped aggregates for the mobile client; see api_views/mobile.
     path("mobile/", include("horilla_api.api_urls.mobile.urls")),
     # Smart Employee Workspace API (desktop companion)
+    path("workspace/v1/updates/", include("daily_updates.api.urls")),
+    path("workspace/v1/reminders/", include("workspace_reminders.api_urls")),
     path("workspace/v1/", include("workspace_attendance.api.urls")),
 ]

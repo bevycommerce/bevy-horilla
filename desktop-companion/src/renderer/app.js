@@ -122,7 +122,7 @@
 
   function renderHeader() {
     const logged = snap && snap.loggedIn;
-    $('who-name').textContent = logged ? snap.employeeName || 'Bevy Workspace' : 'Bevy Workspace';
+    $('who-name').textContent = logged ? snap.employeeName || 'BevyLoop' : 'BevyLoop';
     const badge = $('status-badge');
     const st = logged && snap.status ? snap.status.status : 'off';
     badge.className = 'badge badge-' + st;
@@ -266,7 +266,7 @@
 
   function renderLogin() {
     const first = !snap.serverUrl;
-    $('login-title').textContent = first ? 'Welcome to Bevy Workspace' : 'Log in to Bevy Workspace';
+    $('login-title').textContent = first ? 'Welcome to BevyLoop' : 'Log in to BevyLoop';
     const server = $('in-server');
     if (!server.dataset.touched && snap.serverUrl) server.value = snap.serverUrl;
     if (!$('in-user').dataset.touched && snap.loginName) $('in-user').value = snap.loginName;

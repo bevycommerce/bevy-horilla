@@ -1,7 +1,7 @@
 {
   "name": "bevy-workspace-desktop",
   "version": "0.1.0",
-  "description": "Bevy Workspace Desktop Companion: tray app for attendance, daily updates and reminders.",
+  "description": "BevyLoop Desktop Companion: tray app for attendance, daily updates and reminders.",
   "main": "src/main/main.js",
   "author": "Bevy Commerce",
   "license": "UNLICENSED",
@@ -10,16 +10,16 @@
     "start": "electron .",
     "test": "node --test \"test/*.test.js\"",
     "build:win": "electron-builder --win nsis zip --x64 --publish never",
-    "build:mac": "electron-builder --mac dmg --publish never",
-    "make-icons": "node scripts/make-icons.js"
+    "build:mac": "electron-builder --mac dmg --publish never"
   },
   "devDependencies": {
     "electron": "^45.0.0",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "resedit": "^2.0.3"
   },
   "build": {
     "appId": "com.bevycommerce.workspace",
-    "productName": "Bevy Workspace",
+    "productName": "BevyLoop",
     "directories": {
       "output": "dist"
     },
@@ -43,7 +43,8 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -51,12 +52,15 @@
       "allowToChangeInstallationDirectory": true,
       "createStartMenuShortcut": true,
       "createDesktopShortcut": false,
-      "shortcutName": "Bevy Workspace"
+      "shortcutName": "BevyLoop",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico"
     },
     "mac": {
       "target": "dmg",
       "category": "public.app-category.productivity"
     },
-    "publish": null
+    "publish": null,
+    "afterPack": "scripts/after-pack.js"
   }
 }

@@ -21,7 +21,7 @@ function createPopup({ iconPath, getTrayBounds, isDev }) {
     minimizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    title: 'Bevy Workspace',
+    title: 'BevyLoop',
     icon: iconPath,
     backgroundColor: '#ffffff',
     webPreferences: {

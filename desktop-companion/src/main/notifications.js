@@ -4,7 +4,7 @@ const { Notification } = require('electron');
 const { notificationButtons } = require('../core/reminders');
 const { clockFromIso } = require('../core/time');
 
-const TITLE = 'Bevy Workspace';
+const TITLE = 'BevyLoop';
 const DUPLICATE_WINDOW_MS = 1500;
 
 /**
@@ -56,7 +56,7 @@ function createNotifier({ controller, showPopup, iconPath, platform = process.pl
       }
     } catch (e) {
       log('notification action failed', e && e.message);
-      info('Something went wrong. Please open Bevy Workspace and try again.');
+      info('Something went wrong. Please open BevyLoop and try again.');
     }
   }
 

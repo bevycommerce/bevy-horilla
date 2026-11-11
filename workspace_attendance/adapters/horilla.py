@@ -203,6 +203,12 @@ class HorillaAdapter(BaseAdapter):
 
         worked_seconds = 0
         signed_in_at = None
+        session_started_at = None
+        if running_activity is not None:
+            session_started_at = timezone.localtime(
+                running_activity.in_datetime
+                or _aware(running_activity.clock_in_date, running_activity.clock_in)
+            )
         for activity in AttendanceActivity.objects.filter(
             employee_id=employee, attendance_date=work_date
         ).order_by("clock_in_date", "clock_in", "id"):
@@ -242,6 +248,8 @@ class HorillaAdapter(BaseAdapter):
             "work_date": work_date,
             "attendance_id": attendance.pk if attendance else None,
             "signed_in_at": signed_in_at,
+            # start of the current sign-in (differs from signed_in_at after "Sign In Again")
+            "session_started_at": session_started_at,
             "signed_out_at": signed_out_at,
             "worked_seconds": worked_seconds,
             "timer_running": status in ("working", "away"),

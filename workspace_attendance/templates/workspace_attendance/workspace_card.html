@@ -159,7 +159,7 @@
     {% endif %}
 
     <div class="ws-foot">
-        {% if state.signed_in_at %}<span>{% trans "Signed in at" %} <strong>{{ state.signed_in_at|time:"H:i" }}</strong></span>{% endif %}
+        {% if state.session_started_at %}<span>{% trans "Signed in at" %} <strong>{{ state.session_started_at|time:"H:i" }}</strong></span>{% elif state.signed_in_at %}<span>{% trans "Signed in at" %} <strong>{{ state.signed_in_at|time:"H:i" }}</strong></span>{% endif %}
         {% if state.status == "signed_out" and state.signed_out_at %}<span>{% trans "Signed out at" %} <strong>{{ state.signed_out_at|time:"H:i" }}</strong></span>{% endif %}
         <a href="{% url 'workspace-fix-times' %}">{% trans "Fix My Times" %}</a>
     </div>

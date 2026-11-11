@@ -98,7 +98,7 @@ def serialize_state(state):
 
     data = dict(state)
     data["work_date"] = iso(state.get("work_date"))
-    for key in ("signed_in_at", "signed_out_at", "away_since"):
+    for key in ("signed_in_at", "session_started_at", "signed_out_at", "away_since"):
         data[key] = iso(state.get(key))
     if state.get("break"):
         brk = dict(state["break"])

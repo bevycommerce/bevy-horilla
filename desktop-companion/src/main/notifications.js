@@ -35,7 +35,7 @@ function createNotifier({ controller, showPopup, iconPath, platform = process.pl
         if (result.ok) {
           const state = result.data && result.data.state;
           const changed = result.data && result.data.changed !== false;
-          const time = clockFromIso(state && (action === 'sign_in' ? state.signed_in_at : state.signed_out_at));
+          const time = clockFromIso(state && (action === 'sign_in' ? (state.session_started_at || state.signed_in_at) : state.signed_out_at));
           if (changed && time) info(action === 'sign_in' ? `Signed in at ${time}` : `Signed out at ${time}`);
           else info(result.message);
           await controller.perform('ack', { id: reminder.id });

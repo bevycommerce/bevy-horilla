@@ -4,7 +4,7 @@ Fix My Times, audit history and payroll compatibility.
 """
 
 import threading
-from datetime import time, timedelta
+from datetime import datetime, time, timedelta
 from unittest import mock
 
 from django.db import connection
@@ -46,6 +46,23 @@ class SignInOutTests(TestCase):
         self.assertEqual(event.attendance_id, attendance.pk)
         self.assertIsNotNone(event.recorded_at)
         self.assertTrue(WorkspaceAttendanceMeta.objects.filter(attendance=attendance).exists())
+
+    def test_sign_in_again_reports_the_new_session_start(self):
+        _, body = services.sign_in(self.employee, "web")
+        self.assertEqual(body["state"]["session_started_at"], body["state"]["signed_in_at"])
+        _, body = services.sign_out(self.employee, "web")
+        self.assertIsNone(body["state"]["session_started_at"])
+        first = AttendanceActivity.objects.get(employee_id=self.employee)
+        early = timezone.make_aware(datetime.combine(first.clock_in_date, time(0, 1)))
+        AttendanceActivity.objects.filter(pk=first.pk).update(
+            clock_in=time(0, 1), clock_out=time(0, 2), in_datetime=early, out_datetime=early + timedelta(minutes=1)
+        )
+        _, body = services.sign_in(self.employee, "desktop")
+        state = body["state"]
+        self.assertEqual(state["status"], "working")
+        self.assertIn("T00:01", state["signed_in_at"])
+        self.assertNotIn("T00:01", state["session_started_at"])
+        self.assertGreater(state["session_started_at"], state["signed_in_at"])
 
     def test_duplicate_sign_in_does_nothing(self):
         services.sign_in(self.employee, "web")

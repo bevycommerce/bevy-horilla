@@ -144,7 +144,7 @@
     renderTimer();
     const s = snap.status;
     let line = '';
-    if (s && s.signed_in_at) line = 'Signed in at ' + clock(s.signed_in_at);
+    if (s && (s.session_started_at || s.signed_in_at)) line = 'Signed in at ' + clock(s.session_started_at || s.signed_in_at);
     if (s && s.status === 'signed_out' && s.signed_out_at) line += (line ? '  |  ' : '') + 'Signed out at ' + clock(s.signed_out_at);
     if (s && s.status === 'on_break') line += (line ? '  |  ' : '') + 'Timer is paused during your break';
     $('signed-line').textContent = line || (s ? 'You have not signed in yet today.' : 'Loading...');

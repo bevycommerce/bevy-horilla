@@ -39,6 +39,11 @@ function start() {
   // Keep running in the tray when the window is closed.
   app.on('window-all-closed', () => {});
 
+  const AUTOSTART_ARG = '--autostart';
+  const startedAtLogin =
+    process.argv.includes(AUTOSTART_ARG) ||
+    (process.platform === 'darwin' && (() => { try { return app.getLoginItemSettings().wasOpenedAtLogin; } catch (e) { return false; } })());
+
   app.whenReady().then(() => {
     if (process.platform === 'darwin' && app.dock) app.dock.hide();
 
@@ -136,7 +141,7 @@ function start() {
         if (process.platform !== 'win32' && process.platform !== 'darwin') {
           return { ok: false, message: 'This is only available on Windows and macOS.' };
         }
-        app.setLoginItemSettings({ openAtLogin: enabled });
+        app.setLoginItemSettings({ openAtLogin: enabled, args: enabled ? [AUTOSTART_ARG] : [] });
         return { ok: true, message: '' };
       },
     });
@@ -151,13 +156,20 @@ function start() {
     setInterval(() => controller.flushQueue(), RETRY_MS);
     powerMonitor.on('resume', () => refreshAndFlush());
 
-    if (controller.snapshot().loggedIn) refreshAndFlush();
-    else popup.show('settings'); // first run: show the login screen
+    if (controller.snapshot().loggedIn) {
+      refreshAndFlush();
+      // Opened by the person (Start menu, desktop icon, "Run BevyLoop" after install): show the window.
+      // Started by Windows at sign-in: stay quietly in the tray.
+      if (!startedAtLogin) popup.show('main');
+    } else {
+      popup.show('settings'); // first run: show the login screen
+    }
   });
 
   function safeLoginState() {
     try {
-      return app.getLoginItemSettings().openAtLogin;
+      // Windows matches the saved entry including its arguments
+      return app.getLoginItemSettings({ args: [AUTOSTART_ARG] }).openAtLogin;
     } catch (e) {
       return false;
     }

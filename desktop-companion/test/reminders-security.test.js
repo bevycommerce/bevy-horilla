@@ -73,3 +73,9 @@ test('window can be dragged by its top bar; buttons stay clickable', () => {
   assert.doesNotMatch(win, /on\('blur'/);
   assert.match(win, /on\('moved'/);
 });
+
+test('opening the app shows the window; start at sign-in stays in the tray', () => {
+  const src = read('main', 'main.js');
+  assert.match(src, /if \(!startedAtLogin\) popup\.show\('main'\)/);
+  assert.match(src, /args: enabled \? \[AUTOSTART_ARG\] : \[\]/);
+});

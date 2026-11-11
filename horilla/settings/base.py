@@ -105,6 +105,7 @@ INSTALLED_APPS = [
     # Smart Employee Workspace (see WORKSPACE_IMPLEMENTATION_PLAN.md)
     "workspace_attendance",
     "daily_updates",
+    "workspace_reminders",
 ]
 
 # ========================================

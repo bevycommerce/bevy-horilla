@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Bevy Workspace</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="who">
+      <div id="who-name" class="who-name">Bevy Workspace</div>
+      <span id="status-badge" class="badge badge-off">Not Signed In</span>
+    </div>
+    <div class="top-buttons">
+      <button id="btn-pin" class="icon-btn" type="button" title="Keep this window open">Pin</button>
+      <button id="btn-settings" class="icon-btn" type="button">Settings</button>
+      <button id="btn-close" class="icon-btn" type="button" title="Close this window">Close</button>
+    </div>
+  </header>
+
+  <div id="banner-area"></div>
+
+  <main id="view-main" hidden>
+    <section class="card timer-card">
+      <div id="timer" class="timer">00:00:00</div>
+      <div id="signed-line" class="muted"></div>
+    </section>
+
+    <button id="btn-primary" class="big-btn" type="button">Start Your Day</button>
+    <div id="primary-msg" class="msg" role="status"></div>
+
+    <section id="updates-area"></section>
+
+    <section id="sent-area"></section>
+
+    <section id="pending-area"></section>
+
+    <button id="btn-editor" class="link-btn" type="button">Open full editor</button>
+  </main>
+
+  <main id="view-login" hidden>
+    <h1 id="login-title">Log in to Bevy Workspace</h1>
+    <p id="login-intro" class="muted">Type the address of your company portal, then your portal user name and password.</p>
+    <form id="login-form" autocomplete="off">
+      <label for="in-server">Server address</label>
+      <input id="in-server" type="text" placeholder="http://localhost:8000" spellcheck="false">
+      <div id="server-hint" class="msg"></div>
+      <label for="in-user">User name</label>
+      <input id="in-user" type="text" spellcheck="false">
+      <label for="in-pass">Password</label>
+      <input id="in-pass" type="password">
+      <div id="insecure-box" class="warn" hidden>
+        <p id="insecure-text"></p>
+        <label class="check"><input id="in-insecure" type="checkbox"> I understand and want to continue anyway</label>
+      </div>
+      <button id="btn-login" class="big-btn" type="submit">Sign in</button>
+      <div id="login-msg" class="msg" role="status"></div>
+    </form>
+    <p id="storage-note" class="muted small"></p>
+  </main>
+
+  <main id="view-settings" hidden>
+    <h1>Settings</h1>
+    <section class="card">
+      <div class="row-label">Server</div>
+      <div id="set-server" class="value"></div>
+      <div class="muted small">To use another server, log out first and log in again.</div>
+    </section>
+    <section class="card">
+      <label class="check"><input id="set-notify" type="checkbox"> Show desktop notifications</label>
+      <label class="check"><input id="set-login-item" type="checkbox"> Start Bevy Workspace when I sign in to my computer</label>
+      <div id="set-login-note" class="muted small"></div>
+      <div id="set-msg" class="msg" role="status"></div>
+    </section>
+    <section class="card">
+      <div class="row-label">Account</div>
+      <div id="set-account" class="value"></div>
+      <div id="set-storage" class="muted small"></div>
+      <button id="btn-logout" class="big-btn secondary" type="button">Log out</button>
+    </section>
+    <div class="muted small">Version <span id="set-version"></span></div>
+    <button id="btn-back" class="link-btn" type="button">Back</button>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

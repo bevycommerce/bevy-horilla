@@ -1,0 +1,60 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  color: #1c2430;
+  background: #f3f5f9;
+  overflow-y: auto;
+  user-select: none;
+}
+[hidden] { display: none !important; }
+h1 { font-size: 20px; margin: 4px 0 8px; }
+.top { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #fff; border-bottom: 1px solid #dde3ee; position: sticky; top: 0; z-index: 2; }
+.who-name { font-weight: 600; font-size: 16px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-buttons { display: flex; gap: 4px; }
+.icon-btn { border: 1px solid #c9d1e0; background: #fff; border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; color: #1c2430; }
+.icon-btn.on { background: #dfe9ff; border-color: #2f6fed; }
+main { padding: 12px; }
+.badge { display: inline-block; margin-top: 4px; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.badge-off { background: #e6e9f0; color: #4a5568; }
+.badge-working { background: #d7f5e0; color: #11693a; }
+.badge-away { background: #fff1cc; color: #7a5200; }
+.badge-on_break { background: #ffe3cf; color: #8a3b00; }
+.badge-signed_out { background: #e6e9f0; color: #4a5568; }
+.card { background: #fff; border: 1px solid #dde3ee; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.timer-card { text-align: center; }
+.timer { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+.muted { color: #5b6678; }
+.small { font-size: 12px; }
+.big-btn { display: block; width: 100%; padding: 14px; font-size: 18px; font-weight: 600; color: #fff; background: #2f6fed; border: 0; border-radius: 10px; cursor: pointer; margin: 6px 0; }
+.big-btn:hover { background: #2559c4; }
+.big-btn.secondary { background: #fff; color: #1c2430; border: 1px solid #c9d1e0; }
+.big-btn.danger { background: #c0392b; }
+.big-btn:disabled, .mid-btn:disabled, .icon-btn:disabled { opacity: 0.55; cursor: default; }
+.mid-btn { padding: 9px 12px; font-size: 14px; font-weight: 600; border-radius: 8px; border: 1px solid #2f6fed; background: #2f6fed; color: #fff; cursor: pointer; }
+.mid-btn.secondary { background: #fff; color: #2f6fed; }
+.btn-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.link-btn { background: none; border: 0; color: #2f6fed; font-size: 14px; text-decoration: underline; cursor: pointer; padding: 8px 0; }
+textarea, input[type=text], input[type=password] { width: 100%; font: inherit; padding: 8px; border: 1px solid #c9d1e0; border-radius: 8px; user-select: text; }
+textarea { min-height: 80px; resize: vertical; }
+label { display: block; font-weight: 600; margin: 8px 0 4px; }
+label.check { font-weight: 400; display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
+label.check input { margin-top: 3px; }
+.msg { min-height: 18px; font-size: 13px; margin: 2px 0 6px; }
+.msg.ok { color: #11693a; }
+.msg.error { color: #b3261e; }
+.msg.wait { color: #5b6678; }
+.banner { margin: 8px 12px 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.banner.info { background: #e8efff; color: #1c3d86; }
+.banner.warn { background: #fff1cc; color: #6a4700; }
+.banner.error { background: #fde4e1; color: #8c1d18; }
+.banner.ok { background: #d7f5e0; color: #11693a; }
+.warn { background: #fff1cc; color: #6a4700; padding: 8px 10px; border-radius: 8px; margin: 8px 0; font-size: 13px; }
+.warn p { margin: 0 0 6px; }
+.section-title { font-weight: 600; margin: 4px 0 6px; }
+.sent-item { border-left: 3px solid #2f6fed; padding: 4px 8px; margin: 6px 0; font-size: 13px; background: #fff; border-radius: 4px; }
+.sent-item .meta { color: #5b6678; font-size: 12px; }
+.row-label { font-weight: 600; font-size: 13px; color: #5b6678; }
+.value { word-break: break-all; user-select: text; margin-bottom: 4px; }
+ul.plain { margin: 0; padding-left: 18px; font-size: 14px; }

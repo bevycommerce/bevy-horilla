@@ -1,1 +1,9 @@
-<div id="workspace-card" hx-get="{% url 'workspace-card' %}" hx-trigger="load" hx-swap="innerHTML"></div>
+{% comment %}
+Loads the My Workspace card and refreshes it every minute and whenever the tab
+becomes visible again, so a sign in/out done elsewhere (header Check In/Out,
+another browser, the desktop app) shows here without reloading the page.
+{% endcomment %}
+<div id="workspace-card"
+     hx-get="{% url 'workspace-card' %}"
+     hx-trigger="load, every 60s, visibilitychange[document.visibilityState === 'visible'] from:document"
+     hx-swap="innerHTML"></div>

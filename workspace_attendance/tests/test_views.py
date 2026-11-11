@@ -236,3 +236,19 @@ class FixTimesTests(CardTestBase):
         response = self.client.get(reverse("workspace-fix-times"))
         self.assertIn(response.status_code, (200, 302))  # Horilla middleware may redirect
         self.assertNotEqual(response.status_code, 500)
+
+
+class CardHostTests(CardTestBase):
+    def test_host_refreshes_card_periodically(self):
+        html = render_to_string("workspace_attendance/workspace_card_host.html")
+        self.assertIn("every 60s", html)
+        self.assertIn("visibilitychange", html)
+
+    def test_card_reflects_sign_out_done_elsewhere(self):
+        """A sign out made outside the card (header, other browser) shows on the next card load."""
+        from workspace_attendance import services
+
+        services.sign_in(self.employee, "web")
+        services.sign_out(self.employee, "api")
+        response = self.client.get(reverse("workspace-card"), HTTP_HX_REQUEST="true")
+        self.assertContains(response, "Signed Out")

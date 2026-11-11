@@ -11,7 +11,13 @@ function notificationButtons(kind) {
     case 'sign_out':
       return [{ text: 'Sign Out Now', action: 'sign_out' }, SNOOZE];
     case 'midday':
-      return [{ text: 'Skip Midday (combine)', action: 'skip_midday' }, SNOOZE];
+      // Same choices as the portal's Midday box (owner rule 2026-11-11). Closing it
+      // is enough: the next reminder comes on the server's schedule.
+      return [
+        { text: 'Write update', action: 'open_update' },
+        { text: 'Skip Midday (combine)', action: 'skip_midday' },
+        { text: 'Sign Out', action: 'sign_out' },
+      ];
     case 'eod':
       return [{ text: 'Write update', action: 'open_update' }, SNOOZE];
     default:

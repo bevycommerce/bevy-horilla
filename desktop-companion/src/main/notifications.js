@@ -60,6 +60,23 @@ function createNotifier({ controller, showPopup, iconPath, platform = process.pl
     }
   }
 
+  function closeLive(id) {
+    const entry = live.get(id);
+    live.delete(id);
+    if (entry) {
+      try { entry.n.close(); } catch (e) { /* already gone */ }
+    }
+  }
+
+  /**
+   * Close notifications whose reminder is no longer open on the server
+   * (the update was sent or skipped, the person signed out, or it was answered elsewhere).
+   */
+  function sync(openReminders) {
+    const open = new Set((openReminders || []).map((r) => r.id));
+    for (const id of [...live.keys()]) if (!open.has(id)) closeLive(id);
+  }
+
   function handle(reminder, type, index, buttons) {
     lastHandledAt = Date.now();
     live.delete(reminder.id);
@@ -72,21 +89,23 @@ function createNotifier({ controller, showPopup, iconPath, platform = process.pl
 
   function showReminder(reminder) {
     if (!Notification.isSupported()) return;
+    // Owner rule: a new reminder replaces the older one of the same kind, never stacks.
+    for (const [id, entry] of [...live.entries()]) if (entry.kind === reminder.kind) closeLive(id);
     const buttons = notificationButtons(reminder.kind);
     const n = new Notification({
       title: TITLE,
       body: String(reminder.message || ''),
       icon: iconPath,
       actions: buttons.map((b) => ({ type: 'button', text: b.text })),
-      timeoutType: 'never',
+      timeoutType: 'default', // goes away by itself after a few seconds
     });
     n.on('click', () => handle(reminder, 'click', undefined, buttons));
     n.on('action', (details, legacyIndex) => {
       const index = details && Number.isInteger(details.actionIndex) ? details.actionIndex : legacyIndex;
       handle(reminder, 'action', index, buttons);
     });
-    n.on('close', () => live.delete(reminder.id));
-    live.set(reminder.id, n);
+    n.on('close', () => { if (live.get(reminder.id) && live.get(reminder.id).n === n) live.delete(reminder.id); });
+    live.set(reminder.id, { n, kind: reminder.kind });
     n.show();
   }
 
@@ -101,7 +120,7 @@ function createNotifier({ controller, showPopup, iconPath, platform = process.pl
     }
   }
 
-  return { showReminder, info, init };
+  return { showReminder, sync, info, init };
 }
 
 module.exports = { createNotifier };

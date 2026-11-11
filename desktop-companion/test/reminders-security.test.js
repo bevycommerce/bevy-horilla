@@ -12,9 +12,9 @@ test('notification buttons for each kind', () => {
   assert.deepEqual(texts('sign_in'), ['Sign In Now', 'Snooze 15 min']);
   assert.deepEqual(texts('sign_in_followup'), ['Sign In Now', 'Snooze 15 min']);
   assert.deepEqual(texts('sign_out'), ['Sign Out Now', 'Snooze 15 min']);
-  assert.deepEqual(texts('midday'), ['Skip Midday (combine)', 'Snooze 15 min']);
+  assert.deepEqual(texts('midday'), ['Write update', 'Skip Midday (combine)', 'Sign Out']);
   assert.deepEqual(texts('eod'), ['Write update', 'Snooze 15 min']);
-  assert.equal(notificationButtons('midday')[0].action, 'skip_midday');
+  assert.deepEqual(notificationButtons('midday').map((b) => b.action), ['open_update', 'skip_midday', 'sign_out']);
   assert.equal(notificationButtons('eod')[0].action, 'open_update');
   assert.equal(notificationButtons('something_new').length, 2);
 });

@@ -77,6 +77,7 @@ function start() {
       onChange: (snap) => {
         if (trayHandle) trayHandle.update(snap);
         if (popup && !popup.win.isDestroyed()) popup.win.webContents.send('snapshot', snap);
+        if (notifier && snap && snap.loggedIn && Array.isArray(snap.reminders)) notifier.sync(snap.reminders);
       },
       onNewReminders: (list) => {
         if (notifier) list.forEach((r) => notifier.showReminder(r));

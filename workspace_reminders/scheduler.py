@@ -15,5 +15,11 @@ def _cleanup_keys():
     cleanup_idempotency_keys()
 
 
-register_job(_run_reminders, "interval", job_id="workspace_reminders.run", minutes=2)
+def _interval_minutes():
+    from workspace_reminders.conf import test_minutes
+
+    return 1 if test_minutes() else 2
+
+
+register_job(_run_reminders, "interval", job_id="workspace_reminders.run", minutes=_interval_minutes())
 register_job(_cleanup_keys, "cron", job_id="workspace_attendance.cleanup_idempotency_keys", hour=3, minute=17)

@@ -1,6 +1,21 @@
 """Reminder settings. Override with settings.WORKSPACE_REMINDERS (merged per key)."""
 
+import os
+
 from django.conf import settings
+
+# Testing switch (owner request 2026-11-11): WORKSPACE_REMINDER_TEST_MINUTES=1 in .env
+# makes the Midday box come 1 minute after sign-in and then every 1 minute.
+# Remove the line (or set 0) and restart to go back to 4 hours / every hour.
+TEST_ENV = "WORKSPACE_REMINDER_TEST_MINUTES"
+
+
+def test_minutes():
+    try:
+        value = int(os.environ.get(TEST_ENV, "0") or 0)
+    except ValueError:
+        return 0
+    return value if 0 < value <= 120 else 0
 
 DEFAULTS = {
     "enabled": True,
@@ -28,5 +43,13 @@ def get():
     for kind, values in (custom.get("kinds") or {}).items():
         if kind in kinds:
             kinds[kind].update(values)
+    minutes = test_minutes()
+    if minutes:
+        kinds["midday"].update({"offset": minutes, "repeat": minutes, "attempts": min(1000, 24 * 60 // minutes)})
     merged["kinds"] = kinds
+    merged["test_minutes"] = minutes
     return merged
+
+
+def midday_repeat_minutes():
+    return get()["kinds"]["midday"]["repeat"]

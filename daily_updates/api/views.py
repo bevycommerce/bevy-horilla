@@ -75,6 +75,14 @@ class EditView(WorkspaceAPIView):
             )
         )
 
+    def delete(self, request, update_id):
+        error = self.guard(mutating=True)
+        if error:
+            return error
+        return self.respond(
+            services.delete_update(self.employee, update_id, self.source, key=self.idempotency_key())
+        )
+
 
 class SkipView(WorkspaceAPIView):
     def post(self, request):

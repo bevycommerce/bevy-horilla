@@ -14,11 +14,13 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
 from daily_updates.models import COMBINED, EOD, MIDDAY, DailyUpdate, DailyUpdateRevision, MiddaySkip
 from workspace_attendance.adapters import get_adapter
+from workspace_attendance.models import WorkspaceIdempotencyKey
 from workspace_attendance.services import (
     WorkspaceError,
     _check_source,
@@ -212,6 +214,39 @@ def edit_update(employee, update_id, fields, source, actor, key=""):
             return 200, {"ok": True, "message": _("Update saved."), "update": serialize_update(update)}
 
     return run_idempotent(employee, key, "update_edit", do)
+
+
+def delete_update(employee, update_id, source, key=""):
+    """
+    Owner rule (2026-11-11): the employee may delete their own update, and
+    nothing of it is kept anywhere: the update, its edit history (cascade)
+    and any stored idempotent answers that contain its text are removed.
+    The type can then be sent again for that day.
+    """
+    _check_source(source)
+
+    def do():
+        with transaction.atomic():
+            _lock_employee(employee)
+            update = DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
+            if update is None or update.employee_id != employee.pk:
+                raise WorkspaceError(_("Update not found."), code="not_found", status=404)
+            work_date = update.work_date
+            update.delete()  # revisions go with it (on_delete=CASCADE)
+            WorkspaceIdempotencyKey.objects.filter(employee=employee).filter(
+                Q(response__update__id=update_id)
+                | Q(response__day__midday__id=update_id)
+                | Q(response__day__eod__id=update_id)
+                | Q(response__day__combined__id=update_id)
+            ).delete()
+            return 200, {
+                "ok": True,
+                "message": _("Update deleted."),
+                "deleted_id": update_id,
+                "day": serialize_day(day_state(employee, work_date)),
+            }
+
+    return run_idempotent(employee, key, "update_delete", do)
 
 
 def skip_midday(employee, work_date, choice, source, key=""):

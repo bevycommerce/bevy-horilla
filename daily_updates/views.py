@@ -164,6 +164,12 @@ def edit(request, update_id):
     )
 
 
+@login_required
+@require_POST
+def delete(request, update_id):
+    return _run(request, lambda e, d: services.delete_update(e, update_id, "web"))
+
+
 # ---------------------------------------------------------------- history
 @login_required
 @require_http_methods(["GET", "HEAD"])

@@ -11,6 +11,7 @@ from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.translation import gettext as _
+from django.utils.translation import ngettext
 from django.views.decorators.http import require_http_methods, require_POST
 
 from daily_updates import services as updates
@@ -18,7 +19,7 @@ from daily_updates.models import MIDDAY, MiddaySkip
 from workspace_attendance import services as attendance
 from workspace_attendance.adapters import get_adapter
 from workspace_attendance.views import login_required
-from workspace_reminders import engine
+from workspace_reminders import conf, engine
 from workspace_reminders.models import ReminderDelivery
 
 TEMPLATE = "workspace_reminders/midday_popup.html"
@@ -46,7 +47,7 @@ def popup(request):
     delivery = _open_midday(employee) if employee else None
     if delivery is None:
         return HttpResponse("")
-    return render(request, TEMPLATE, {"delivery": delivery, "text": ""})
+    return render(request, TEMPLATE, {"comeback": _comeback(), "delivery": delivery, "text": ""})
 
 
 @login_required
@@ -56,6 +57,15 @@ def close(request, delivery_id):
     if employee:
         engine.acknowledge(employee, delivery_id)
     return HttpResponse("")
+
+
+def _comeback():
+    """How long until a closed box comes back, in words ("1 hour" normally, "1 minute" in test mode)."""
+    minutes = conf.midday_repeat_minutes()
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return ngettext("%(n)d hour", "%(n)d hours", hours) % {"n": hours}
+    return ngettext("%(n)d minute", "%(n)d minutes", minutes) % {"n": minutes}
 
 
 def _done(request, message):
@@ -73,7 +83,7 @@ def submit_midday(request, delivery_id):
     try:
         updates.submit_update(employee, delivery.work_date, MIDDAY, {"summary": text}, "web")
     except attendance.WorkspaceError as error:
-        return render(request, TEMPLATE, {"delivery": delivery, "text": text, "error": error.message})
+        return render(request, TEMPLATE, {"comeback": _comeback(), "delivery": delivery, "text": text, "error": error.message})
     engine.acknowledge(employee, delivery.pk)
     return _done(request, _("Midday update sent. Thank you."))
 
@@ -88,7 +98,7 @@ def skip_combine(request, delivery_id):
     try:
         updates.skip_midday(employee, delivery.work_date, MiddaySkip.COMBINE, "web")
     except attendance.WorkspaceError as error:
-        return render(request, TEMPLATE, {"delivery": delivery, "error": error.message})
+        return render(request, TEMPLATE, {"comeback": _comeback(), "delivery": delivery, "error": error.message})
     engine.acknowledge(employee, delivery.pk)
     return _done(request, _("Midday skipped. At the end of the day, write one note for the whole day."))
 
@@ -103,6 +113,6 @@ def sign_out(request, delivery_id):
     try:
         _status, body = attendance.sign_out(employee, "web")
     except attendance.WorkspaceError as error:
-        return render(request, TEMPLATE, {"delivery": delivery, "error": error.message})
+        return render(request, TEMPLATE, {"comeback": _comeback(), "delivery": delivery, "error": error.message})
     engine.acknowledge(employee, delivery.pk)
     return _done(request, body.get("message") or _("Signed out at %(time)s.") % {"time": timezone.localtime().strftime("%H:%M")})

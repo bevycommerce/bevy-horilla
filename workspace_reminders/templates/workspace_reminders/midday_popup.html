@@ -33,7 +33,7 @@
           <h2 class="wsp-title" id="wsp-title">{% trans "Time for your Midday update" %}</h2>
           <p class="wsp-sub">{% trans "Write a few words about what you have worked on so far." %}</p>
         </div>
-        <button type="button" class="wsp-x" title="{% trans 'Close (I will be reminded in 1 hour)' %}"
+        <button type="button" class="wsp-x" title="{% blocktrans %}Close (I will be reminded in {{ comeback }}){% endblocktrans %}"
                 hx-post="{% url 'ws-midday-popup-close' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML">&times;</button>
       </div>
       <form hx-post="{% url 'ws-midday-popup-submit' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="find button">
@@ -51,7 +51,7 @@
           {% trans "Sign Out" %}
         </button>
       </div>
-      <p class="wsp-hint">{% trans "If you close this box, it will come back in 1 hour." %}</p>
+      <p class="wsp-hint">{% blocktrans %}If you close this box, it will come back in {{ comeback }}.{% endblocktrans %}</p>
     {% endif %}
   </div>
 </div>

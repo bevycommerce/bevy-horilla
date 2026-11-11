@@ -36,6 +36,31 @@ class MiddayPopupTests(TestCase):
     def get_popup(self):
         return self.client.get(reverse("ws-midday-popup"), **HX)
 
+    def test_midday_follows_sign_in_even_after_the_shift(self):
+        # signed in at 09:00 and still working late in the evening: no shift rule applies
+        delivered = engine.process_employee(self.employee, at(21, 1))
+        kinds = {d.kind: d.attempt for d in delivered}
+        self.assertEqual(kinds.get("midday"), 9)  # 13:00 + 8 hourly repeats = 21:00
+        self.assertNotIn("eod", kinds)
+        self.assertNotIn("sign_out", kinds)
+
+    def test_test_mode_one_minute(self):
+        with mock.patch.dict("os.environ", {"WORKSPACE_REMINDER_TEST_MINUTES": "1"}):
+            self.assertEqual(engine.process_employee(self.employee, at(9, 0)), [])
+            first = [d for d in engine.process_employee(self.employee, at(9, 1)) if d.kind == "midday"]
+            self.assertEqual(len(first), 1)
+            html = self.get_popup().content.decode()
+            self.assertIn("come back in 1 minute", html)
+            self.client.post(reverse("ws-midday-popup-close", args=[first[0].pk]), **HX)
+            self.assertEqual(self.get_popup().content, b"")
+            again = [d for d in engine.process_employee(self.employee, at(9, 2)) if d.kind == "midday"]
+            self.assertEqual(again[0].attempt, 2)
+        # without the switch: back to 4 hours, then every hour
+        from workspace_reminders import conf
+
+        self.assertEqual(conf.get()["kinds"]["midday"]["offset"], 240)
+        self.assertEqual(conf.midday_repeat_minutes(), 60)
+
     def test_nothing_before_due(self):
         self.assertEqual(self.get_popup().content, b"")
 
@@ -46,6 +71,7 @@ class MiddayPopupTests(TestCase):
         self.assertIn("Skip Midday", html)
         self.assertIn("Sign Out", html)
         self.assertNotIn("Late", html)
+        self.assertIn("come back in 1 hour", html)
 
     def test_close_hides_until_next_hour(self):
         delivery = self.make_due()

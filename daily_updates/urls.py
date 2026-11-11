@@ -7,6 +7,7 @@ urlpatterns = [
     path("submit/", views.submit, name="daily-updates-submit"),
     path("skip/", views.skip, name="daily-updates-skip"),
     path("edit/<int:update_id>/", views.edit, name="daily-updates-edit"),
+    path("delete/<int:update_id>/", views.delete, name="daily-updates-delete"),
     path("history/<int:update_id>/", views.history, name="daily-updates-history"),
     path("company/", views.company, name="daily-updates-company"),
     path("company/tab/", views.company_tab, name="daily-updates-company-tab"),

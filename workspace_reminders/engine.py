@@ -66,17 +66,32 @@ def signed_in_at(employee, work_date, now, adapter):
     return None
 
 
-def _windows(adapter, employee, now):
-    """(work_date, (start, end)) pairs that may need reminders right now."""
-    result = []
+def _in_range(window, now):
+    start, end = window
+    # shift-based reminders are relevant from 1h before start until 2h after end
+    return start - timedelta(hours=1) <= now <= end + timedelta(hours=2)
+
+
+def _days(adapter, employee, now):
+    """
+    [(work_date, window or None, shift_ok)] that may need reminders right now.
+    shift_ok: shift-based kinds may run (inside the shift range, not a day off).
+    The current working day is always included, because sign-in based kinds
+    (Midday) follow the sign-in time, not the shift (owner rule 2026-11-11).
+    """
+    days = {}
     for day in (now.date() - timedelta(days=1), now.date()):
         window = adapter.shift_window(employee, day)
-        if window is None:
-            continue
-        start, end = window
-        # relevant from 1h before start until 2h after end
-        if start - timedelta(hours=1) <= now <= end + timedelta(hours=2):
-            result.append((day, window))
+        if window is not None and _in_range(window, now):
+            days[day] = window
+    state = adapter.get_state(employee, now)
+    working_day = state["work_date"] if state["status"] in WORKING else None
+    if working_day is not None and working_day not in days:
+        days[working_day] = adapter.shift_window(employee, working_day)
+    result = []
+    for day, window in sorted(days.items()):
+        shift_ok = window is not None and _in_range(window, now) and not adapter.is_day_off(employee, day)
+        result.append((day, window, shift_ok))
     return result
 
 
@@ -130,14 +145,14 @@ def process_employee(employee, now, adapter=None, config=None):
     stale = timedelta(minutes=config["stale_after_minutes"])
     texts = messages()
     sent = []
-    for work_date, window in _windows(adapter, employee, now):
-        if adapter.is_day_off(employee, work_date):
-            continue
+    for work_date, window, shift_ok in _days(adapter, employee, now):
         need = needs(employee, work_date, now, adapter)
         started = signed_in_at(employee, work_date, now, adapter)
         snoozes = {s.kind: s for s in ReminderSnooze.objects.filter(employee=employee, work_date=work_date)}
         for kind, kind_conf in config["kinds"].items():
             if not need.get(kind):
+                continue
+            if kind_conf["anchor"] != "sign_in" and not shift_ok:
                 continue
             first_due = due_time(window, kind_conf, started)
             if first_due is None:
@@ -239,9 +254,7 @@ def pending_actions(employee, now=None):
         "sign_out": _("Sign out"),
     }
     actions = []
-    for work_date, window in _windows(adapter, employee, now):
-        if adapter.is_day_off(employee, work_date):
-            continue
+    for work_date, window, shift_ok in _days(adapter, employee, now):
         need = needs(employee, work_date, now, adapter)
         started = signed_in_at(employee, work_date, now, adapter)
         for kind in ("sign_in", "midday", "eod", "sign_out"):

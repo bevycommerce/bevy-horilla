@@ -163,6 +163,19 @@ class MyPageTests(ViewBase):
         theirs.refresh_from_db()
         self.assertEqual(theirs.summary, "Theirs")
 
+    def test_delete_own_update_from_portal(self):
+        self.submit(EOD, "Remove me")
+        update = DailyUpdate.objects.get(employee=self.me)
+        self.assertContains(self.client.get(reverse("daily-updates"), {"date": self.today.isoformat()}), "Delete")
+        services.submit_update(self.other, self.today, EOD, {"summary": "Theirs"}, "web")
+        theirs = DailyUpdate.objects.get(employee=self.other)
+        response = self.client.post(reverse("daily-updates-delete", args=[theirs.pk]), {"date": self.today.isoformat()}, **HX)
+        self.assertContains(response, "Update not found")
+        response = self.client.post(reverse("daily-updates-delete", args=[update.pk]), {"date": self.today.isoformat()}, **HX)
+        self.assertContains(response, "Update deleted.")
+        self.assertFalse(DailyUpdate.objects.filter(employee=self.me).exists())
+        self.assertTrue(DailyUpdate.objects.filter(employee=self.other).exists())
+
     def test_history_lists_versions_for_anyone(self):
         self.submit(EOD, "Version one")
         update = DailyUpdate.objects.get(employee=self.me)

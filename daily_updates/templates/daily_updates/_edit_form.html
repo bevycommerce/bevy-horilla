@@ -7,4 +7,8 @@
     <div class="du-field"><label for="du-e{{ u.pk }}-blockers">{% trans "Blockers" %}</label><textarea class="du-textarea" id="du-e{{ u.pk }}-blockers" name="blockers" maxlength="3000">{% if u.draft %}{{ u.draft.blockers }}{% else %}{{ u.blockers }}{% endif %}</textarea></div>
     <p class="du-muted">{% trans "Earlier versions are kept in History." %}</p>
     <button type="submit" class="du-btn du-btn--primary">{% trans "Save changes" %}</button>
+    <button type="button" class="du-btn du-btn--danger"
+            hx-post="{% url 'daily-updates-delete' u.pk %}" hx-include="closest form"
+            hx-target="#du-day" hx-swap="outerHTML"
+            hx-confirm="{% trans 'Delete this update? It will be removed completely and cannot be brought back.' %}">{% trans "Delete" %}</button>
 </form>

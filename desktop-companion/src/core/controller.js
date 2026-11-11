@@ -163,6 +163,8 @@ function createController(deps) {
     end_break: () => workspace.endBreak(),
     submit_update: (p) => workspace.submitUpdate(p.type, p.summary),
     skip_midday: (p) => workspace.skipMidday(p.choice),
+    edit_update: (p) => workspace.editUpdate(p.id, p),
+    delete_update: (p) => workspace.deleteUpdate(p.id),
     snooze: (p) => workspace.snooze(p.id, p.minutes),
     ack: (p) => workspace.ack(p.id),
   };
@@ -171,7 +173,7 @@ function createController(deps) {
   async function perform(name, payload = {}) {
     const fn = ACTIONS[name];
     if (!fn) return { ok: false, message: 'Unknown action.' };
-    const lock = name === 'submit_update' ? `${name}:${payload.type}` : name;
+    const lock = name === 'submit_update' ? `${name}:${payload.type}` : name === 'edit_update' || name === 'delete_update' ? `update:${payload.id}` : name;
     if (inFlight.has(lock)) return { ok: false, message: 'Still saving. Please wait.' };
     if (!state.loggedIn) return { ok: false, message: 'Please sign in first.' };
     inFlight.add(lock);

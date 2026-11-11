@@ -8,6 +8,7 @@
 </head>
 <body>
   <header class="top">
+    <img class="app-icon" src="../../assets/icon.png" alt="" width="36" height="36">
     <div class="who">
       <div id="who-name" class="who-name">BevyLoop</div>
       <span id="status-badge" class="badge badge-off">Not Signed In</span>
@@ -82,6 +83,17 @@
     <div class="muted small">Version <span id="set-version"></span></div>
     <button id="btn-back" class="link-btn" type="button">Back</button>
   </main>
+
+  <div id="confirm-overlay" class="overlay" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <div id="confirm-title" class="dialog-title">Delete update</div>
+      <p id="confirm-text">Delete this update? It will be removed completely and cannot be brought back.</p>
+      <div class="btn-row">
+        <button id="confirm-yes" class="mid-btn danger" type="button">Delete</button>
+        <button id="confirm-no" class="mid-btn secondary" type="button">Keep it</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

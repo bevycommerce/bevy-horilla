@@ -40,6 +40,7 @@ exports.default = async function afterPack(context) {
         ProductName: productName,
         FileDescription: productName,
         CompanyName: 'Bevy Commerce',
+        LegalCopyright: 'Copyright (C) Bevy Commerce',
         OriginalFilename: `${context.packager.appInfo.productFilename}.exe`,
         InternalName: productName,
         FileVersion: version,

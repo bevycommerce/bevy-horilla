@@ -55,3 +55,12 @@ test('no em dashes in user-facing text', () => {
     assert.doesNotMatch(read(...f), /—/, f.join('/'));
   }
 });
+
+test('no late or on-time wording in the window', () => {
+  const all = read('renderer', 'app.js') + read('renderer', 'index.html');
+  assert.doesNotMatch(all, /\blate\b|on[- ]time/i);
+});
+
+test('delete confirm text is exactly the agreed sentence', () => {
+  assert.match(read('renderer', 'index.html'), /Delete this update\? It will be removed completely and cannot be brought back\./);
+});

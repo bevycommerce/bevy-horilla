@@ -135,3 +135,34 @@ test('an action while the same action is still saving is refused', async () => {
   release();
   assert.equal((await first).ok, true);
 });
+
+test('edit and delete update run through perform, refresh the day, and never queue', async () => {
+  const calls = [];
+  let days = 0;
+  const { controller, queue } = make({
+    workspace: {
+      getDay: async () => { days++; return { day: { can_submit_midday: true } }; },
+      editUpdate: async (id, f) => { calls.push(['edit', id, f.summary]); return { ok: true, message: 'Update saved.' }; },
+      deleteUpdate: async (id) => { calls.push(['delete', id]); return { ok: true, message: 'Update deleted.' }; },
+    },
+  });
+  await controller.poll();
+  const before = days;
+  const e = await controller.perform('edit_update', { id: 4, summary: 'Hi' });
+  const d = await controller.perform('delete_update', { id: 4 });
+  assert.equal(e.message, 'Update saved.');
+  assert.equal(d.message, 'Update deleted.');
+  assert.deepEqual(calls, [['edit', 4, 'Hi'], ['delete', 4]]);
+  assert.equal(days, before + 2);
+  assert.equal(queue.count(), 0);
+});
+
+test('offline edit shows the offline message and does not refresh as success', async () => {
+  const { controller, queue } = make({
+    workspace: { editUpdate: async () => ({ ok: false, offline: true, message: 'You are offline. Please try again when the connection is back.' }) },
+  });
+  const r = await controller.perform('edit_update', { id: 4, summary: 'Hi' });
+  assert.equal(r.ok, false);
+  assert.match(r.message, /offline/);
+  assert.equal(queue.count(), 0);
+});

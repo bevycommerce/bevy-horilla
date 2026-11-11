@@ -6,6 +6,7 @@ const { validateServerUrl } = require('../core/url');
 const UPDATE_TYPES = new Set(['midday', 'eod', 'combined']);
 const SKIP_CHOICES = new Set(['later', 'combine']);
 const MAX_NOTE = 5000;
+const MAX_PART = 3000;
 
 function isString(v, max) {
   return typeof v === 'string' && v.length <= max;
@@ -68,6 +69,20 @@ function registerIpc({ controller, popup, setLoginItem, refreshAndFlush }) {
         if (!p.summary.trim()) return { ok: false, message: 'Please write something first.' };
         return controller.perform('submit_update', { type: p.type, summary: p.summary.trim() });
       }
+      case 'edit_update': {
+        if (!Number.isInteger(p.id) || p.id <= 0) return { ok: false, message: 'Please check your note.' };
+        if (!isString(p.summary, MAX_NOTE) || !isString(p.completed == null ? '' : p.completed, MAX_PART)
+          || !isString(p.ongoing == null ? '' : p.ongoing, MAX_PART) || !isString(p.blockers == null ? '' : p.blockers, MAX_PART)) {
+          return { ok: false, message: 'Your note is too long.' };
+        }
+        if (!p.summary.trim()) return { ok: false, message: 'Please write something first.' };
+        return controller.perform('edit_update', {
+          id: p.id, summary: p.summary.trim(), completed: p.completed || '', ongoing: p.ongoing || '', blockers: p.blockers || '',
+        });
+      }
+      case 'delete_update':
+        if (!Number.isInteger(p.id) || p.id <= 0) return { ok: false, message: 'Invalid request.' };
+        return controller.perform('delete_update', { id: p.id });
       case 'skip_midday':
         if (!SKIP_CHOICES.has(p.choice)) return { ok: false, message: 'Invalid choice.' };
         return controller.perform('skip_midday', { choice: p.choice });

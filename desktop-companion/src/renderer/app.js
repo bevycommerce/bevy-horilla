@@ -16,6 +16,9 @@
   let primaryMsg = null;
   let skipChoiceOpen = false;
   let insecureNeedsTick = false;
+  let editing = null; // { id, text } while a sent update is being edited
+  let confirming = null; // { id, label } while the delete question is open
+  let sentMsg = null; // message under "Already sent today"
 
   function pad(n) { return String(n).padStart(2, '0'); }
   function formatHMS(total) {
@@ -190,12 +193,12 @@
     if (!day) { area.appendChild(el('div', { class: 'muted small', text: snap.offline ? 'Updates are not available without a connection.' : 'Loading updates...' })); return; }
 
     if (day.can_submit_midday && !day.recommend_combined) {
-      const late = day.midday_pending_later;
+      const writtenLater = day.midday_pending_later;
       const extra = [];
       if (day.can_skip_midday && !day.skip) {
         extra.push(el('button', { class: 'mid-btn secondary', type: 'button', text: 'Skip Midday', onclick: () => { skipChoiceOpen = true; renderedUpdatesKey = ''; renderUpdates(); } }));
       }
-      const box = noteBox('midday', late ? 'Late Midday note' : 'Quick Midday note', 'What are you working on?', extra);
+      const box = noteBox('midday', writtenLater ? 'Midday note' : 'Quick Midday note', 'What are you working on?', extra);
       area.appendChild(box);
       if (skipChoiceOpen && day.can_skip_midday && !day.skip) {
         const msgNode = el('div', { class: 'msg' });
@@ -222,21 +225,119 @@
     }
   }
 
-  function renderSent() {
+  const SENT_LABELS = [['midday', 'Midday note'], ['eod', 'End-of-Day note'], ['combined', 'Whole-day note']];
+
+  function findSent(id) {
+    const day = snap && snap.day;
+    if (!day) return null;
+    for (const [k, label] of SENT_LABELS) if (day[k] && day[k].id === id) return { update: day[k], label };
+    return null;
+  }
+
+  function startEdit(u) {
+    editing = { id: u.id, text: u.summary || '' };
+    sentMsg = null;
+    renderSent(true);
+  }
+
+  function cancelEdit() {
+    editing = null;
+    sentMsg = null;
+    renderSent();
+  }
+
+  function saveEdit(u) {
+    if (!editing || editing.id !== u.id) return;
+    const text = editing.text.trim();
+    if (!text) { sentMsg = { kind: 'error', text: 'Please write something first.' }; renderSent(true); return; }
+    run('upd:' + u.id, 'edit_update',
+      { id: u.id, summary: text, completed: u.completed || '', ongoing: u.ongoing || '', blockers: u.blockers || '' },
+      (m) => { sentMsg = m; },
+      () => { editing = null; });
+  }
+
+  function askDelete(u, label) {
+    confirming = { id: u.id, label };
+    sentMsg = null;
+    showConfirm();
+  }
+
+  function showConfirm() {
+    const box = $('confirm-overlay');
+    box.hidden = !confirming;
+    if (confirming) {
+      $('confirm-title').textContent = 'Delete ' + confirming.label.toLowerCase() + '?';
+      $('confirm-yes').disabled = false;
+      $('confirm-no').focus();
+    }
+  }
+
+  function closeConfirm(returnFocus) {
+    const id = confirming && confirming.id;
+    confirming = null;
+    showConfirm();
+    if (returnFocus && id != null) {
+      const b = document.querySelector('[data-delete="' + id + '"]');
+      if (b) b.focus();
+    }
+  }
+
+  function confirmDelete() {
+    if (!confirming) return;
+    const id = confirming.id;
+    closeConfirm(false);
+    run('upd:' + id, 'delete_update', { id }, (m) => { sentMsg = m; }, () => { if (editing && editing.id === id) editing = null; });
+  }
+
+  function renderSent(focusEditor) {
     const area = $('sent-area');
+    if (!snap) return;
+    // keep the cursor where it was if the box is rebuilt while someone is typing
+    const active = document.activeElement;
+    const hadFocus = active && active.dataset && active.dataset.edit;
+    const selStart = hadFocus ? active.selectionStart : 0;
+    const selEnd = hadFocus ? active.selectionEnd : 0;
     area.textContent = '';
     const day = snap.day;
     if (!day) return;
-    const items = [['midday', 'Midday note'], ['eod', 'End-of-Day note'], ['combined', 'Whole-day note']]
-      .map(([k, label]) => [day[k], label]).filter(([u]) => u);
-    if (!items.length) return;
+    const items = SENT_LABELS.map(([k, label]) => [day[k], label]).filter(([u]) => u);
+    if (editing && !items.some(([u]) => u.id === editing.id)) editing = null;
+    if (confirming && !items.some(([u]) => u.id === confirming.id)) closeConfirm(false);
+    if (!items.length && !sentMsg) return;
     area.appendChild(el('div', { class: 'section-title', text: 'Already sent today' }));
+    const top = el('div', { class: 'msg' });
+    setMsg(top, sentMsg);
+    area.appendChild(top);
+    let editor = null;
     for (const [u, label] of items) {
-      const text = u.summary.length > 160 ? u.summary.slice(0, 160) + '...' : u.summary;
-      area.appendChild(el('div', { class: 'sent-item' }, [
-        el('div', { text: text || '(no text)' }),
-        el('div', { class: 'meta', text: label + ' sent at ' + clock(u.submitted_at) + (u.is_late ? ' (late)' : '') }),
-      ]));
+      const isBusy = busy.has('upd:' + u.id);
+      const meta = el('div', { class: 'meta', text: label + ' sent at ' + clock(u.submitted_at) + (u.is_edited && u.last_edited_at ? '. Edited at ' + clock(u.last_edited_at) : '') });
+      if (editing && editing.id === u.id) {
+        editor = el('textarea', { 'data-edit': String(u.id), maxlength: '5000', 'aria-label': 'Edit ' + label, oninput: (e) => { editing.text = e.target.value; } });
+        editor.value = editing.text;
+        area.appendChild(el('div', { class: 'sent-item' }, [
+          meta,
+          editor,
+          el('div', { class: 'btn-row' }, [
+            el('button', { class: 'mid-btn', type: 'button', text: isBusy ? 'Saving...' : 'Save', disabled: isBusy, onclick: () => saveEdit(u) }),
+            el('button', { class: 'mid-btn secondary', type: 'button', text: 'Cancel', disabled: isBusy, onclick: cancelEdit }),
+          ]),
+        ]));
+      } else {
+        const text = u.summary.length > 160 ? u.summary.slice(0, 160) + '...' : u.summary;
+        area.appendChild(el('div', { class: 'sent-item' }, [
+          el('div', { class: 'sent-text', text: text || '(no text)' }),
+          meta,
+          el('div', { class: 'btn-row' }, [
+            el('button', { class: 'mid-btn secondary small-btn', type: 'button', text: isBusy ? 'Saving...' : 'Edit', disabled: isBusy, 'aria-label': 'Edit ' + label, onclick: () => startEdit(u) }),
+            el('button', { class: 'mid-btn danger-outline small-btn', type: 'button', text: 'Delete', disabled: isBusy, 'data-delete': String(u.id), 'aria-label': 'Delete ' + label, onclick: () => askDelete(u, label) }),
+          ]),
+        ]));
+      }
+    }
+    if (editor && (focusEditor || hadFocus)) {
+      editor.focus();
+      if (hadFocus) editor.setSelectionRange(selStart, selEnd);
     }
   }
 
@@ -384,6 +485,17 @@
     busy.delete('logout');
     view = 'main';
     $('in-pass').value = '';
+  });
+
+  $('confirm-yes').addEventListener('click', confirmDelete);
+  $('confirm-no').addEventListener('click', () => closeConfirm(true));
+  $('confirm-overlay').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeConfirm(true); }
+    else if (e.key === 'Tab') {
+      const yes = $('confirm-yes'), no = $('confirm-no');
+      if (e.shiftKey && document.activeElement === yes) { e.preventDefault(); no.focus(); }
+      else if (!e.shiftKey && document.activeElement === no) { e.preventDefault(); yes.focus(); }
+    }
   });
 
   window.addEventListener('online', () => api.networkOnline());

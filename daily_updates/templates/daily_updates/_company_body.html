@@ -42,8 +42,6 @@
                 <div class="du-tile"><strong>{{ totals.on_break }}</strong><span>{% trans "On break" %}</span></div>
                 <div class="du-tile"><strong>{{ totals.signed_out }}</strong><span>{% trans "Signed out" %}</span></div>
                 <div class="du-tile"><strong>{{ totals.not_signed_in }}</strong><span>{% trans "Not signed in" %}</span></div>
-                <div class="du-tile"><strong>{{ totals.late }}</strong><span>{% trans "Late" %}</span></div>
-                <div class="du-tile"><strong>{{ totals.missing }}</strong><span>{% trans "Missing actions" %}</span></div>
                 <div class="du-tile"><strong>{{ totals.updates }}</strong><span>{% trans "Updates today" %}</span></div>
             </div>
         {% endif %}
@@ -55,11 +53,6 @@
                         {% if row.status == "working" %}{% trans "Working" %}{% elif row.status == "on_break" %}{% trans "On break" %}{% elif row.status == "signed_out" %}{% trans "Signed out" %}{% else %}{% trans "Not signed in" %}{% endif %}
                     </span>
                     <span class="du-times">{% trans "In" %} <strong>{{ row.sign_in|default:"-" }}</strong> &middot; {% trans "Out" %} <strong>{{ row.sign_out|default:"-" }}</strong>{% if tab == "attendance" and row.worked %} &middot; {% trans "Worked" %} <strong>{{ row.worked }}</strong>{% endif %}</span>
-                    <span>
-                        {% if row.late %}<span class="du-badge du-badge--late">{% trans "Late" %}</span>{% endif %}
-                        {% if "sign_in" in row.missing %}<span class="du-badge du-badge--missing">{% trans "No sign in" %}</span>{% endif %}
-                        {% if "sign_out" in row.missing %}<span class="du-badge du-badge--missing">{% trans "No sign out" %}</span>{% endif %}
-                    </span>
                 </div>
                 {% if tab == "today" %}
                     <div class="du-updates">

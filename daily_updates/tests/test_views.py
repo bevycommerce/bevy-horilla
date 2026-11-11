@@ -88,13 +88,15 @@ class MyPageTests(ViewBase):
             reverse("daily-updates-skip"), {"choice": "later", "date": self.today.isoformat()}, **HX
         )
         self.assertContains(response, "Midday skipped")
-        self.assertContains(response, "Your Midday note (it will be marked late)")
+        self.assertContains(response, "Your Midday note")
+        self.assertNotContains(response, "marked late")
         self.assertNotContains(response, "Skip Midday")
         self.assertEqual(MiddaySkip.objects.get(employee=self.me).choice, MiddaySkip.LATER)
         self.assertFalse(DailyUpdate.objects.exists())
         response = self.submit(MIDDAY, "Late midday")
         self.assertTrue(DailyUpdate.objects.get(employee=self.me).is_late)
-        self.assertContains(response, "Late")
+        # owner rule: no "late" labels anywhere in the interface
+        self.assertNotContains(response, ">Late<")
 
     def test_skip_combine_then_combined_via_view(self):
         response = self.client.post(
@@ -243,8 +245,10 @@ class CompanyTests(ViewBase):
 
     def test_today_tab_shows_tiles_and_others_updates(self):
         response = self.tab("today")
-        for label in ("Working", "On break", "Signed out", "Not signed in", "Late", "Missing actions", "Updates today"):
+        for label in ("Working", "On break", "Signed out", "Not signed in", "Updates today"):
             self.assertContains(response, label)
+        for label in (">Late<", "Missing actions", "No sign in", "No sign out"):
+            self.assertNotContains(response, label)
         self.assertContains(response, "Other midday text")
         self.assertContains(response, "Waiting on API")
         self.assertContains(response, "My eod text")
@@ -261,7 +265,7 @@ class CompanyTests(ViewBase):
     def test_attendance_tab_renders(self):
         response = self.tab("attendance")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "No sign in")
+        self.assertNotContains(response, "No sign in")
 
     def test_work_updates_tab_shows_separate_dates(self):
         response = self.tab("updates")

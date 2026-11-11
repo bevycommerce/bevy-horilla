@@ -31,7 +31,7 @@
     {# ---------------- Midday #}
     {% if day.midday_pending_later %}
         <section class="du-card">
-            <h2>{% trans "Your Midday note (it will be marked late)" %}</h2>
+            <h2>{% trans "Your Midday note" %}</h2>
             {% include "daily_updates/_new_form.html" with form_type="midday" values=drafts.midday prompt=_("What did you work on?") button=_("Submit Midday note") %}
         </section>
     {% elif day.can_submit_midday %}

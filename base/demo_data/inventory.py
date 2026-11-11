@@ -41,6 +41,7 @@ SIDEBAR_DEMO_MODELS: tuple[tuple[str, str], ...] = (
     ("base", "RotatingShiftAssign"),
     ("base", "RotatingWorkTypeAssign"),
     ("base", "Tags"),
+    ("daily_updates", "DailyUpdate"),
     ("base", "HorillaMailTemplate"),
     ("horilla_automations", "MailAutomation"),
 )

@@ -1,0 +1,57 @@
+{% load i18n %}
+<style>
+  .wsp-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(17, 24, 39, 0.55); }
+  .wsp-box { width: 100%; max-width: 560px; padding: 28px; border-radius: 14px; background: #fff; color: #1f2937; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); font-size: 15px; }
+  .dark .wsp-box { background: #161616; color: #e5e7eb; }
+  .wsp-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .wsp-title { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+  .wsp-sub { margin: 0 0 16px; color: #6b7280; }
+  .wsp-x { border: 0; background: transparent; font-size: 26px; line-height: 1; color: #6b7280; cursor: pointer; }
+  .wsp-text { width: 100%; min-height: 130px; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 15px; resize: vertical; background: inherit; color: inherit; }
+  .wsp-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+  .wsp-btn { display: block; width: 100%; padding: 13px 16px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; color: #1f2937; font-size: 15px; font-weight: 600; cursor: pointer; text-align: center; }
+  .dark .wsp-btn { background: #1f1f1f; color: #e5e7eb; border-color: #333; }
+  .wsp-btn--primary { border-color: #16a34a; background: #16a34a; color: #fff; }
+  .wsp-btn--danger { border-color: #dc2626; background: #fff; color: #dc2626; }
+  .wsp-btn[disabled], .wsp-btn.htmx-request { opacity: 0.6; cursor: wait; }
+  .wsp-note { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+  .wsp-note--error { background: #fef2f2; color: #991b1b; }
+  .wsp-note--ok { background: #ecfdf5; color: #065f46; }
+  .wsp-hint { margin-top: 12px; font-size: 13px; color: #6b7280; text-align: center; }
+</style>
+<div class="wsp-overlay" role="dialog" aria-modal="true" aria-labelledby="wsp-title">
+  <div class="wsp-box">
+    {% if done %}
+      <div class="wsp-note wsp-note--ok" role="status">{{ message }}</div>
+      <div class="wsp-actions">
+        <button type="button" class="wsp-btn" onclick="document.getElementById('ws-popup-host').innerHTML='';">{% trans "Close" %}</button>
+      </div>
+      <script>setTimeout(function () { var h = document.getElementById("ws-popup-host"); if (h) h.innerHTML = ""; }, 4000);</script>
+    {% else %}
+      <div class="wsp-top">
+        <div>
+          <h2 class="wsp-title" id="wsp-title">{% trans "Time for your Midday update" %}</h2>
+          <p class="wsp-sub">{% trans "Write a few words about what you have worked on so far." %}</p>
+        </div>
+        <button type="button" class="wsp-x" title="{% trans 'Close (I will be reminded in 1 hour)' %}"
+                hx-post="{% url 'ws-midday-popup-close' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML">&times;</button>
+      </div>
+      <form hx-post="{% url 'ws-midday-popup-submit' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="find button">
+        <textarea name="summary" class="wsp-text" maxlength="5000" required placeholder="{% trans 'For example: Finished the login page, now working on the reports.' %}">{{ text }}</textarea>
+        {% if error %}<div class="wsp-note wsp-note--error" role="alert">{{ error }}</div>{% endif %}
+        <div class="wsp-actions">
+          <button type="submit" class="wsp-btn wsp-btn--primary">{% trans "Send Midday update" %}</button>
+        </div>
+      </form>
+      <div class="wsp-actions">
+        <button type="button" class="wsp-btn" hx-post="{% url 'ws-midday-popup-skip' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="this">
+          {% trans "Skip Midday: I will write Midday and End of Day together later" %}
+        </button>
+        <button type="button" class="wsp-btn wsp-btn--danger" hx-post="{% url 'ws-midday-popup-sign-out' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="this">
+          {% trans "Sign Out" %}
+        </button>
+      </div>
+      <p class="wsp-hint">{% trans "If you close this box, it will come back in 1 hour." %}</p>
+    {% endif %}
+  </div>
+</div>

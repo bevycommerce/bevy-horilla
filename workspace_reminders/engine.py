@@ -42,10 +42,28 @@ def messages():
     }
 
 
-def due_time(window, kind_conf):
+def due_time(window, kind_conf, signed_in_at=None):
+    """When a reminder kind first becomes due. anchor "sign_in" counts from the sign-in time."""
+    if kind_conf["anchor"] == "sign_in":
+        if signed_in_at is None:
+            return None
+        return signed_in_at + timedelta(minutes=kind_conf["offset"])
     start, end = window
     anchor = {"start": start, "mid": start + (end - start) / 2, "end": end}[kind_conf["anchor"]]
     return anchor + timedelta(minutes=kind_conf["offset"])
+
+
+def signed_in_at(employee, work_date, now, adapter):
+    """First sign-in time of that work day (aware datetime) or None."""
+    state = adapter.get_state(employee, now)
+    if state["work_date"] == work_date and state["signed_in_at"]:
+        return state["signed_in_at"]
+    row = adapter.attendance_by_day(employee, work_date, work_date).get(work_date) or {}
+    if row.get("sign_in"):
+        from datetime import datetime
+
+        return timezone.make_aware(datetime.combine(work_date, row["sign_in"]))
+    return None
 
 
 def _windows(adapter, employee, now):
@@ -77,7 +95,7 @@ def needs(employee, work_date, now, adapter=None):
     return {
         "sign_in": not signed_in,
         "sign_in_followup": not signed_in,
-        "midday": not midday_done,
+        "midday": not midday_done and working_today,
         "eod": not eod_done,
         "sign_out": working_today,
     }
@@ -116,11 +134,14 @@ def process_employee(employee, now, adapter=None, config=None):
         if adapter.is_day_off(employee, work_date):
             continue
         need = needs(employee, work_date, now, adapter)
+        started = signed_in_at(employee, work_date, now, adapter)
         snoozes = {s.kind: s for s in ReminderSnooze.objects.filter(employee=employee, work_date=work_date)}
         for kind, kind_conf in config["kinds"].items():
             if not need.get(kind):
                 continue
-            first_due = due_time(window, kind_conf)
+            first_due = due_time(window, kind_conf, started)
+            if first_due is None:
+                continue
             snooze = snoozes.get(kind)
             if snooze is not None and snooze.until > now:
                 continue
@@ -222,8 +243,10 @@ def pending_actions(employee, now=None):
         if adapter.is_day_off(employee, work_date):
             continue
         need = needs(employee, work_date, now, adapter)
+        started = signed_in_at(employee, work_date, now, adapter)
         for kind in ("sign_in", "midday", "eod", "sign_out"):
-            if need.get(kind) and due_time(window, config["kinds"][kind]) <= now:
+            due = due_time(window, config["kinds"][kind], started)
+            if need.get(kind) and due is not None and due <= now:
                 actions.append({"kind": kind, "label": str(labels[kind]), "work_date": work_date.isoformat()})
     # forgotten sign outs on earlier days that can still be fixed
     from workspace_attendance.services import recent_days

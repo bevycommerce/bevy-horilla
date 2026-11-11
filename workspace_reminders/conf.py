@@ -11,7 +11,9 @@ DEFAULTS = {
     "kinds": {
         "sign_in": {"anchor": "start", "offset": 0, "attempts": 1, "repeat": 30},
         "sign_in_followup": {"anchor": "start", "offset": 30, "attempts": 1, "repeat": 30},
-        "midday": {"anchor": "mid", "offset": 0, "attempts": 2, "repeat": 30},
+        # Owner rule (2026-11-11): Midday box 4 hours after the employee signs in,
+        # then every hour until Midday is sent or skipped, or the employee signs out.
+        "midday": {"anchor": "sign_in", "offset": 240, "attempts": 12, "repeat": 60},
         "eod": {"anchor": "end", "offset": -30, "attempts": 2, "repeat": 30},
         "sign_out": {"anchor": "end", "offset": 0, "attempts": 2, "repeat": 30},
     },

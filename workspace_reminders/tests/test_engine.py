@@ -28,7 +28,10 @@ def kinds(employee):
 
 
 class ReminderEngineTests(TestCase):
-    """Shift 09:00-18:00: sign_in 09:00, follow-up 09:30, midday 13:30 (+14:00), eod 17:30 (+18:00), sign_out 18:00 (+18:30)."""
+    """
+    Shift 09:00-18:00: sign_in 09:00, follow-up 09:30, eod 17:30 (+18:00), sign_out 18:00 (+18:30).
+    Midday: 4 hours after the employee signed in, then every hour while still signed in.
+    """
 
     @classmethod
     def setUpTestData(cls):
@@ -36,6 +39,9 @@ class ReminderEngineTests(TestCase):
 
     def run_at(self, hour, minute=0):
         return engine.process_employee(self.employee, at(hour, minute))
+
+    def signed_in_at_nine(self):
+        ws.correct_times(self.employee, timezone.localdate(), time(9, 0), None, self.user, "web")
 
     def test_nothing_before_shift(self):
         self.assertEqual(self.run_at(8, 30), [])
@@ -62,18 +68,34 @@ class ReminderEngineTests(TestCase):
         self.run_at(11, 0)
         self.assertFalse(ReminderDelivery.objects.filter(kind__startswith="sign_in").exists())
 
-    def test_midday_repeats_then_stops_after_submit(self):
-        self.run_at(13, 31)
-        self.run_at(14, 1)
+    def test_midday_four_hours_after_sign_in_then_hourly(self):
+        self.signed_in_at_nine()
+        self.assertEqual(self.run_at(12, 59), [])
+        self.run_at(13, 1)
+        self.run_at(13, 40)
+        self.run_at(14, 2)
+        self.run_at(15, 3)
         self.assertEqual(
-            [k for k in kinds(self.employee) if k[0] == "midday"], [("midday", 1), ("midday", 2)]
+            [k for k in kinds(self.employee) if k[0] == "midday"], [("midday", 1), ("midday", 2), ("midday", 3)]
         )
         updates.submit_update(self.employee, timezone.localdate(), MIDDAY, {"summary": "done"}, "web")
-        self.assertFalse(engine.needs(self.employee, timezone.localdate(), at(14, 5))["midday"])
+        self.assertFalse(engine.needs(self.employee, timezone.localdate(), at(16, 5))["midday"])
+
+    def test_no_midday_without_sign_in(self):
+        self.run_at(13, 31)
+        self.run_at(15, 1)
+        self.assertNotIn("midday", [k[0] for k in kinds(self.employee)])
+
+    def test_midday_stops_after_sign_out(self):
+        self.signed_in_at_nine()
+        ws.correct_times(self.employee, timezone.localdate(), None, time(12, 0), self.user, "web")
+        self.run_at(13, 1)
+        self.assertNotIn("midday", [k[0] for k in kinds(self.employee)])
 
     def test_skip_midday_stops_only_midday(self):
+        self.signed_in_at_nine()
         updates.skip_midday(self.employee, timezone.localdate(), MiddaySkip.COMBINE, "web")
-        self.run_at(13, 31)
+        self.run_at(13, 1)
         self.run_at(17, 31)
         got = kinds(self.employee)
         self.assertNotIn(("midday", 1), got)
@@ -94,16 +116,16 @@ class ReminderEngineTests(TestCase):
         self.assertIn(("sign_out", 1), kinds(self.employee))
 
     def test_snooze(self):
-        delivery = self.run_at(13, 31)[0]
-        self.assertEqual(delivery.kind, "midday")
+        self.signed_in_at_nine()
+        delivery = [d for d in self.run_at(13, 1) if d.kind == "midday"][0]
         until = engine.snooze(self.employee, delivery.pk, 15)
         self.assertIsNotNone(ReminderDelivery.objects.get(pk=delivery.pk).acknowledged_at)
-        ReminderSnooze.objects.update(until=at(13, 46))
-        self.run_at(13, 40)
+        ReminderSnooze.objects.update(until=at(13, 16))
+        self.run_at(13, 10)
         self.assertEqual([k for k in kinds(self.employee) if k[0] == "midday"], [("midday", 1)])
-        self.run_at(13, 47)
+        self.run_at(13, 17)
         self.assertIn(("midday", 101), kinds(self.employee))
-        # the scheduled 14:00 repeat is replaced by the snooze re-fire
+        # the next scheduled repeat is replaced by the snooze re-fire
         self.run_at(14, 1)
         self.assertNotIn(("midday", 2), kinds(self.employee))
         self.assertIsNotNone(until)
@@ -147,7 +169,9 @@ class ReminderEngineTests(TestCase):
 
     def test_pending_actions(self):
         actions = engine.pending_actions(self.employee, at(14, 0))
-        self.assertEqual([a["kind"] for a in actions], ["sign_in", "midday"])
+        self.assertEqual([a["kind"] for a in actions], ["sign_in"])
+        self.signed_in_at_nine()
+        self.assertEqual([a["kind"] for a in engine.pending_actions(self.employee, at(14, 0))], ["midday"])
         yesterday = timezone.localdate() - timedelta(days=1)
         ws.correct_times(self.employee, yesterday, time(9, 0), None, self.user, "web")
         actions = engine.pending_actions(self.employee, at(8, 0))

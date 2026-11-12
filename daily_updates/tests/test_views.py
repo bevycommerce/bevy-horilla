@@ -346,3 +346,15 @@ class CompanyTests(ViewBase):
             self.assertNotIn("987,654", html)
         # the employee card itself is shown
         self.assertContains(self.tab("today"), self.other.get_full_name())
+
+
+class SidebarPathTests(TestCase):
+    def test_my_and_company_paths_are_not_prefixes_of_each_other(self):
+        mine, company = reverse("daily-updates"), reverse("daily-updates-company")
+        self.assertFalse(company.startswith(mine))
+        self.assertFalse(mine.startswith(company))
+
+    def test_old_address_still_works(self):
+        response = self.client.get("/daily-updates/?date=2026-11-01")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("daily-updates") + "?date=2026-11-01")

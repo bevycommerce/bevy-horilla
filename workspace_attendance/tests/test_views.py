@@ -3,7 +3,7 @@
 from datetime import time, timedelta
 
 from django.template.loader import render_to_string
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -252,3 +252,28 @@ class CardHostTests(CardTestBase):
         services.sign_out(self.employee, "api")
         response = self.client.get(reverse("workspace-card"), HTTP_HX_REQUEST="true")
         self.assertContains(response, "Signed Out")
+
+
+class HeaderClockSwitchTests(SimpleTestCase):
+    """Owner rule 2026-11-12: Horilla's green top-bar timer is hidden by default."""
+
+    def render(self):
+        from django.template import Context, Template
+
+        return Template("{% load workspace_ui %}{% ws_hide_header_clock as x %}{{ x }}").render(Context())
+
+    def test_hidden_by_default(self):
+        self.assertEqual(self.render(), "True")
+
+    def test_can_be_shown_again(self):
+        with self.settings(WORKSPACE_HIDE_HEADER_CLOCK=False):
+            self.assertEqual(self.render(), "False")
+
+    def test_both_headers_keep_the_container_for_htmx(self):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        for rel in ("templates/index.html", "horilla_theme/templates/horilla_theme/components/header.html"):
+            text = (Path(settings.BASE_DIR) / rel).read_text()
+            self.assertIn('<div id="attendance-activity-container"{% if ws_hide_clock %} style="display:none"{% endif %}>', text)

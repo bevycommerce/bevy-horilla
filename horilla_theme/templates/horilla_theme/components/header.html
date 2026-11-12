@@ -35,7 +35,8 @@
         <!-- Action Icons -->
         <div class="flex items-center gap-2">
             {% if "attendance"|app_installed %}
-                <div id="attendance-activity-container">
+                {% load workspace_ui %}{% ws_hide_header_clock as ws_hide_clock %}
+                <div id="attendance-activity-container"{% if ws_hide_clock %} style="display:none"{% endif %}>
                     {% include "attendance/components/in_out_component.html" %}
                 </div>
             {% endif %}

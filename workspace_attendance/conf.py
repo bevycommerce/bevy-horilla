@@ -20,6 +20,8 @@ DEFAULTS = {
     # Off by owner decision (2026-11-11). The header break feature is not affected,
     # and a break started there is still shown on the card with "End Break".
     "WORKSPACE_SHOW_BREAK": False,
+    # Owner rule 2026-11-12: hide the green check-in/out timer in the top bar
+    "WORKSPACE_HIDE_HEADER_CLOCK": True,
 }
 
 

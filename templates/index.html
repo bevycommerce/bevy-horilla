@@ -147,7 +147,8 @@
                     <div class="oh-navbar__systray">
                         {% if "attendance"|app_installed %}
                             <!-- Start of check in/out button in nav bar -->
-                            <div id="attendance-activity-container">
+                            {% load workspace_ui %}{% ws_hide_header_clock as ws_hide_clock %}
+                            <div id="attendance-activity-container"{% if ws_hide_clock %} style="display:none"{% endif %}>
                                 {% include "attendance/components/in_out_component.html" %}
                             </div>
                             <!-- End of check in/out button in nav bar -->

@@ -26,6 +26,12 @@
                     row.appendChild(document.createTextNode(" (" + item.reasons.join(", ") + ")"));
                     box.appendChild(row);
                 });
+                if (d.note) {
+                    var note = document.createElement("div");
+                    note.style.cssText = "padding:4px 0;color:#b45309";
+                    note.textContent = d.note;
+                    box.appendChild(note);
+                }
             })
             .catch(function () { box.textContent = ""; });
     })();

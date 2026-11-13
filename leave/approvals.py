@@ -46,16 +46,6 @@ def _notify(sender, recipient_employee, verb, redirect):
 
 
 HR_LEAD_POSITION = "HR Lead"
-DIRECTOR_POSITION = "Director of Product Management"
-PRODUCT_MANAGER_POSITION = "Product Manager"
-CLOSED_PROJECT_STATUSES = ("completed", "cancelled", "expired")
-
-
-def _position(employee):
-    try:
-        return (employee.employee_work_info.job_position_id.job_position or "").strip()
-    except Exception:
-        return ""
 
 
 def _with_position(position):
@@ -78,17 +68,25 @@ def _reporting_manager(employee):
         return None
 
 
-def determine_approvers(employee):
+def determine_approvers_with_status(employee):
     """
-    Who has to approve this employee's leave, as a list of (Employee, reason).
+    Who has to approve this employee's leave, and any problem HR should know.
 
-    Everyone: the reporting manager set on the employee's work information in
-    the HR portal (when there is one), and HR Lead.
-    Product Manager: also the Director of Product Management.
-    Anyone else: also the project managers and the Product Managers of every
-    running project the employee works on.
+    Returns (approvers, problems): approvers is a list of (Employee, [reasons]),
+    problems a list of messages (empty when everything was found).
+
+    Owner rules (2026-11-13):
+    - The reporting manager set in the HR portal always approves.
+    - The HR Lead always approves.
+    - The PMs of every project the employee is in, read from the project
+      approvers Google Sheet (leave/approver_sheet.py).
+    - If the sheet cannot be used, or the employee is not in it, only the
+      reporting manager and the HR Lead are added, and the HR Lead is told why.
     """
+    from leave import approver_sheet
+
     found = {}
+    problems = []
 
     def add(person, reason):
         if person is None or person.id == employee.id or not person.is_active:
@@ -99,38 +97,41 @@ def determine_approvers(employee):
         else:
             found[person.id] = (person, [reason])
 
-    # The reporting manager from the HR portal always approves (2026-11-13),
-    # for Product Managers too.
     add(_reporting_manager(employee), "Reporting Manager")
-    position = _position(employee)
-    if position.lower() == PRODUCT_MANAGER_POSITION.lower():
-        for person in _with_position(DIRECTOR_POSITION):
-            add(person, DIRECTOR_POSITION)
-    else:
-        from project.models import Project, Task
-
-        project_ids = set(
-            Task._base_manager.filter(
-                Q(task_members=employee) | Q(task_managers=employee)
-            )
-            .exclude(project__isnull=True)
-            .values_list("project_id", flat=True)
-        )
-        projects = Project._base_manager.filter(id__in=project_ids).exclude(
-            status__in=CLOSED_PROJECT_STATUSES
-        )
-        for project in projects:
-            for manager in project.managers.filter(is_active=True):
-                add(manager, f"Project Manager of {project.title}")
-            members = Employee.objects.filter(is_active=True).filter(
-                Q(tasks__project=project) | Q(task__project=project)
-            ).distinct()
-            for person in members:
-                if _position(person).lower() == PRODUCT_MANAGER_POSITION.lower():
-                    add(person, f"Product Manager of {project.title}")
+    try:
+        pms, sheet_problems = approver_sheet.sheet_approvers(employee)
+        for person, reason in pms:
+            add(person, reason)
+        problems.extend(sheet_problems)
+    except approver_sheet.SheetUnavailable as exc:
+        problems.append(str(exc))
     for person in _with_position(HR_LEAD_POSITION):
         add(person, HR_LEAD_POSITION)
-    return list(found.values())
+    return list(found.values()), problems
+
+
+def determine_approvers(employee):
+    """Approvers only, as a list of (Employee, [reasons])."""
+    return determine_approvers_with_status(employee)[0]
+
+
+def _tell_hr_lead(sender, leave_request, problems):
+    """Tell every HR Lead that the proper approvers could not all be added, and why."""
+    who = _name(leave_request.employee_id)
+    reasons = "; ".join(problems)
+    verb = (
+        f"Proper approvers could not be added for {who}'s leave request: {reasons}. "
+        "The reporting manager and HR Lead were added."
+    )
+    for hr in _with_position(HR_LEAD_POSITION):
+        with contextlib.suppress(Exception):
+            notify.send(
+                sender,
+                recipient=hr.employee_user_id,
+                verb=verb,
+                icon="alert-circle",
+                redirect=reverse("leave-my-approvals"),
+            )
 
 
 def create_approver_rows(request, leave_request):
@@ -141,7 +142,10 @@ def create_approver_rows(request, leave_request):
     if leave_request.status != "requested":
         return
     sender = request.user.employee_get
-    for employee, _reasons in determine_approvers(leave_request.employee_id):
+    approvers, problems = determine_approvers_with_status(leave_request.employee_id)
+    if problems:
+        _tell_hr_lead(sender, leave_request, problems)
+    for employee, _reasons in approvers:
         _, created = LeaveApprover.objects.get_or_create(
             leave_request=leave_request,
             approver=employee,
@@ -164,12 +168,11 @@ def approver_preview(request):
     employee = getattr(request.user, "employee_get", None)
     if employee is None:
         return JsonResponse({"approvers": []})
+    approvers, problems = determine_approvers_with_status(employee)
     return JsonResponse(
         {
-            "approvers": [
-                {"name": _name(person), "reasons": reasons}
-                for person, reasons in determine_approvers(employee)
-            ]
+            "approvers": [{"name": _name(person), "reasons": reasons} for person, reasons in approvers],
+            "note": "Some approvers could not be found in the project sheet. HR will be told when you send the request." if problems else "",
         }
     )
 

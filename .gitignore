@@ -164,3 +164,7 @@ CLAUDE.md
 .mcp.safe.json
 .claudeignore
 .specify/
+
+# Google service-account keys (leave approvers sheet). Never commit these.
+/secrets/
+*service-account*.json

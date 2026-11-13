@@ -82,10 +82,11 @@ def determine_approvers(employee):
     """
     Who has to approve this employee's leave, as a list of (Employee, reason).
 
-    Product Manager: Director of Product Management and HR Lead.
-    Anyone else: the reporting manager, the project managers and the Product
-    Managers of every running project the employee works on, and HR Lead.
-    No project, or a project manager: reporting manager and HR Lead.
+    Everyone: the reporting manager set on the employee's work information in
+    the HR portal (when there is one), and HR Lead.
+    Product Manager: also the Director of Product Management.
+    Anyone else: also the project managers and the Product Managers of every
+    running project the employee works on.
     """
     found = {}
 
@@ -98,6 +99,9 @@ def determine_approvers(employee):
         else:
             found[person.id] = (person, [reason])
 
+    # The reporting manager from the HR portal always approves (2026-11-13),
+    # for Product Managers too.
+    add(_reporting_manager(employee), "Reporting Manager")
     position = _position(employee)
     if position.lower() == PRODUCT_MANAGER_POSITION.lower():
         for person in _with_position(DIRECTOR_POSITION):
@@ -105,7 +109,6 @@ def determine_approvers(employee):
     else:
         from project.models import Project, Task
 
-        add(_reporting_manager(employee), "Reporting Manager")
         project_ids = set(
             Task._base_manager.filter(
                 Q(task_members=employee) | Q(task_managers=employee)

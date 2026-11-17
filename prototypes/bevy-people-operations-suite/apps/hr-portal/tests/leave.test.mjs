@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {leaveBalance,validateLeave,leaveDays} from '../web/domain.mjs';
+const r={id:'x',employeeId:'e',type:'Vacation',from:'2026-11-08',to:'2026-11-09',status:'Pending'};
+test('calendar-year balances reserve pending and never carry forward',()=>{assert.equal(leaveBalance([r],'e','Vacation','2026').available,9);assert.equal(leaveBalance([r],'e','Vacation','2027').available,11);assert.equal(leaveBalance([],'e','Floater Day','2026').available,3);assert.equal(leaveBalance([],'e','Sick Leave','2026').available,Infinity);});
+test('leave duration includes start and excludes Friday Saturday',()=>{assert.equal(leaveDays('2026-11-05','2026-11-08'),2);});
+test('document threshold is configurable and one day optional',()=>{const s={...r,type:'Sick Leave',to:'2026-11-10'};assert.throws(()=>validateLeave(s,[],2),/medical/);assert.equal(validateLeave(s,[],3),3);assert.equal(validateLeave({...s,to:s.from},[],2),1);});
+test('reject overlap, overdraw and cross-year requests',()=>{assert.throws(()=>validateLeave({...r,id:'z'},[r]),/overlapping/);assert.throws(()=>validateLeave({...r,type:'Floater Day',to:'2026-11-12'},[]),/Insufficient/);assert.throws(()=>validateLeave({...r,to:'2027-01-03'},[]),/separate/);});

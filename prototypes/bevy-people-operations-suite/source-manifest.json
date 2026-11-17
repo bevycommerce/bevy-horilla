@@ -1,0 +1,17 @@
+{
+  "sourceCommit": "fb9bdeba6e0cb46e3d77babd16eacfa12932030e",
+  "importType": "sanitized code-only snapshot",
+  "historyImported": false,
+  "excluded": [
+    "insurance business records and backups",
+    "live project identifiers and URLs",
+    "legacy insurance pages",
+    "preview screenshots"
+  ],
+  "modulePaths": [
+    "apps/hr-portal",
+    "apps/expenses",
+    "apps/insurance",
+    "apps/daily-updates"
+  ]
+}

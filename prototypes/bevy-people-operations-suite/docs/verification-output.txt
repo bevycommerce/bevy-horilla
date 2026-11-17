@@ -1,0 +1,298 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-people-operations-suite@1.0.0 verify
+> node scripts/verify.mjs all
+
+PASS: shared expense assets match, insurance inline JavaScript parses, modules private, no public deployment workflow.
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-hr-portal-prototype@1.4.1 check
+> node --check web/app.js && node --check web/seed.mjs && node --check web/domain.mjs && node --check worker/gate.mjs && node --check web/permissions.mjs && node --check web/profile-schema.mjs
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-expense-workspace@4.1.1 check
+> node --check dist/engine.js && node --check dist/app.js && node --check dist/categories.js && node --check dist/receipts.js && node --check dist/payroll.js && node --check dist/payroll-lab.js
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-insurance-dashboard@1.2.0 check
+> node --check logic.js && node --check config.js
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-daily-updates@4.0.0 check
+> node --check app.js
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-hr-portal-prototype@1.4.1 test
+> node --test tests/*.test.mjs
+
+✔ exact company domain and authenticated identity required (2.661251ms)
+✔ every content path is gated including direct JS and data requests (8.74702ms)
+✔ working days exclude Friday/Saturday and same day is zero (2.597409ms)
+✔ experience uses completed months and adds prior work months (0.548681ms)
+✔ retention decision opens at 30 days and never before (0.264102ms)
+✔ only chronologically valid bank-confirmed settled claims qualify (0.26024ms)
+✔ date range month boundaries including leap year (1.261636ms)
+✔ net clock excludes completed and current breaks and freezes on signout (0.239906ms)
+✔ assignment rejects unavailable devices and archived staff (0.293197ms)
+✔ seed provides enough pagination, archive and exception scenarios (3.955229ms)
+✔ portal login starts once and same-day refresh preserves time, breaks and drafts (0.732413ms)
+✔ portal does not restart a closed day or silently discard an overnight workday (0.529847ms)
+✔ every bundled expense asset matches the shared module manifest (36.431167ms)
+✔ expense assets retain company gate and permit only same-origin embedding (6.381734ms)
+✔ expense administration is an explicit delegated module (0.306943ms)
+✔ parent handoff binds current employee and validates origin and source (7.836434ms)
+✔ calendar-year balances reserve pending and never carry forward (2.647922ms)
+✔ leave duration includes start and excludes Friday Saturday (0.337127ms)
+✔ document threshold is configurable and one day optional (1.139293ms)
+✔ reject overlap, overdraw and cross-year requests (0.534866ms)
+✔ HR permissions are delegated and employees never inherit administrative grants (1.823493ms)
+✔ only a Super Admin may assign a role or suspend a demo account (2.985458ms)
+✔ self-demotion, self-suspension and orphaned confidential access are blocked (1.063397ms)
+✔ role downgrade removes privileged grants and suspended accounts cannot act (0.344228ms)
+✔ initial access includes only active employees with three unambiguous roles (0.562962ms)
+✔ scope profile registry covers all 24 stored fields and eight departments (5.765536ms)
+✔ profile validation rejects duplicate email, invalid dates, blank identity and experience (3.928596ms)
+✔ member masking never exposes leading digits and preserves dependent suffix (0.246328ms)
+✔ approved leave and weekends suppress both reminder checkpoints (0.458686ms)
+✔ device edits preserve lifecycle and reject duplicate serials (2.602681ms)
+✔ claim corrections cannot publish incomplete or reversed bank payments (2.842789ms)
+✔ time corrections preserve original values and require review (0.516892ms)
+✔ HR configuration and communication grants are separately delegated (2.579491ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 197.956178
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-expense-workspace@4.1.1 test
+> node --test tests/*.test.cjs
+
+✔ duplicate invoice across employees blocked (19.473889ms)
+✔ subscription same employee/service/period blocked with another invoice (0.430873ms)
+✔ company-card expenses blocked (0.520046ms)
+✔ invalid amount 0 (0.298975ms)
+✔ invalid amount -1 (0.235895ms)
+✔ invalid amount NaN (0.142747ms)
+✔ invalid amount Infinity (0.128536ms)
+✔ invalid amount 1.001 (0.111341ms)
+✔ receipt required (0.251517ms)
+✔ billing month derives from the single expense date (4.587546ms)
+✔ unsupported currency blocked (0.660485ms)
+✔ unknown category blocked (0.229411ms)
+✔ future dates blocked (0.281572ms)
+✔ reused receipt flagged (0.476663ms)
+✔ self approval blocked (0.218716ms)
+✔ unassigned employee approval blocked (0.187792ms)
+✔ approval requires reason (0.192758ms)
+✔ approval cannot exceed receipt (0.137564ms)
+✔ invalid review state blocked (0.098617ms)
+✔ one active reservation; cannot batch twice (0.510721ms)
+✔ pending and paid excluded (0.747493ms)
+✔ late old approved claim retained (0.156088ms)
+✔ cutoff excludes later expenses (0.177572ms)
+✔ FX locked; live rate changes do not change export (0.404341ms)
+✔ sync upsert retries preserve unique rows (0.167794ms)
+✔ sync failure has no ledger side effects (0.204176ms)
+✔ cannot pay before sheet reconciliation (0.416117ms)
+✔ payment confirmation requires reference (0.262696ms)
+✔ payment confirmation idempotent and paid never repeats (0.657162ms)
+✔ cancel releases only its own reservation and removes export rows (0.289761ms)
+✔ paid batch cannot be cancelled (0.101823ms)
+✔ stale rate blocks reserve (0.188704ms)
+✔ missing rate blocks reserve atomically (0.485309ms)
+✔ FX line rounding reconciles totals (0.290478ms)
+✔ sheet export has no salary fields (0.267807ms)
+✔ uncertain transfers blocked from sync and payment (0.569708ms)
+✔ expired snapshot automatically blocks release (0.126802ms)
+✔ uncovered category is blocked (0.572685ms)
+✔ prior approval absence flagged for HR review (0.838741ms)
+✔ unfinished drafts do not crash new submissions (0.62875ms)
+✔ impossible calendar date blocked (0.439812ms)
+✔ client-supplied billing month cannot override expense date (0.400459ms)
+✔ approval cannot round a fractional cent down to zero (0.159229ms)
+✔ invalid FX timestamp blocks reserve (0.103923ms)
+✔ no selected manager routes to HR (0.499363ms)
+✔ old generic Manager role no longer grants access (0.333646ms)
+✔ Super Admin can complete HR final stage (0.192907ms)
+✔ approver selecting self cannot approve own claim even as Super Admin (0.076689ms)
+✔ no manager claim still requires HR final approval (0.514999ms)
+✔ information request removes the claim from approval inbox until response (0.137894ms)
+✔ HR rejection cannot enter payout (0.205566ms)
+✔ receipt file hash catches duplicate even with changed vendor/invoice (0.418659ms)
+✔ filename alone is not proof (0.279034ms)
+✔ meal submission uses exactly its specific expense date (0.289694ms)
+✔ overlapping meal days blocked independently of invoice (0.611339ms)
+✔ meal requires one valid expense date, with no range (0.344786ms)
+✔ monthly and annual plans need no start/end inputs (0.24692ms)
+✔ purchase requires a whole quantity (0.160686ms)
+✔ training requires course name (0.066246ms)
+✔ new category reuses a tested form and HR final stage (0.633996ms)
+✔ receipt validation rejects executable and over-size files (9.074929ms)
+✔ receipt MIME spoofing is rejected (0.777099ms)
+✔ payment date cannot predate an included expense (0.262263ms)
+✔ annual and monthly subscription service overlaps are blocked (0.491874ms)
+✔ different expense billing months are allowed (0.962512ms)
+✔ duplicate submission identifier cannot be inserted twice (0.933329ms)
+✔ reimbursement book balances approved plus FX against paid and outstanding (0.535941ms)
+✔ original currencies are calculated separately (0.208744ms)
+✔ corrupted sheet totals block payment confirmation (0.364648ms)
+✔ sync retry repairs duplicate rows for the same batch (0.548514ms)
+✔ each confirmed claim has exactly one payment allocation on retry (0.273312ms)
+✔ sheet rows include stable employee IDs and contain no salary fields (0.219143ms)
+✔ HR and Super Admin approve directly with no colleague layer (0.357373ms)
+✔ legacy manager fields cannot delegate approval or access (0.623532ms)
+✔ employees and obsolete Manager roles are blocked (0.348181ms)
+✔ HR and Super Admin cannot approve the same claim twice (0.152809ms)
+✔ migration sends pending colleague requests directly to HR and preserves paid values (0.581714ms)
+✔ expanded fictional seed has 28 claims and all review outcomes (0.809392ms)
+✔ empty seed has zero claims, batches, ledger and balances (0.167137ms)
+✔ same vendor multiple non-subscription dates allowed (0.426296ms)
+✔ tampered batch total blocks confirmation (0.431324ms)
+✔ duplicate batch claim IDs rejected before sync mutation (0.201778ms)
+✔ tampered owner fails export atomically (0.251746ms)
+✔ locked line math mismatch rejected (0.160933ms)
+✔ three-month payroll simulation reconciles every salary calculation (26.249454ms)
+✔ early-payment and late-approved examples are paid in second month only (6.2029ms)
+✔ three months never repeat a settled claim and exclude ineligible records (5.741272ms)
+✔ demo duplicate import and processed-run tests block all rows (6.871202ms)
+✔ demo monthly payroll figures match fixed fictional fixture totals (5.589983ms)
+✔ payday 10 uses previous 10 through current 9 (3.395971ms)
+✔ January cycle crosses year correctly (0.205955ms)
+✔ 31st paydays clamp to February and leap days without gaps (0.307333ms)
+✔ invalid payday 0 (0.390422ms)
+✔ invalid payday 32 (0.217251ms)
+✔ invalid payday 1.5 (0.149128ms)
+✔ invalid/reversed periods are blocked (2.492833ms)
+✔ only approved unpaid claims enter period (15.320337ms)
+✔ inclusive start and end with later date excluded (0.921282ms)
+✔ late unpaid is explicit and can be deferred (0.963734ms)
+✔ early payment excludes later expense without losing it (0.461338ms)
+✔ late payment never extends the selected period (0.412044ms)
+✔ company-paid uncovered and missing-proof claims excluded (1.230828ms)
+✔ preview is read-only (0.806563ms)
+✔ multi-employee run freezes exact rows and summary totals (2.747493ms)
+✔ run does not reserve a newly unapproved claim from stale preview (0.683118ms)
+✔ multi-employee reservation rolls back completely on missing FX (0.967909ms)
+✔ repeated run preparation cannot reserve the same claims (1.469439ms)
+✔ run sync retries retain unique rows and locked rate (2.033675ms)
+✔ run sync failure does not partly sync employees (3.115202ms)
+✔ uncertain payout blocks complete run export (0.687541ms)
+✔ cancelled claims cannot remain in payroll totals (1.058033ms)
+✔ handed-off run is locked against accidental cancellation (0.761395ms)
+✔ paid claims remain historical but never enter next run (1.672519ms)
+✔ run exports never contain salary data (0.664874ms)
+✔ changed amount or FX requires fresh preview (2.967906ms)
+✔ business-date helper emits a valid Asia/Dhaka date (0.326946ms)
+✔ duplicate batch membership is rejected instead of double counting (1.340192ms)
+✔ duplicate employee identity never merges two people in export (0.878639ms)
+✔ company emails normalize case and outer whitespace only (0.415675ms)
+✔ blank or malformed company email blocks preparation atomically (2.79184ms)
+✔ duplicate normalized portal emails cannot match different employees (1.079647ms)
+✔ email snapshot remains frozen across case and whitespace differences (1.051334ms)
+✔ actual email change after freezing blocks export (0.90086ms)
+✔ one-time mapping rejects duplicate payroll emails without mutation (0.683298ms)
+✔ missing payroll email blocks the whole sync with no reservation (1.685144ms)
+✔ setup is required before automatic period sync (1.223443ms)
+✔ one setup is reused and same-period retries do not duplicate runs or summary rows (3.009373ms)
+✔ synced claims are excluded from eligible expenses in the next period (2.083032ms)
+✔ automatic sync failure is atomic across employees (2.8274ms)
+✔ legacy ID-only export is never silently relinked to current email (0.719208ms)
+✔ automatic sync records handoff and prevents cancellation after retry clone (1.294234ms)
+✔ legacy demo directory recovers missing identity for known fictional people (0.688526ms)
+✔ directory repair never guesses unknown people or overwrites changed or blank addresses (0.358859ms)
+ℹ tests 133
+ℹ suites 0
+ℹ pass 133
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 216.540045
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-insurance-dashboard@1.2.0 test
+> node --test *.test.cjs
+
+✔ CSV handles quoted commas, escaped quotes and CRLF (2.969837ms)
+✔ invalid and rolled-over dates are rejected (0.66359ms)
+✔ missing and malformed amounts never silently become zero (0.76626ms)
+✔ working-day durations exclude Friday and Saturday (0.338663ms)
+✔ valid confirmed claim qualifies and full member IDs stay hidden (1.318215ms)
+✔ explicit insurer rejection stays rejected instead of pending (0.501347ms)
+✔ pending and date-only bank records never become paid (2.13784ms)
+✔ missing, reversed and future receipt dates cannot publish completed claims (2.237752ms)
+✔ older unconfirmed claim auto-rejects after 30 working days (1.26229ms)
+✔ duplicate source tracking references fail closed (0.855509ms)
+✔ server calculations agree with canonical core for invalid milestones and amounts (4.705008ms)
+✔ both server entry points enforce exact company email domain (3.336729ms)
+✔ rejected server responses disclose counts only, not claim or member data (17.871998ms)
+✔ Apps Script deployment remains domain-only with read-only scopes (0.25064ms)
+✔ checked-in Apps Script is reproducible from canonical validation source (97.868648ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 218.389153
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-daily-updates@4.0.0 test
+> node --test logic.test.js
+
+✔ midpoint due at four net hours, EOD at eight (1.93718ms)
+✔ ongoing break freezes net time (0.209037ms)
+✔ ended session stops accruing time (0.133393ms)
+✔ reason pending differs from accepted and rejected (0.216367ms)
+✔ submitted midpoint overrides old exception (0.172059ms)
+✔ no sign-in is separate from due/missing (0.592908ms)
+✔ overnight session remains attached to its work date (0.265709ms)
+✔ stale session is not treated as verified hours (0.174489ms)
+✔ approved full/half leave and employment boundaries (0.238498ms)
+✔ CSV formula protection and hours formatting (0.775903ms)
+✔ seconds, breaks and Monday-based reporting buckets (0.780083ms)
+✔ EOD preparation opens 45 minutes before an 8-hour finish (0.485657ms)
+✔ 12-hour world clocks use local dates and Eastern daylight saving transitions (19.236447ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 130.83049
+✔ launcher and four independent modules resolve (56.468891ms)
+✔ embedded expenses and module scripts retain correct paths (10.741327ms)
+✔ source schemas, tests and repository metadata are not served (16.963012ms)
+✔ preview denies writes and malformed encodings (2.00008ms)
+✔ headers prevent sniffing and stale demo assets (1.582066ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 191.403417
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-daily-updates@4.0.0 test:database
+> node backend-check.mjs
+
+PASS: schema, isolated access, protected clocks, 4/8-hour rules, EOD feedback window, breaks, exception review, short day, audit, revisions, approved leave and anonymous denial.
+PASS: shared expense assets match, insurance inline JavaScript parses, modules private, no public deployment workflow.
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> bevy-hr-portal-prototype@1.4.1 build
+> node scripts/build.mjs
+
+Built protected Worker. No unguarded static assets.

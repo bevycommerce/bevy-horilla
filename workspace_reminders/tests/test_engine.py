@@ -10,7 +10,7 @@ from notifications.models import Notification
 
 from base.models import Holidays
 from daily_updates import services as updates
-from daily_updates.models import EOD, MIDDAY, MiddaySkip
+from daily_updates.models import COMBINED, EOD, MIDDAY, MiddaySkip
 from horilla.testkit.factories import make_leave_request, make_leave_type
 from workspace_attendance import services as ws
 from workspace_attendance.tests.helpers import make_workspace_employee
@@ -92,14 +92,31 @@ class ReminderEngineTests(TestCase):
         self.run_at(13, 1)
         self.assertNotIn("midday", [k[0] for k in kinds(self.employee)])
 
-    def test_skip_midday_stops_only_midday(self):
+    def test_skip_combine_keeps_hourly_reminder_for_the_combined_update(self):
+        # Owner rule 2026-11-17: after "Skip Midday (combine)" keep reminding every hour
         self.signed_in_at_nine()
         updates.skip_midday(self.employee, timezone.localdate(), MiddaySkip.COMBINE, "web")
         self.run_at(13, 1)
-        self.run_at(17, 31)
-        got = kinds(self.employee)
-        self.assertNotIn(("midday", 1), got)
-        self.assertIn(("eod", 1), got)
+        self.run_at(14, 1)
+        rows = ReminderDelivery.objects.filter(employee=self.employee, kind="midday").order_by("attempt")
+        self.assertEqual([r.attempt for r in rows], [1, 2])
+        self.assertIn("Midday + End of Day", rows[0].message)
+        updates.submit_update(self.employee, timezone.localdate(), COMBINED, {"summary": "whole day"}, "web")
+        self.run_at(15, 1)
+        self.assertEqual(ReminderDelivery.objects.filter(employee=self.employee, kind="midday").count(), 2)
+
+    def test_skip_later_still_stops_midday(self):
+        self.signed_in_at_nine()
+        updates.skip_midday(self.employee, timezone.localdate(), MiddaySkip.LATER, "web")
+        self.run_at(13, 1)
+        self.assertNotIn(("midday", 1), kinds(self.employee))
+
+    def test_combined_reminder_stops_when_eod_is_sent(self):
+        self.signed_in_at_nine()
+        updates.skip_midday(self.employee, timezone.localdate(), MiddaySkip.COMBINE, "web")
+        updates.submit_update(self.employee, timezone.localdate(), EOD, {"summary": "eod"}, "web")
+        self.run_at(13, 1)
+        self.assertNotIn(("midday", 1), kinds(self.employee))
 
     def test_eod_stops_after_combined_or_eod(self):
         updates.submit_update(self.employee, timezone.localdate(), EOD, {"summary": "eod"}, "web")

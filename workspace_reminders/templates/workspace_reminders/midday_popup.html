@@ -30,8 +30,13 @@
     {% else %}
       <div class="wsp-top">
         <div>
-          <h2 class="wsp-title" id="wsp-title">{% trans "Time for your Midday update" %}</h2>
-          <p class="wsp-sub">{% trans "Write a few words about what you have worked on so far." %}</p>
+          {% if combine %}
+            <h2 class="wsp-title" id="wsp-title">{% trans "Time for your Midday + End of Day update" %}</h2>
+            <p class="wsp-sub">{% trans "You skipped Midday. Write one note about your whole day." %}</p>
+          {% else %}
+            <h2 class="wsp-title" id="wsp-title">{% trans "Time for your Midday update" %}</h2>
+            <p class="wsp-sub">{% trans "Write a few words about what you have worked on so far." %}</p>
+          {% endif %}
         </div>
         <button type="button" class="wsp-x" title="{% blocktrans %}Close (I will be reminded in {{ comeback }}){% endblocktrans %}"
                 hx-post="{% url 'ws-midday-popup-close' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML">&times;</button>
@@ -40,13 +45,15 @@
         <textarea name="summary" class="wsp-text" maxlength="5000" required placeholder="{% trans 'For example: Finished the login page, now working on the reports.' %}">{{ text }}</textarea>
         {% if error %}<div class="wsp-note wsp-note--error" role="alert">{{ error }}</div>{% endif %}
         <div class="wsp-actions">
-          <button type="submit" class="wsp-btn wsp-btn--primary">{% trans "Send Midday update" %}</button>
+          <button type="submit" class="wsp-btn wsp-btn--primary">{% if combine %}{% trans "Send Midday + End of Day update" %}{% else %}{% trans "Send Midday update" %}{% endif %}</button>
         </div>
       </form>
       <div class="wsp-actions">
+        {% if not combine %}
         <button type="button" class="wsp-btn" hx-post="{% url 'ws-midday-popup-skip' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="this">
           {% trans "Skip Midday: I will write Midday and End of Day together later" %}
         </button>
+        {% endif %}
         <button type="button" class="wsp-btn wsp-btn--danger" hx-post="{% url 'ws-midday-popup-sign-out' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="this">
           {% trans "Sign Out" %}
         </button>

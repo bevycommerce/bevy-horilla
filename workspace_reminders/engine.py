@@ -22,6 +22,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
+from daily_updates.models import MiddaySkip
 from daily_updates.services import day_state
 from workspace_attendance.adapters import get_adapter
 from workspace_reminders import conf
@@ -37,9 +38,17 @@ def messages():
         "sign_in": _("Good morning. Do not forget to sign in."),
         "sign_in_followup": _("You have not signed in yet today. Sign in with one click."),
         "midday": _("Time for a quick Midday update. You can also skip it."),
+        "midday_combined": _("You skipped Midday. Time to write your Midday + End of Day update."),
         "eod": _("Your day ends soon. Please write your End-of-Day update."),
         "sign_out": _("Your shift has ended. Remember to sign out."),
     }
+
+
+def combine_mode(employee, work_date):
+    """True when the employee chose "Skip Midday (combine)" that day and has not sent the combined update."""
+    updates = day_state(employee, work_date)
+    skip = updates["skip"]
+    return bool(skip and getattr(skip, "choice", None) == MiddaySkip.COMBINE and not (updates["combined"] or updates["eod"]))
 
 
 def due_time(window, kind_conf, signed_in_at=None):
@@ -105,12 +114,22 @@ def needs(employee, work_date, now, adapter=None):
     )
     working_today = state["status"] in WORKING and state["work_date"] == work_date
     updates = day_state(employee, work_date)
-    midday_done = bool(updates["midday"] or updates["combined"] or updates["skip"])
     eod_done = bool(updates["eod"] or updates["combined"])
+    skip = updates["skip"]
+    combine = bool(skip and getattr(skip, "choice", None) == MiddaySkip.COMBINE)
+    # Owner rule 2026-11-17: after "Skip Midday (combine)" the hourly reminder
+    # continues, asking for the Midday + End of Day update, until it is sent.
+    if updates["midday"] or updates["combined"]:
+        midday_needed = False
+    elif skip:
+        midday_needed = combine and not eod_done
+    else:
+        midday_needed = True
     return {
         "sign_in": not signed_in,
         "sign_in_followup": not signed_in,
-        "midday": not midday_done and working_today,
+        "midday": midday_needed and working_today,
+        "midday_combined": combine,
         "eod": not eod_done,
         "sign_out": working_today,
     }
@@ -152,6 +171,7 @@ def process_employee(employee, now, adapter=None, config=None):
         for kind, kind_conf in config["kinds"].items():
             if not need.get(kind):
                 continue
+            text = texts["midday_combined"] if kind == "midday" and need.get("midday_combined") else texts[kind]
             if kind_conf["anchor"] != "sign_in" and not shift_ok:
                 continue
             first_due = due_time(window, kind_conf, started)
@@ -165,7 +185,7 @@ def process_employee(employee, now, adapter=None, config=None):
                 attempt = 101 + ReminderDelivery.objects.filter(
                     employee=employee, work_date=work_date, kind=kind, attempt__gt=100
                 ).count()
-                delivery = _deliver(adapter, employee, work_date, kind, attempt, snooze.until, texts[kind])
+                delivery = _deliver(adapter, employee, work_date, kind, attempt, snooze.until, text)
                 ReminderSnooze.objects.filter(pk=snooze.pk).update(fired=True)
                 if delivery:
                     sent.append(delivery)
@@ -176,7 +196,7 @@ def process_employee(employee, now, adapter=None, config=None):
                 due = first_due + timedelta(minutes=kind_conf["repeat"] * (attempt - 1))
                 if due <= now:
                     if now - due <= stale:
-                        delivery = _deliver(adapter, employee, work_date, kind, attempt, due, texts[kind])
+                        delivery = _deliver(adapter, employee, work_date, kind, attempt, due, text)
                         if delivery:
                             sent.append(delivery)
                     break  # only the latest due attempt is considered

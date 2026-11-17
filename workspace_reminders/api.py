@@ -15,7 +15,9 @@ from workspace_reminders.models import ReminderDelivery
 
 
 def serialize(delivery):
+    combine = delivery.kind == "midday" and engine.combine_mode(delivery.employee, delivery.work_date)
     return {
+        "combine": combine,
         "id": delivery.pk,
         "kind": delivery.kind,
         "work_date": delivery.work_date.isoformat(),
@@ -25,7 +27,7 @@ def serialize(delivery):
         "actions": {
             "sign_in": ["sign_in", "snooze"],
             "sign_in_followup": ["sign_in", "snooze"],
-            "midday": ["open_update", "skip_midday", "snooze"],
+            "midday": ["open_update", "sign_out"] if combine else ["open_update", "skip_midday", "sign_out"],
             "eod": ["open_update", "snooze"],
             "sign_out": ["sign_out", "snooze"],
         }[delivery.kind],

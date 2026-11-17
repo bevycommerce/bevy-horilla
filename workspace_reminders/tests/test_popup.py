@@ -95,12 +95,21 @@ class MiddayPopupTests(TestCase):
         self.assertIn("Please write a short note", html)
         self.assertFalse(DailyUpdate.objects.exists())
 
-    def test_skip_combine(self):
+    def test_skip_combine_then_hourly_box_asks_for_the_combined_update(self):
         delivery = self.make_due()
         self.client.post(reverse("ws-midday-popup-skip", args=[delivery.pk]), **HX)
         self.assertEqual(MiddaySkip.objects.get().choice, MiddaySkip.COMBINE)
         self.assertFalse(DailyUpdate.objects.exists())
         self.assertEqual(self.get_popup().content, b"")
+        # next hour: the box comes back, now for the Midday + End of Day update, without Skip
+        nxt = [d for d in engine.process_employee(self.employee, at(14, 1)) if d.kind == "midday"][0]
+        html = self.get_popup().content.decode()
+        self.assertIn("Midday + End of Day update", html)
+        self.assertNotIn("Skip Midday", html)
+        self.client.post(reverse("ws-midday-popup-submit", args=[nxt.pk]), {"summary": "Whole day note"}, **HX)
+        self.assertEqual(DailyUpdate.objects.get().update_type, "combined")
+        self.assertEqual(self.get_popup().content, b"")
+        self.assertEqual([d for d in engine.process_employee(self.employee, at(15, 1)) if d.kind == "midday"], [])
 
     def test_sign_out_from_popup(self):
         delivery = self.make_due()

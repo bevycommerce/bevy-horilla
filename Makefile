@@ -32,9 +32,10 @@ audit:
 	./scripts/audit_migrations.sh horilla_backup.sql
 
 create_readonly_user1:
+	@test -n "$(READONLY_PASSWORD)" || (echo "READONLY_PASSWORD is required" && exit 1)
 	docker exec -i postgres psql -U postgres -d horilla -tAc \
 		"SELECT 1 FROM pg_roles WHERE rolname = 'leave_calendar_readonly_user'" \
-		| grep -q 1 || echo "CREATE USER leave_calendar_readonly_user WITH PASSWORD 'readonlypassword';" \
+		| grep -q 1 || echo "CREATE USER leave_calendar_readonly_user WITH PASSWORD '$(READONLY_PASSWORD)';" \
 		| docker exec -i postgres psql -U postgres -d horilla
 	echo "GRANT CONNECT ON DATABASE horilla TO leave_calendar_readonly_user; \
 	GRANT USAGE ON SCHEMA public TO leave_calendar_readonly_user; \

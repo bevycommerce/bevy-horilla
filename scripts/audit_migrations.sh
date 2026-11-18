@@ -22,7 +22,13 @@ set -euo pipefail
 APP=${APP_CONTAINER:-horilla}
 DB=${DB_CONTAINER:-postgres}
 PGUSER=${PGUSER:-postgres}
-PGPASSWORD=${PGPASSWORD:-mysecretpassword}
+if [ -z "${PGPASSWORD:-}" ] && [ -f .env ]; then
+    PGPASSWORD=$(grep -E '^POSTGRES_PASSWORD=' .env | head -n 1 | cut -d= -f2-)
+fi
+if [ -z "${PGPASSWORD:-}" ]; then
+    echo "FAIL: set POSTGRES_PASSWORD in .env or export PGPASSWORD" >&2
+    exit 1
+fi
 AUDIT_DB=migration_audit
 DUMP=${1:-}
 

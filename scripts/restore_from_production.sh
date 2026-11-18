@@ -23,7 +23,13 @@ APP_SERVICE=${APP_SERVICE:-server}
 DB_CONTAINER=${DB_CONTAINER:-postgres}
 PGUSER=${PGUSER:-postgres}
 PGDATABASE=${PGDATABASE:-horilla}
-PGPASSWORD=${PGPASSWORD:-mysecretpassword}
+if [ -z "${PGPASSWORD:-}" ] && [ -f .env ]; then
+    PGPASSWORD=$(grep -E '^POSTGRES_PASSWORD=' .env | head -n 1 | cut -d= -f2-)
+fi
+if [ -z "${PGPASSWORD:-}" ]; then
+    echo "FAIL: set POSTGRES_PASSWORD in .env or export PGPASSWORD" >&2
+    exit 1
+fi
 MEDIA_DIR=${MEDIA_DIR:-media}
 
 DB_DUMP=${1:-horilla_backup.sql}
@@ -62,12 +68,16 @@ docker exec "$DB_CONTAINER" psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 \
     -c "CREATE DATABASE ${PGDATABASE} OWNER ${PGUSER};"
 
 if grep -q 'leave_calendar_readonly_user' "$DB_DUMP"; then
+    if [ -z "${READONLY_PASSWORD:-}" ]; then
+        echo "FAIL: set READONLY_PASSWORD. This dump grants that role." >&2
+        exit 1
+    fi
     echo "=== Pre-creating leave_calendar_readonly_user (dump grants reference it) ==="
     docker exec "$DB_CONTAINER" psql -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 -c "
     DO \$\$
     BEGIN
         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'leave_calendar_readonly_user') THEN
-            CREATE USER leave_calendar_readonly_user WITH PASSWORD 'readonlypassword';
+            CREATE USER leave_calendar_readonly_user WITH PASSWORD '${READONLY_PASSWORD}';
         END IF;
     END\$\$;
     "

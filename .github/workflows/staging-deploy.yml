@@ -1,0 +1,103 @@
+# Deploys the staging branch to the staging server after a merge.
+#
+# Schema changes are part of this path. The image build copies the repo,
+# including new migration files, and entrypoint.sh runs `manage.py migrate`
+# before gunicorn. `set -e` in that script stops the container if migrate
+# fails, and this job then fails instead of calling the deploy healthy.
+# The database volume is not recreated.
+#
+# GitHub environment: staging
+# Secrets:
+#   STAGING_HOST         server address
+#   STAGING_USER         SSH user
+#   STAGING_SSH_KEY      private key for that user
+#   STAGING_KNOWN_HOSTS  one line from `ssh-keyscan -t ed25519 <host>`
+
+name: Deploy staging
+
+on:
+  push:
+    branches:
+      - staging
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    steps:
+      - name: Pull, migrate, and health-check staging
+        env:
+          HOST: ${{ secrets.STAGING_HOST }}
+          USER: ${{ secrets.STAGING_USER }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            "$USER@$HOST" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          cd /root/bevy-horilla
+
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "Refusing to deploy: tracked files differ from git."
+            git status -sb
+            exit 1
+          fi
+
+          git fetch origin staging
+          if git show origin/staging:docker-compose.yaml | grep -Eq '^[[:space:]]*-[[:space:]]*"?5432:5432"?[[:space:]]*$'; then
+            echo "Refusing to deploy: Postgres would be published on every interface."
+            exit 1
+          fi
+
+          git checkout staging
+          git pull --ff-only origin staging
+
+          if [ ! -s .env ] || ! grep -q '^POSTGRES_PASSWORD=.' .env; then
+            echo "Refusing to deploy: /root/bevy-horilla/.env must set POSTGRES_PASSWORD."
+            exit 1
+          fi
+
+          # New tables ship as committed migration files. Rebuild the app
+          # image so those files are inside the container, then boot it.
+          # entrypoint.sh applies them with migrate. --no-deps does not
+          # recreate Postgres or its volume.
+          docker compose up --build -d --no-deps server
+
+          deadline=$((SECONDS + 240))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status="$(docker inspect -f '{{.State.Status}}' horilla)"
+            restarts="$(docker inspect -f '{{.RestartCount}}' horilla)"
+            if [ "$status" != "running" ] || [ "$restarts" -gt 0 ]; then
+              echo "App container left the running state (status=${status}, restarts=${restarts})."
+              docker compose logs server --since 10m
+              exit 1
+            fi
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Host: hr-portal.bevy.dev' http://127.0.0.1/login/ || true)"
+            if [ "$code" = "200" ] || [ "$code" = "301" ] || [ "$code" = "302" ]; then
+              docker compose logs server --since 10m | grep -E 'Operations to perform|Applying |No migrations to apply|Traceback' || true
+              if docker compose logs server --since 10m | grep -q 'Traceback'; then
+                echo "Migrate or boot raised an exception."
+                exit 1
+              fi
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Staging did not answer on /login/ within 4 minutes."
+          docker compose logs server --since 10m
+          exit 1
+          REMOTE

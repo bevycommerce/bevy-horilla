@@ -1,0 +1,22 @@
+{% load i18n %}
+<form hx-post="{% url 'daily-updates-submit' %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+    <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />
+    <input type="hidden" name="type" value="{{ form_type }}" />
+    <div class="du-field">
+        <label for="du-{{ form_type }}-summary">{{ prompt }}</label>
+        <textarea class="du-textarea" id="du-{{ form_type }}-summary" name="summary" maxlength="5000" required>{{ values.summary }}</textarea>
+    </div>
+    <details class="du-details"{% if values.completed or values.ongoing or values.blockers %} open{% endif %}>
+        <summary>{% trans "Add details (optional)" %}</summary>
+        <div class="du-field"><label for="du-{{ form_type }}-completed">{% trans "Completed" %}</label><textarea class="du-textarea" id="du-{{ form_type }}-completed" name="completed" maxlength="3000">{{ values.completed }}</textarea></div>
+        <div class="du-field"><label for="du-{{ form_type }}-ongoing">{% trans "Ongoing" %}</label><textarea class="du-textarea" id="du-{{ form_type }}-ongoing" name="ongoing" maxlength="3000">{{ values.ongoing }}</textarea></div>
+        <div class="du-field"><label for="du-{{ form_type }}-blockers">{% trans "Blockers" %}</label><textarea class="du-textarea" id="du-{{ form_type }}-blockers" name="blockers" maxlength="3000">{{ values.blockers }}</textarea></div>
+    </details>
+    <div class="du-actions">
+        <button type="submit" class="du-btn du-btn--primary">{{ button }}</button>
+        {% if carry %}
+            <button type="button" class="du-btn" data-text="{{ carry }}"
+                onclick="var f=this.closest('form'),t=f.querySelector('[name=ongoing]'),d=this.getAttribute('data-text');t.value=t.value.trim()?t.value.trim()+'\n'+d:d;t.closest('details').open=true;t.focus();">{% trans "Copy unfinished items" %}</button>
+        {% endif %}
+    </div>
+</form>

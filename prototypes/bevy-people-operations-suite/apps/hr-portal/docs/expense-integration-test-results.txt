@@ -1,0 +1,45 @@
+
+> bevy-hr-portal-prototype@1.4.0 test
+> node --test tests/*.test.mjs
+
+✔ exact company domain and authenticated identity required (7.8581ms)
+✔ every content path is gated including direct JS and data requests (5.481901ms)
+✔ working days exclude Friday/Saturday and same day is zero (2.45721ms)
+✔ experience uses completed months and adds prior work months (0.334331ms)
+✔ retention decision opens at 30 days and never before (0.199869ms)
+✔ only chronologically valid bank-confirmed settled claims qualify (0.255072ms)
+✔ date range month boundaries including leap year (1.225595ms)
+✔ net clock excludes completed and current breaks and freezes on signout (0.22702ms)
+✔ assignment rejects unavailable devices and archived staff (0.463824ms)
+✔ seed provides enough pagination, archive and exception scenarios (6.098634ms)
+✔ portal login starts once and same-day refresh preserves time, breaks and drafts (0.58733ms)
+✔ portal does not restart a closed day or silently discard an overnight workday (3.831038ms)
+✔ every bundled expense asset matches the shared module manifest (12.39185ms)
+✔ expense assets retain company gate and permit only same-origin embedding (7.074356ms)
+✔ expense administration is an explicit delegated module (0.278767ms)
+✔ parent handoff binds current employee and validates origin and source (3.576006ms)
+✔ calendar-year balances reserve pending and never carry forward (2.388698ms)
+✔ leave duration includes start and excludes Friday Saturday (0.20667ms)
+✔ document threshold is configurable and one day optional (0.776723ms)
+✔ reject overlap, overdraw and cross-year requests (0.342122ms)
+✔ HR permissions are delegated and employees never inherit administrative grants (1.065246ms)
+✔ only a Super Admin may assign a role or suspend a demo account (1.212717ms)
+✔ self-demotion, self-suspension and orphaned confidential access are blocked (0.477305ms)
+✔ role downgrade removes privileged grants and suspended accounts cannot act (0.20706ms)
+✔ initial access includes only active employees with three unambiguous roles (0.261782ms)
+✔ scope profile registry covers all 24 stored fields and eight departments (5.138687ms)
+✔ profile validation rejects duplicate email, invalid dates, blank identity and experience (2.749008ms)
+✔ member masking never exposes leading digits and preserves dependent suffix (0.248893ms)
+✔ approved leave and weekends suppress both reminder checkpoints (0.395883ms)
+✔ device edits preserve lifecycle and reject duplicate serials (1.959675ms)
+✔ claim corrections cannot publish incomplete or reversed bank payments (2.025314ms)
+✔ time corrections preserve original values and require review (0.401091ms)
+✔ HR configuration and communication grants are separately delegated (4.202745ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 139.635048

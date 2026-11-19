@@ -1,0 +1,14 @@
+{
+  "name": "bevy-daily-updates",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test logic.test.js",
+    "test:database": "node backend-check.mjs",
+    "check": "node --check app.js"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14"
+  }
+}

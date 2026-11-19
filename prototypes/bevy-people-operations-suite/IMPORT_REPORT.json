@@ -1,0 +1,18 @@
+{
+  "targetBranch": "bevy-hr-portal-dev-2.0",
+  "targetBaseCommit": "c704ac30bf7ed067ab08fe70daa6a4fc9f28d48f",
+  "sourceCommit": "fb9bdeba6e0cb46e3d77babd16eacfa12932030e",
+  "folder": "prototypes/bevy-people-operations-suite",
+  "existingFilesModified": 0,
+  "existingFilesDeleted": 0,
+  "deploymentEnabled": false,
+  "databaseMigrationsRun": false,
+  "privateGitHistoryImported": false,
+  "validation": {
+    "automatedTestsPassed": 199,
+    "isolatedDatabaseChecks": "passed",
+    "protectedWorkerBuild": "passed",
+    "publicSourceScan": "passed"
+  },
+  "note": "This is a reference handoff. Company runtime integration is a separate PR."
+}

@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+__pycache__/
+*.pyc
+*.zip
+*.tar.gz
+.DS_Store
+dist/

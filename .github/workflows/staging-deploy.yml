@@ -13,7 +13,6 @@ on:
   push:
     branches:
       - staging
-      - chore/self-hosted-staging-runner
 
 concurrency:
   group: deploy-staging

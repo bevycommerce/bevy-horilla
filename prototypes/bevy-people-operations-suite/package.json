@@ -1,0 +1,25 @@
+{
+  "name": "bevy-people-operations-suite",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/hr-portal",
+    "apps/expenses",
+    "apps/insurance",
+    "apps/daily-updates"
+  ],
+  "scripts": {
+    "start": "node scripts/preview.mjs",
+    "check": "node scripts/verify.mjs check",
+    "test": "node scripts/verify.mjs test",
+    "test:database": "npm --prefix apps/daily-updates run test:database",
+    "build": "node scripts/verify.mjs build",
+    "verify": "node scripts/verify.mjs all",
+    "sync:expenses": "node apps/expenses/scripts/sync-module.cjs apps/hr-portal",
+    "sync:insurance": "node scripts/sync-insurance.mjs"
+  }
+}

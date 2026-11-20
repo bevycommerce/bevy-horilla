@@ -1,0 +1,9 @@
+{
+  "name": "bevy-insurance-dashboard",
+  "private": true,
+  "version": "1.2.0",
+  "scripts": {
+    "test": "node --test *.test.cjs",
+    "check": "node --check logic.js && node --check config.js"
+  }
+}

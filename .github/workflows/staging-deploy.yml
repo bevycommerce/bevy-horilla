@@ -1,17 +1,11 @@
 # Deploys the staging branch after a merge.
 #
-# The SSH key can only run /usr/local/sbin/horilla-staging-deploy on the
-# server. That script pulls, rebuilds the app, and waits for /login/.
-# entrypoint.sh runs migrate before gunicorn, so a new table in the merge
-# is applied. The database volume is not recreated. A change to this
-# workflow cannot make the key run a different command.
+# The job runs on the staging server as the deploy user. That user can sudo
+# only /usr/local/sbin/horilla-staging-deploy. The script pulls, rebuilds the
+# app, and waits for /login/. entrypoint.sh runs migrate before gunicorn, so
+# a new table in the merge is applied. The database volume is not recreated.
 #
-# GitHub environment: staging
-# Secrets:
-#   STAGING_HOST         server address
-#   STAGING_USER         deploy
-#   STAGING_SSH_KEY      private key for the deploy user
-#   STAGING_KNOWN_HOSTS  one line from `ssh-keyscan -t ed25519 <host>`
+# The runner connects outbound to GitHub. Inbound SSH from GitHub is not used.
 
 name: Deploy staging
 
@@ -26,25 +20,8 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, horilla-staging]
     timeout-minutes: 20
-    environment: staging
     steps:
       - name: Run the fixed deploy command on staging
-        env:
-          HOST: ${{ secrets.STAGING_HOST }}
-          USER: ${{ secrets.STAGING_USER }}
-          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          ssh -i ~/.ssh/deploy_key \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -o StrictHostKeyChecking=yes \
-            -o BatchMode=yes \
-            "$USER@$HOST"
+        run: sudo -n /usr/local/sbin/horilla-staging-deploy

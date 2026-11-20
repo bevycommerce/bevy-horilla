@@ -43,4 +43,7 @@ urlpatterns = [
     path("attendance/", include("horilla_api.api_urls.attendance.urls")),
     path("leave/", include("horilla_api.api_urls.leave.urls")),
     path("helpdesk/", include("horilla_api.api_urls.helpdesk.urls")),
+    # Workspace sign-in and Daily Updates API (desktop app)
+    path("workspace/v1/updates/", include("daily_updates.api.urls")),
+    path("workspace/v1/", include("workspace_attendance.api.urls")),
 ]

@@ -1,0 +1,14 @@
+{% load i18n %}
+<article class="du-card">
+    <div class="du-row__top">
+        {% include "daily_updates/_person.html" with person=item.employee %}
+        <span><strong>{{ item.update.type_label }}</strong> {% include "daily_updates/_badges.html" with u=item.update %}</span>
+    </div>
+    <div class="du-dates">
+        <div><span>{% trans "Work date" %}</span>{{ item.update.work_date_obj|date:"D, d M Y" }}</div>
+        <div><span>{% trans "Submitted" %}</span>{{ item.update.submitted_dt|date:"d M Y, H:i" }}</div>
+        {% if item.update.edited_dt %}<div><span>{% trans "Last edited" %}</span>{{ item.update.edited_dt|date:"d M Y, H:i" }}</div>{% endif %}
+    </div>
+    {% include "daily_updates/_update_body.html" with u=item.update %}
+    {% if item.update.is_edited %}<button type="button" class="du-link" hx-get="{% url 'daily-updates-history' item.update.id %}" hx-target="next .du-hist" hx-swap="innerHTML">{% trans "History" %}</button><div class="du-hist"></div>{% endif %}
+</article>

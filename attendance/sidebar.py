@@ -49,6 +49,10 @@ SUBMENUS = [
         "accessibility": "attendance.sidebar.tracking_accessibility",
     },
     {
+        "menu": _("Break Log"),
+        "redirect": reverse("break-log-view"),
+    },
+    {
         "menu": _("My Attendances"),
         "redirect": reverse("view-my-attendance"),
     },

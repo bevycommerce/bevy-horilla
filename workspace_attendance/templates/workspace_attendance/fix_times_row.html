@@ -1,0 +1,16 @@
+{% load i18n %}
+<div class="ws-fix-row{% if row.missing_sign_out %} ws-fix-row--missing{% endif %}" {% if row.date %}id="ws-row-{{ row.date|date:'Y-m-d' }}"{% endif %}>
+    <div class="ws-fix-row__day">
+        <strong>{% if row.date %}{{ row.date|date:"D, d M Y" }}{% else %}{% trans "Unknown day" %}{% endif %}</strong>
+        {% if row.worked %}<span class="ws-fix-muted">{% trans "Worked" %} {{ row.worked }}</span>{% endif %}
+        {% if row.missing_sign_out %}<span class="ws-fix-flag">{% trans "Missing sign out" %}</span>{% endif %}
+    </div>
+    <form class="ws-fix-row__form" hx-post="{% url 'workspace-fix-times-save' %}" hx-target="closest .ws-fix-row" hx-swap="outerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="date" value="{% if row.date %}{{ row.date|date:'Y-m-d' }}{% endif %}" />
+        <label>{% trans "Sign in" %} <input type="time" name="sign_in" value="{{ row.sign_in_value }}" /></label>
+        <label>{% trans "Sign out" %} <input type="time" name="sign_out" value="{{ row.sign_out_value }}" /></label>
+        <button type="submit" class="ws-btn">{% trans "Save" %}</button>
+    </form>
+    {% if row.message %}<div class="ws-note ws-note--ok" role="status">{{ row.message }}</div>{% endif %}
+    {% if row.error %}<div class="ws-note ws-note--error" role="alert">{{ row.error }}</div>{% endif %}
+</div>

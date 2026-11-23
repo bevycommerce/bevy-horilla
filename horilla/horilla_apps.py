@@ -20,6 +20,9 @@ INSTALLED_APPS.append("helpdesk")
 INSTALLED_APPS.append("offboarding")
 INSTALLED_APPS.append("horilla_backup")
 INSTALLED_APPS.append("project")
+# Workspace sign-in (My Workspace card, Fix My Times) and Daily Updates
+INSTALLED_APPS.append("workspace_attendance")
+INSTALLED_APPS.append("daily_updates")
 if settings.env("AWS_ACCESS_KEY_ID", default=None) and "storages" not in INSTALLED_APPS:
     INSTALLED_APPS.append("storages")
 
@@ -51,6 +54,7 @@ SIDEBARS = [
     "attendance",
     "leave",
     "payroll",
+    "daily_updates",
     "pms",
     "offboarding",
     "asset",

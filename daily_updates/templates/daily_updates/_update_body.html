@@ -1,0 +1,5 @@
+{% load i18n %}
+<div class="du-text">{{ u.summary }}</div>
+{% if u.completed %}<div class="du-label">{% trans "Completed" %}</div><div class="du-text">{{ u.completed }}</div>{% endif %}
+{% if u.ongoing %}<div class="du-label">{% trans "Ongoing" %}</div><div class="du-text">{{ u.ongoing }}</div>{% endif %}
+{% if u.blockers %}<div class="du-label">{% trans "Blockers" %}</div><div class="du-text">{{ u.blockers }}</div>{% endif %}

@@ -642,6 +642,8 @@ class HorillaAdapter(BaseAdapter):
                     _("There is no attendance for this day. Enter a sign in time."),
                     code="missing_sign_in",
                 )
+            in_date = in_date_for(sign_in)
+            not_future(in_date, sign_in, _("Sign in"))
             window = self.shift_window(employee, work_date)
             shift_over = (
                 window[1] <= now if window is not None else work_date < now.date()
@@ -652,8 +654,6 @@ class HorillaAdapter(BaseAdapter):
                     _("This day is over. Enter the sign out time too."),
                     code="missing_sign_out",
                 )
-            in_date = in_date_for(sign_in)
-            not_future(in_date, sign_in, _("Sign in"))
             attendance = Attendance(
                 employee_id=employee,
                 shift_id=shift,

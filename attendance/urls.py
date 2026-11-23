@@ -7,6 +7,7 @@ This page is used to map request or url path with function
 
 from django.urls import path
 
+import attendance.views.break_log
 import attendance.views.clock_in_out
 import attendance.views.dashboard
 import attendance.views.geofaceconfig
@@ -532,5 +533,10 @@ urlpatterns = [
         "settings/geo-face-config/",
         attendance.views.geofaceconfig.geofaceconfig,
         name="geo-face-config",
+    ),
+    path(
+        "break-log/",
+        attendance.views.break_log.break_log,
+        name="break-log-view",
     ),
 ]

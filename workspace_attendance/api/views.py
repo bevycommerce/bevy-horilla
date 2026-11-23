@@ -13,9 +13,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from attendance.methods.utils import get_client_ip
 from workspace_attendance import conf, services
 from workspace_attendance.adapters import get_adapter
-from workspace_attendance.client_ip import get_client_ip
 
 from .serializers import (
     AwaySerializer,
@@ -61,6 +61,13 @@ class WorkspaceAPIView(APIView):
             return _error(
                 "Your account is not linked to an employee profile.",
                 "no_employee",
+                http.HTTP_403_FORBIDDEN,
+            )
+        if not getattr(self.employee, "is_active", True):
+            # archiving an employee leaves the login active, so check here
+            return _error(
+                "This employee profile is archived.",
+                "employee_inactive",
                 http.HTTP_403_FORBIDDEN,
             )
         if mutating and self.require_idempotency and not self.idempotency_key():

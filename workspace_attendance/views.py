@@ -14,10 +14,10 @@ from django.shortcuts import render
 from django.utils.translation import gettext as _
 from django.views.decorators.http import require_http_methods, require_POST
 
+from attendance.methods.utils import get_client_ip
 from horilla.decorators import login_required as horilla_login_required
 from workspace_attendance import conf, services
 from workspace_attendance.adapters import get_adapter
-from workspace_attendance.client_ip import get_client_ip
 
 logger = logging.getLogger(__name__)
 

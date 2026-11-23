@@ -111,31 +111,46 @@ def serialize_state(state):
     return data
 
 
+def _replay(existing, action):
+    """The stored answer for a repeated key, or a conflict if it was used for another action."""
+    if existing.action != action:
+        raise WorkspaceError(
+            _("This Idempotency-Key was already used for a different action."),
+            code="idempotency_conflict",
+            status=409,
+        )
+    response = dict(existing.response)
+    response["replayed"] = True
+    return existing.status_code, response
+
+
 def run_idempotent(employee, key, action, func):
     """
     Run func() once per (employee, key). A repeated key returns the stored answer.
     func must return (status_code, response_dict) or raise WorkspaceError.
     Without a key the action simply runs (the web card relies on state checks).
+
+    The employee row is locked before the key is looked up, in the same
+    transaction as func(), so a retry that arrives while the first request is
+    still running waits for it and then replays its answer instead of running
+    the action again on the new state. Keys older than WORKSPACE_IDEMPOTENCY_DAYS
+    are not replayed; they are removed when looked up, so the key can be used again.
     """
     if not key:
         return func()
     if not IDEMPOTENCY_KEY_RE.match(key):
         raise WorkspaceError(_("Invalid Idempotency-Key."), code="bad_idempotency_key")
-    existing = WorkspaceIdempotencyKey.objects.filter(
-        employee=employee, key=key
-    ).first()
-    if existing is not None:
-        if existing.action != action:
-            raise WorkspaceError(
-                _("This Idempotency-Key was already used for a different action."),
-                code="idempotency_conflict",
-                status=409,
-            )
-        response = dict(existing.response)
-        response["replayed"] = True
-        return existing.status_code, response
     try:
         with transaction.atomic():
+            _lock_employee(employee)
+            existing = WorkspaceIdempotencyKey.objects.filter(
+                employee=employee, key=key
+            ).first()
+            if existing is not None and existing.created_at < _idempotency_limit():
+                existing.delete()
+                existing = None
+            if existing is not None:
+                return _replay(existing, action)
             status, response = func()
             WorkspaceIdempotencyKey.objects.create(
                 employee=employee,
@@ -145,18 +160,19 @@ def run_idempotent(employee, key, action, func):
                 response=response,
             )
     except IntegrityError:
-        # a parallel request with the same key won the race; return its answer
-        existing = WorkspaceIdempotencyKey.objects.get(employee=employee, key=key)
-        response = dict(existing.response)
-        response["replayed"] = True
-        return existing.status_code, response
+        # Only reachable without row locks (e.g. SQLite): a parallel request with
+        # the same key won the race, so return its answer.
+        existing = WorkspaceIdempotencyKey.objects.filter(
+            employee=employee, key=key
+        ).first()
+        if existing is None:
+            raise
+        return _replay(existing, action)
     return status, response
 
 
-def cleanup_idempotency_keys():
-    """Delete stored keys older than WORKSPACE_IDEMPOTENCY_DAYS (scheduled daily)."""
-    limit = timezone.now() - timedelta(days=conf.get("WORKSPACE_IDEMPOTENCY_DAYS"))
-    return WorkspaceIdempotencyKey.objects.filter(created_at__lt=limit).delete()[0]
+def _idempotency_limit():
+    return timezone.now() - timedelta(days=conf.get("WORKSPACE_IDEMPOTENCY_DAYS"))
 
 
 # --------------------------------------------------------------------------- state
@@ -366,24 +382,28 @@ def correct_times(
     """
     _check_source(source)
     adapter = get_adapter()
-    today = timezone.localdate()
-    window = conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS")
-    if work_date > today:
-        raise WorkspaceError(_("You cannot fix times for a future day."), code="future")
-    if work_date < today - timedelta(days=window):
-        raise WorkspaceError(
-            _(
-                "You can fix your own times for the last %(days)s days only. For older days, contact HR."
-            )
-            % {"days": window},
-            code="outside_window",
-        )
     if sign_in_time is None and sign_out_time is None:
         raise WorkspaceError(
             _("Enter a sign in or sign out time."), code="nothing_to_change"
         )
 
     def do():
+        # date checks run for new corrections only, so a retry after midnight
+        # still replays a correction that was saved before midnight
+        today = timezone.localdate()
+        window = conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS")
+        if work_date > today:
+            raise WorkspaceError(
+                _("You cannot fix times for a future day."), code="future"
+            )
+        if work_date < today - timedelta(days=window):
+            raise WorkspaceError(
+                _(
+                    "You can fix your own times for the last %(days)s days only. For older days, contact HR."
+                )
+                % {"days": window},
+                code="outside_window",
+            )
         with transaction.atomic():
             _lock_employee(employee)
             now = timezone.localtime()
@@ -410,12 +430,19 @@ def correct_times(
                     actor=actor,
                     idempotency_key=key or "",
                 )
-            reported = sign_out_time or sign_in_time
+            # the corrected time on its real calendar date (an overnight sign
+            # out is stored on the next day; work_date stays the shift date)
+            if sign_out_time is not None:
+                reported_date = attendance.attendance_clock_out_date or work_date
+                reported = sign_out_time
+            else:
+                reported_date = attendance.attendance_clock_in_date or work_date
+                reported = sign_in_time
             _record_event(
                 employee,
                 "correction",
                 work_date,
-                timezone.make_aware(datetime.combine(work_date, reported)),
+                timezone.make_aware(datetime.combine(reported_date, reported)),
                 source,
                 key,
                 attendance,

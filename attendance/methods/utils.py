@@ -592,3 +592,48 @@ def sort_activity_dicts(activity_dicts):
     ]
     sorted_activity_dicts = sorted(activity_dicts, key=lambda x: x["Attendance Date"])
     return sorted_activity_dicts
+
+
+def get_client_ip(request):
+    """
+    The client address used for the office network (allowed IP) rule.
+
+    REMOTE_ADDR is used unless the request came through a trusted proxy: then
+    the first X-Forwarded-For entry is the client. Trusted proxies are the
+    addresses or networks in settings.ATTENDANCE_TRUSTED_PROXIES when set;
+    otherwise private and loopback peers (a reverse proxy on the same host or
+    Docker network). A client that reaches the app directly from a public
+    address cannot choose its address with the header.
+    """
+    import ipaddress
+
+    from django.conf import settings
+
+    remote = (request.META.get("REMOTE_ADDR") or "").strip()
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if not forwarded or not remote:
+        return remote or None
+    try:
+        peer = ipaddress.ip_address(remote)
+    except ValueError:
+        return remote
+    trusted = getattr(settings, "ATTENDANCE_TRUSTED_PROXIES", None)
+    if trusted:
+        is_trusted = False
+        for network in trusted:
+            try:
+                if peer in ipaddress.ip_network(str(network).strip(), strict=False):
+                    is_trusted = True
+                    break
+            except ValueError:
+                continue
+    else:
+        is_trusted = peer.is_private or peer.is_loopback
+    if not is_trusted:
+        return remote
+    first = forwarded.split(",")[0].strip()
+    try:
+        ipaddress.ip_address(first)
+    except ValueError:
+        return remote
+    return first

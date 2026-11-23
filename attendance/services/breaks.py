@@ -10,8 +10,6 @@ Workspace card and the Workspace API all run exactly the same rules:
 - "Away" only stores a timestamp; it changes nothing else.
 """
 
-from datetime import date
-
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -62,7 +60,7 @@ def start_break(employee, reason, note="", now=None):
 
     now = now or timezone.localtime()
     activity.clock_out = now.time().replace(microsecond=0)
-    activity.clock_out_date = date.today()
+    activity.clock_out_date = now.date()
     activity.out_datetime = now
     activity.save()
 
@@ -100,7 +98,7 @@ def end_break(employee, now=None):
     AttendanceActivity.objects.create(
         employee_id=employee,
         attendance_date=running.attendance_date,
-        clock_in_date=date.today(),
+        clock_in_date=now.date(),
         shift_day=last_activity.shift_day if last_activity else None,
         clock_in=now.time().replace(microsecond=0),
         in_datetime=now,

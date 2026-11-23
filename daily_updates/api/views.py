@@ -28,16 +28,12 @@ class UpdateSerializer(serializers.Serializer):
 
 
 class EditSerializer(serializers.Serializer):
-    summary = serializers.CharField(max_length=5000, allow_blank=True)
-    completed = serializers.CharField(
-        max_length=3000, required=False, allow_blank=True, default=""
-    )
-    ongoing = serializers.CharField(
-        max_length=3000, required=False, allow_blank=True, default=""
-    )
-    blockers = serializers.CharField(
-        max_length=3000, required=False, allow_blank=True, default=""
-    )
+    """PATCH: send only the fields that change; omitted fields keep their text."""
+
+    summary = serializers.CharField(max_length=5000, required=False, allow_blank=True)
+    completed = serializers.CharField(max_length=3000, required=False, allow_blank=True)
+    ongoing = serializers.CharField(max_length=3000, required=False, allow_blank=True)
+    blockers = serializers.CharField(max_length=3000, required=False, allow_blank=True)
 
 
 class SkipSerializer(serializers.Serializer):
@@ -98,7 +94,7 @@ class EditView(WorkspaceAPIView):
         error = self.guard(mutating=True)
         if error:
             return error
-        data = EditSerializer(data=request.data)
+        data = EditSerializer(data=request.data, partial=True)
         data.is_valid(raise_exception=True)
         return self.respond(
             services.edit_update(

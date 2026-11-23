@@ -18,7 +18,7 @@ This adds two features to the portal: one-click sign in and sign out from the da
 ### Fix My Times
 - Employees can correct their own sign-in and sign-out times for the last 30 days.
 - Every change is kept in a history log: old time, new time, who changed it and when.
-- Overtime still needs HR approval.
+- Overtime still needs HR approval. A day whose overtime HR has already approved cannot be self-corrected in a way that changes that overtime; HR changes those times.
 
 ### Break Log (Attendance menu)
 - Lists every break with its reason, note, start, end and length.
@@ -75,7 +75,7 @@ daily_updates/                  new app: Daily Updates pages, company feed, API
 
 - **One rule set for every route:** the web card, the Fix My Times page and the API call the same service functions.
 - **No new settings and no new packages:** the apps are registered in `horilla/horilla_apps.py`, the URLs are added from each app's `ready()` (the same way `recruitment` does it), and the API is added in `horilla_api/urls.py`.
-- **Database:** four committed migrations, which only add new tables:
+- **Database:** three committed migrations, which only add new tables:
   - `attendance/0004`
   - `workspace_attendance/0001`
   - `daily_updates/0001`
@@ -83,12 +83,5 @@ daily_updates/                  new app: Daily Updates pages, company feed, API
   - `WORKSPACE_CORRECTION_WINDOW_DAYS` (30)
   - `WORKSPACE_AUTO_VALIDATE` (True: Workspace sign-outs and self-corrections are validated so they count for payroll)
   - `WORKSPACE_SHOW_BREAK` (True)
-  - `WORKSPACE_IDEMPOTENCY_DAYS` (7)
-
-## Tests
-
-```
-python manage.py test workspace_attendance daily_updates
-```
-
-153 tests cover sign in and out, breaks and the paused timer, idempotency and parallel requests, company rules, Fix My Times, payroll compatibility, the API (including token checks), the Daily Updates rules and the Company Updates privacy rules.
+  - `WORKSPACE_IDEMPOTENCY_DAYS` (7: how long a desktop request can be retried and get its first answer back)
+  - `ATTENDANCE_TRUSTED_PROXIES` (unset: a list of proxy addresses or networks whose `X-Forwarded-For` is trusted for the office network rule; when unset, private and loopback proxies are trusted)

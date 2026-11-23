@@ -19,6 +19,7 @@ from attendance.methods.utils import (
     activity_datetime,
     employee_exists,
     format_time,
+    get_client_ip,
     overtime_calculation,
     shift_schedule_today,
     strtime_seconds,
@@ -224,10 +225,7 @@ def clock_in(request):
             and allowed_attendance_ips.is_enabled
         ):
 
-            x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-            ip = request.META.get("REMOTE_ADDR")
-            if x_forwarded_for:
-                ip = x_forwarded_for.split(",")[0]
+            ip = get_client_ip(request)
 
             allowed_ips = allowed_attendance_ips.additional_data.get("allowed_ips", [])
             ip_allowed = False
@@ -500,6 +498,12 @@ def clock_out(request):
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime
         employee, work_info = employee_exists(request)
+        # A running break has already closed the open activity. End it first so
+        # this check-out closes the resumed activity and no break stays open.
+        from attendance.services import breaks as break_service
+
+        if break_service.open_break(employee) is not None:
+            break_service.end_break(employee)
         shift = work_info.shift_id
         date_today = date.today()
         if request.__dict__.get("date"):

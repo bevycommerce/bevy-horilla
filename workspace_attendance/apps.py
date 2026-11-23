@@ -11,5 +11,7 @@ class WorkspaceAttendanceConfig(AppConfig):
 
         from horilla.urls import urlpatterns
 
-        urlpatterns.append(path("workspace/", include("workspace_attendance.urls")))
+        # ready() can run more than once (e.g. in tests): add the route only once
+        if not any(str(getattr(p, "pattern", "")) == "workspace/" for p in urlpatterns):
+            urlpatterns.append(path("workspace/", include("workspace_attendance.urls")))
         super().ready()

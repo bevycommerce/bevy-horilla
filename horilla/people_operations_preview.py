@@ -74,7 +74,7 @@ def people_operations_preview(request, module=None, relative=""):
         for key, value in HEADERS.items():
             response[key] = value
         return response
-    if relative in {"", "/"}:
+    if not relative:
         return HttpResponseRedirect(f"/{module}/")
     relative = relative[1:] if relative.startswith("/") else relative
     if not relative:

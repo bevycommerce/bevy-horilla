@@ -1,6 +1,12 @@
 # Hosting and access
 
-## Selected approach
+## Company staging review
+
+This company PR uses the existing Django session login for `/people-ops/`, `/hr/`, `/expenses/`, `/insurance/` and `/daily-updates/`, including direct assets. No ChatGPT account is needed on company staging. The account selector changes fictional preview data only; it does not authorize real HR operations. Verify signed-out users are redirected before sharing.
+
+## Original hosted demo approach
+
+The following describes the separate Sites-hosted demo, not the Django staging route.
 
 1. Source remains in the private GitHub repository `shahriyarhassan-HR/bevy-hr-portal-prototype`. GitHub Pages is not enabled.
 2. The hosted demo checks company identity on the server on every asset request. It uses Sites' trusted sign-in identity; exact domain `bevycommerce.com` is required.

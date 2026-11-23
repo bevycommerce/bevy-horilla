@@ -25,3 +25,7 @@ Inputs are A:Q. Preserve row-relative formulas R:Y and all Share View formulas. 
 - Portal day counts L/M are recorded separately from calculated workday columns T:W.
 - Do not infer missing dates, patient names, bank receipt or final payable from other fields.
 
+
+## Dashboard response
+
+Completed claim details and payment averages require valid chronological insurer receipt, settlement and explicitly confirmed bank receipt. Settled alone does not mean paid. Pending claims may appear in authorized administrative views. Rejected and overdue auto-rejected records are returned by the server as count-only objects, with no claim/member/amount details. The staging fixture is fictional and includes these scenarios; no real Sheet copy or snapshot is included.

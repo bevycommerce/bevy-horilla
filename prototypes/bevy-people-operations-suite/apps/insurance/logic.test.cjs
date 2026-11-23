@@ -14,3 +14,5 @@ test('pending and date-only bank records never become paid',()=>{assert.equal(cl
 test('missing, reversed and future receipt dates cannot publish completed claims',()=>{for(const change of [{5:''},{5:'2026-12-01'},{5:'2026-10-01'},{6:'2026-11-01'},{7:'2026-11-02'}])assert.notEqual(claim(change).status,'done');});
 test('older unconfirmed claim auto-rejects after 30 working days',()=>{assert.equal(claim({9:'2026-08-01',11:'FALSE'}).autoRejected,true);});
 test('duplicate source tracking references fail closed',()=>assert.throws(()=>L.decode(csv([base,base]),now),/Duplicate/));
+test('auto-rejection overrides settled or contradictory source conclusion',()=>{const c=claim({9:'2026-08-01',11:'FALSE',12:'Settled'});assert.equal(c.status,'rejected');assert.equal(c.conclusion,'Rejected');});
+test('first duration is absent for invalid or future receipt milestones',()=>{for(const changes of [{5:'2026-10-01'},{5:'2026-12-01'}])assert.equal(claim(changes).times[0],null);});

@@ -27,7 +27,7 @@
 - **HR:** Original handoff and access-gate documentation remain under `apps/hr-portal/docs`. The original Worker and deployment metadata remain in that app. The local preview bypasses production hosting auth for development; it is not a production server.
 - **Expenses:** All executable assets are under `apps/expenses/dist`. Requests require proof and HR/Super Admin validation. Payout logic reserves exact claims and locks FX. Actual Google credentials/writes and durable transaction enforcement are not connected in the demo. Keep salaries in the separate payroll file.
 - **Insurance:** See `apps/insurance/README.md`. Source configuration is blank by default. The parser expects the existing masked Share View column contract. An HTML-only private GitHub repository is not an authentication layer for data feeds.
-- **Daily updates:** `config.js` contains only public project values and is blank by default. `schema.sql` is the current full schema for a **new** database. The `upgrade_*` files are historical migrations for matching older installations, not a sequence to run after the full current schema. Database tests run in PGlite memory and do not contact Supabase.
+- **Daily updates:** `config.js` contains only public project values and is blank by default. SQL installers are excluded under company rules. The private optional reference has a fresh v6 schema and version-specific upgrades; see Daily Updates README. Set BEVY_DAILY_SQL_DIR to run PGlite checks in memory. They do not contact Supabase or migrate Horilla.
 
 ## Integration boundary
 

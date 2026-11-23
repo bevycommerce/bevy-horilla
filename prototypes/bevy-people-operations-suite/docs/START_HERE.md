@@ -29,4 +29,4 @@ Reviewed 17 November 2026. This private repository is the central source for fou
 5. Open insurance local preview: source is intentionally disconnected. Read its backend and data contract to understand the existing protected Google system.
 6. Open daily updates demo and inspect its documented connected-mode setup.
 
-The dated insurance backups contain internal records. Do not attach them to a public demo, public issue, or public static deployment. Live spreadsheets and Apps Script deployments were not changed by this merge.
+Internal insurance backups are excluded from this company copy. Do not attach them to a public demo, public issue, or public static deployment. Live spreadsheets and Apps Script deployments were not changed by this merge.

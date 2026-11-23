@@ -1,10 +1,10 @@
-# Isolated prototype handoff
+# People Operations prototype handoff
 
 ## Purpose and safety boundary
 
-This is a public-safe, code-only reference for PM, HR and developer review. It is kept entirely under `prototypes/bevy-people-operations-suite/`. A new, uniquely named root workflow verifies only this folder. Existing application files, Django settings/routes/models, database migrations, requirements, Docker files and workflows are not edited.
+This is a public-safe, code-only reference for PM, HR and developer review. It is kept entirely under `prototypes/bevy-people-operations-suite/`. A new, uniquely named root workflow verifies only this folder. The only existing application change is URL routing to a new authenticated static preview handler. Existing business models, migrations, settings, requirements and deployment files are unchanged.
 
-The prototype is not registered as a Horilla app. Opening this PR does not connect it to company login, modify a database or deploy a website. Existing company features continue to use their own implementation. Treat this folder as a reference until a separate integration PR is reviewed.
+The prototype is not registered as a Horilla app. The staging preview requires the existing Django login, including direct asset requests. This gates access to fictional review pages; it does not connect prototype account selectors to real employee permissions or a shared database. Opening the PR does not deploy it. Existing company features continue to use their own implementation. Treat this folder as a reference until a separate integration PR is reviewed.
 
 ## Run and verify
 
@@ -17,7 +17,11 @@ npm run verify
 npm start
 ```
 
-Use Node 24. The preview binds to localhost:4173. Test data is fictional. Daily Supabase configuration is blank; insurance uses a placeholder Sheet ID; hosting metadata is unconfigured. The Worker build verifies packaging but does not establish company SSO.
+Use Node 24. The preview binds to localhost:4173. Test data is fictional. Daily Supabase configuration is blank; local insurance uses fictional config data and its server adapter uses a placeholder Sheet ID; hosting metadata is unconfigured. The Worker build verifies packaging but does not establish company SSO.
+
+## Optional database verification
+
+Company repository rules prohibit SQL installers. Daily Updates SQL stays in the private source handoff; it is not a Django migration or a company database integration. For the optional isolated check set `BEVY_DAILY_SQL_DIR` to the reviewed private SQL directory and run `npm run test:database`. `npm run verify` clearly skips this optional check when fixtures are unavailable. Production changes require a separate Django implementation and migrations.
 
 ## Excluded from the public copy
 
@@ -44,4 +48,4 @@ Use the existing Django employee identity, roles, models, services and migration
 
 ## Rollback
 
-This PR adds files only. Reverting its commit removes the isolated prototype and its new scoped verification workflow. No database rollback is needed because there are no migrations or runtime connections in this handoff. Do not merge or deploy automatically.
+Reverting the feature removes the prototype, its preview handler, the two preview URL registrations and the scoped verification workflow. No database rollback is needed because there are no migrations or runtime connections in this handoff. Do not merge or deploy automatically.

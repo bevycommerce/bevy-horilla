@@ -1,8 +1,8 @@
 const test=require('node:test'),assert=require('node:assert/strict'),E=require('../dist/engine.js');
 const claim=(s,extra={})=>({...s.claims[0],id:undefined,invoice:'NEW-INV',vendor:'Different Service',period:'2026-10',receiptHash:'new-proof',receiptKey:'new-file',destination:'Demo office',tripFrom:'2026-11-05',tripTo:'2026-11-05',mealFrom:'2026-11-05',mealTo:'2026-11-05',mealDates:['2026-11-05'],...extra});
 const reserve=s=>E.batch(s,'Arif Ahmed','2026-11-11T23:59','2026-12-08');
-test('duplicate invoice across employees blocked',()=>{const s=E.seed();assert.throws(()=>E.submit(s,{...s.claims[0],id:undefined,employee:'Arif Ahmed'}),/Duplicate/)});
-test('subscription same employee/service/period blocked with another invoice',()=>{const s=E.seed();assert.throws(()=>E.submit(s,{...s.claims[0],id:undefined,invoice:'CHANGED'}),/Duplicate/)});
+test('duplicate invoice across employees blocked',()=>{const s=E.seed();assert.throws(()=>E.submit(s,{...s.claims[0],id:undefined,employee:'Arif Ahmed',employeeId:'DEMO-2',receiptHash:'different-invoice-proof'}),/^Error: Duplicate blocked: this invoice or subscription billing period already exists\.$/)});
+test('subscription same employee/service/period blocked with another invoice',()=>{const s=E.seed();assert.throws(()=>E.submit(s,{...s.claims[0],id:undefined,invoice:'CHANGED',receiptHash:'different-period-proof'}),/Duplicate/)});
 test('company-card expenses blocked',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{paidBy:'Company'})),/Company-paid/)});
 for(const amount of [0,-1,NaN,Infinity,1.001])test('invalid amount '+amount,()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{amount}))) });
 test('receipt required',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{receipt:''})),/receipt/)});
@@ -52,7 +52,7 @@ test('HR rejection cannot enter payout',()=>{const s=E.seed();E.review(s,'EXP-10
 test('receipt file hash catches duplicate even with changed vendor/invoice',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{receiptHash:s.claims[0].receiptHash})),/Duplicate/)});
 test('filename alone is not proof',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{receiptKey:'',receiptHash:''})),/receipt/)});
 test('meal submission uses exactly its specific expense date',()=>{const s=E.seed(),c=E.submit(s,claim(s,{category:'Lunch / Meals',mealDates:[]}));assert.deepEqual(c.mealDates,[c.date])});
-test('overlapping meal days blocked independently of invoice',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{employee:'Arif Ahmed',category:'Lunch / Meals',date:'2026-11-06',mealFrom:'2026-11-06',mealTo:'2026-11-06',mealDates:['2026-11-06']})),/Duplicate meal/)});
+test('overlapping meal days blocked independently of invoice',()=>{const s=E.seed();assert.throws(()=>E.submit(s,claim(s,{employee:'Arif Ahmed',employeeId:'DEMO-2',category:'Lunch / Meals',date:'2026-11-06',mealFrom:'2026-11-06',mealTo:'2026-11-06',mealDates:['2026-11-06']})),/Duplicate meal/)});
 test('meal requires one valid expense date, with no range',()=>{assert.doesNotThrow(()=>C.validate(C.definitions['Lunch / Meals'],{date:'2026-11-06'}));assert.throws(()=>C.validate(C.definitions['Lunch / Meals'],{date:'2026-02-30'}),/date/)});
 test('monthly and annual plans need no start/end inputs',()=>{for(const cycle of ['Monthly','Annual'])assert.doesNotThrow(()=>C.validate(C.definitions['AI Subscriptions'],{date:'2026-11-05',plan:'Pro',cycle}));assert.throws(()=>C.validate(C.definitions['AI Subscriptions'],{date:'2026-11-05',plan:'',cycle:'Monthly'}),/plan/)});
 test('purchase requires a whole quantity',()=>assert.throws(()=>C.validate(C.definitions['Equipment / Purchases'],{date:'2026-11-05',item:'Monitor',quantity:1.5}),/quantity/));

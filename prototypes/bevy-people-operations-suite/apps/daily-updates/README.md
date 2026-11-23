@@ -16,7 +16,7 @@ See **[HR_PORTAL_MODULE.md](HR_PORTAL_MODULE.md)** for the PM handoff, pilot gat
 - Weekly reports and monthly reports grouped by week; summary and daily-detail CSV exports.
 - Explicit fictional sample day for PM review. No production employee data is seeded.
 
-**Existing v3 database:** apply `upgrade_v3_to_v4.sql` only. **Existing v2:** apply `upgrade_v2_to_v3.sql`, then `upgrade_v3_to_v4.sql`. **New database:** run `schema.sql` once. Original update, session, leave and audit records are preserved. `upgrade_v1_to_v2.sql` is retained for legacy installs.
+The company repository excludes SQL installers under its CLAUDE.md rules. The optional standalone database reference is retained in the private source repository; request the reviewed SQL directory from its owner. New standalone databases use the latest schema once. Existing v1 uses v1→v2→v3→v4→v5→v6; v2 starts at v2→v3; v3 at v3→v4; v4 at v4→v5; v5 at v5→v6. Never run the fresh installer on an existing database. Back up and rehearse upgrades on a disposable copy. Company integration must use Django models and migrations in a separate PR.
 
 The website is still a setup preview until the company database is connected in `config.js`. A live staff pilot needs invite-only authentication, real roster authorization and two-account isolation checks. Leave sync, existing HR-portal SSO and background email reminders are not connected by a frontend link or flag.
 
@@ -65,7 +65,7 @@ Update completion and hours completion are distinct. An accepted Mid-Day reason 
 
 ## GitHub deployment
 
-The repository keeps the existing flat file layout. `.github/workflows/pages.yml` runs syntax, logic and PostgreSQL tests, stages **only** `index.html`, `app.js`, `logic.js`, `styles.css`, `config.js` and `bevy-logo.svg`, then deploys with GitHub Pages.
+The repository keeps the existing flat file layout. `.github/workflows/pages.yml` describes the original standalone publishing workflow; it is not executed as a company root workflow. The company workflow runs syntax and logic tests (optional PostgreSQL tests require private fixtures),, stages **only** `index.html`, `app.js`, `logic.js`, `styles.css`, `config.js` and `bevy-logo.svg`, then deploys with GitHub Pages.
 
 Repository Settings → Pages → Source must be **GitHub Actions**. Pushes to `main` and manual workflow runs trigger the pipeline. A successful deployment exposes its exact site URL in Actions/Pages.
 
@@ -75,38 +75,9 @@ No build step, Teams permissions or employee data are needed to publish the setu
 
 Use a company-owned Supabase project. A connection is required before using the tracker with employees.
 
-### Fresh database
+Use the latest private schema for a fresh standalone database, or only the applicable upgrade chain above for an existing pilot. The optional reference uses invite-only Supabase authentication and authorized HR setup. Do not enable public signup or put service-role credentials in this repository. No database is configured by this company PR.
 
-Run **`schema.sql` once** in the new project's SQL Editor. It installs the base schema plus the v3 session/exception and v4 focused-module extensions. Do not run the fresh installer on an already configured database.
-
-### Existing v2 database
-
-Run **`upgrade_v2_to_v3.sql` then `upgrade_v3_to_v4.sql`**. Existing employees, updates, leave records and revision history are retained. New work-session and exception tables are added; the submission RPC is upgraded to require a work session. Old updates remain readable.
-
-If you installed v1 instead, first run the existing `upgrade_v1_to_v2.sql`, then `upgrade_v2_to_v3.sql` and `upgrade_v3_to_v4.sql`. Back up a live database before upgrades.
-
-### Authentication and first HR profile
-
-1. Disable public sign-up and keep email verification enabled.
-2. Set Auth Site URL and allowed Redirect URLs to the exact deployed GitHub Pages URL, including repository path.
-3. Configure company SMTP before inviting staff broadly; provider delivery limits apply.
-4. Invite the HR email in Supabase Authentication.
-5. Insert the first HR employee using privileged SQL Editor access:
-
-```sql
-insert into public.employees
-(email, full_name, department, country, role, join_date, timezone, workdays)
-values
-('YOUR_VERIFIED_HR_EMAIL', 'YOUR_NAME', 'Human Resources', 'Bangladesh', 'hr', current_date, 'Asia/Dhaka', array[1,2,3,4,5]);
-```
-
-Use the exact lower-case verified email. No live HR or employee accounts are created by this source package.
-
-6. Fill `supabaseUrl` and `supabaseAnonKey` in **`config.js`**, preserving the HR portal URL, and push the change.
-7. Log in as HR, add the actual employee data when provided, and invite each matching email through Supabase Authentication. Creating a profile alone does not send an invitation.
-8. Invitation/recovery links lead to password setup. Employees set their own passwords.
-
-Check current hosting/database free-plan, inactivity and email limits; this repository does not purchase or activate a paid plan.
+The reviewed v6 rules restrict managers to their own records; HR sees everyone. A future Horilla integration must map both HR Admin and Super Admin to the privileged policy. Exceptions include a revision number: reviewing a superseded reason fails and requires reopening the review. The feedback window is wall-clock time since the latest EOD submission/edit; pauses count toward availability but never increase net work time. Eight-hour and stale-session checks remain separate.
 
 ## Leave and reminders
 
@@ -122,7 +93,7 @@ In-app due notices and optional browser notifications operate while the page is 
 npm ci --ignore-scripts
 npm run check
 npm test
-npm run test:database
+BEVY_DAILY_SQL_DIR=/absolute/path/to/reviewed-private-sql npm run test:database
 ```
 
 Tests cover 4/8-hour checkpoints, breaks, ended/overnight/stale sessions, pending versus accepted/declined reasons, leave exemptions, isolated data access, protected clocks, EOD requirements, short-day recording, correction audit, revision history and anonymous-access denial.

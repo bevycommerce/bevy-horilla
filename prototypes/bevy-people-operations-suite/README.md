@@ -1,6 +1,6 @@
 # Public-safe company handoff
 
-Read [PUBLIC_HANDOFF.md](PUBLIC_HANDOFF.md) first. Private insurance backups and live configuration are excluded. This folder is an isolated prototype reference, not an installed Horilla feature.
+Read [PUBLIC_HANDOFF.md](PUBLIC_HANDOFF.md) first. Private insurance backups and live configuration are excluded. This folder is a prototype reference served behind staging Django login, not a production HR database integration.
 
 # Bevy People Operations Suite
 
@@ -17,7 +17,7 @@ Private consolidated source for Bevy Commerce HR portal, employee expenses, insu
 
 Start with the [plain-language overview](docs/START_HERE.md). Then use the [architecture](docs/ARCHITECTURE.md), [technology/database inventory](docs/TECH_STACK.md), [feature/status map](docs/FEATURE_MATRIX.md), [company staging guide](docs/STAGING_HANDOFF.md), and [implementation plan](docs/PRODUCTION_ROADMAP.md).
 
-Latest insurance source is included without internal dated backups; see the [merge report](docs/INSURANCE_MERGE.md). Keep this repo private. **Source handoff is ready for review; shared production authentication, persistence and Google payroll writes remain implementation work.** Live systems were not redeployed.
+Latest insurance source is included without internal dated backups; see the [merge report](docs/INSURANCE_MERGE.md). The company copy is sanitized for its destination repository; keep original business backups private. **Source handoff is ready for review; shared production authentication, persistence and Google payroll writes remain implementation work.** Live systems were not redeployed.
 
 ## Start here
 
@@ -31,7 +31,7 @@ npm start
 
 Open **http://127.0.0.1:4173** to choose a module. `npm start -- --port 4180` changes the local port.
 
-`npm run verify` checks JavaScript, checks the shared expense copy, runs **199 automated tests**, runs isolated daily-update database checks, and builds the protected HR Worker. No live database or Google Sheet is changed. The launcher listens only on loopback and does not publish a website.
+`npm run verify` checks JavaScript, checks the shared expense copy, runs module and cross-tab regression tests, runs optional isolated daily-update database checks when BEVY_DAILY_SQL_DIR is supplied, and builds the protected HR Worker. No live database or Google Sheet is changed. The launcher listens only on loopback and does not publish a website.
 
 ## One canonical expense module
 

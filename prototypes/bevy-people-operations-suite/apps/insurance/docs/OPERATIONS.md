@@ -10,11 +10,11 @@
 5. Names are absent from the response, member IDs are masked, and rejected claims are returned as count-only records.
 6. The frontend refreshes every 60 seconds while open.
 
-The current manifest was copied directly from the editor. Keep executeAs USER_DEPLOYING and access DOMAIN. Do not deploy as ANYONE or ANYONE_ANONYMOUS. A private GitHub repo alone does not authenticate dashboard visitors.
+The checked-in manifest is a reference for a future authorized staging deployment. Keep executeAs USER_DEPLOYING and access DOMAIN. Do not deploy as ANYONE or ANYONE_ANONYMOUS. A private GitHub repo alone does not authenticate dashboard visitors.
 
 ## Deploy an intentional code change
 - Edit the files in apps-script/ and review the diff.
-- Use Apps Script editor (link in README), preserving the file names Code.gs and Dashboard.html and manifest.
+- Open the authorized staging Apps Script project (no project link or mapping is included here), preserving the file names Code.gs and Dashboard.html and manifest.
 - Enable the Sheets advanced service v4 if recovering into another project; for a standard Cloud project also enable Google Sheets API there.
 - Authorize only the scopes in the manifest.
 - In Deploy > Manage deployments, edit the existing employee dashboard deployment, choose a new version, and deploy. This preserves its /exec link.
@@ -29,9 +29,9 @@ Update Claims inputs in the Sheet. The frontend fetches changes automatically; n
 
 ## Recovery
 - Prefer Drive version history or a full native Sheet copy to recover an entire workbook.
-- The dated JSON snapshot contains captured cells with userEnteredValue (including formulas), notes, validation and cell formatting. Its ranges and limits are documented in DATA.md.
+- No snapshots or workbook backups are included in this handoff. Use Drive version history or an authorized owner-managed backup; confirm its date and coverage before restoring.
 - To recover source into the existing project, restore the three apps-script files, authorize the read-only scopes, and version the existing deployment.
-- If creating a replacement project, update the sheet constant and .clasp.json for that project, reapply domain-only settings, and update redirect destinations only after the new protected deployment works.
+- If creating a replacement project, update the placeholder sheet constant and create a local project mapping for that authorized project, reapply domain-only settings, and update redirect destinations only after the new protected deployment works.
 - Recreate missing formula-only capacity by filling the row-relative Claims R:Y formulas and Share View reference formulas down to the desired row count; validate relative references. Do not replace formulas with CSV values.
 
 ## Troubleshooting

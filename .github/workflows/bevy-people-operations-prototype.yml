@@ -32,3 +32,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node scripts/check-public-handoff.mjs
       - run: npm run verify
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Django==4.2.24
+      - run: python tests/test_django_preview.py

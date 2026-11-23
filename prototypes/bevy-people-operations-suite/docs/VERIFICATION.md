@@ -1,36 +1,35 @@
-# Verification — 17 November 2026
+# Verification — 23 November 2026
 
-Executed `npm run verify` locally with Node 24.22.1. Result: **PASS**.
+Local verification used Node 24.22.3 and Django 4.2.24 (matching company requirements for the preview test). All executed checks passed.
 
-| Check group | Result |
+| Check | Result |
 | --- | --- |
-| HR portal | 33/33 tests passed |
-| Expenses | 133/133 tests passed |
-| Insurance | 15/15 tests passed |
-| Daily updates | 13/13 tests passed |
-| Suite HTTP integration | 5/5 tests passed |
-| Total automated tests | **199/199 passed** |
-| Daily-updates database | Schema, RLS isolation, clock protection, breaks, revisions, exception review, approved leave and anonymous denial passed |
-| Protected HR Worker build | Passed |
-| Standalone/embedded expense equality | Passed |
-| JavaScript checks | Passed; includes insurance inline UI script |
+| HR portal | 33 tests passed |
+| Expenses | 133 tests passed, including three-month fictional payroll replay |
+| Insurance | 17 tests passed |
+| Daily Updates logic | 13 tests passed |
+| Suite HTTP routes | 5 tests passed |
+| Review regression tests | 9 tests passed |
+| Django authenticated preview | 5 tests passed |
+| Total named automated tests | **215 passed; zero failures** |
+| Optional isolated PostgreSQL checks | Fresh schema, own-only manager RLS, stale exception reviews, wall-clock handover, late leave correction, legacy field preservation and actual v5→v6 upgrade passed |
+| Protected Worker build / syntax / shared expense copy | Passed |
+| Public handoff scan / whitespace checks | Passed |
 
-Complete console output: [verification-output.txt](verification-output.txt).
+Reproduction and complete console output: [verification-output.txt](verification-output.txt). Node dependencies were installed from the committed lockfile with lifecycle scripts disabled. The Windows npm command path is exercised with a simulated Windows process; a native Windows machine was not used.
 
-## Fixes and evidence
+## Reproduce
 
-1. **Insurance invalid dates:** replaced permissive `Date.UTC` rollover with round-trip validation. Tests reject February 30, April 31, unknown months and invalid leap days.
-2. **Insurance rejection status:** explicit insurer rejection now wins over pending logic. Inconsistent source details can still retain an issue field, while the claim remains rejected.
-3. **Insurance payment chronology:** missing/future insurer receipt, receipt before start, reversed settlement and bank dates do not qualify as completed payments.
-4. **Insurance numeric input:** malformed values return missing, not zero; valid zero remains zero.
-5. **Expense legacy identity:** fill only absent IDs/emails for the three known fictional fixtures during migration. Existing, blank and changed values remain untouched; unknown employee names are not assigned an email. Two regression cases were added.
-6. **Shared expense consistency:** resync repaired engine into HR and updated provenance/version in the manifest. Root check fails on future drift.
-7. **Repository integration:** loopback-only preview serves supported static assets; five HTTP integration tests check all modules, embedded paths, traversal/metadata/schema rejection, denied writes and response headers.
+From this prototype folder run `npm ci --ignore-scripts`, `node scripts/check-public-handoff.mjs`, and `npm run verify`. For Django use the company Python environment and `python tests/test_django_preview.py`; the test uses minimal isolated settings, no company database and no real accounts.
 
-## Practical limits
+SQL files are deliberately excluded from the company repository. Set `BEVY_DAILY_SQL_DIR` to the reviewed private fixture directory, including schema_v5_reference.sql, then run `npm run test:database`. The logged optional database check used that separate directory. Without it the standard verify command explicitly reports SKIP for the optional database check; CI must not describe a skipped check as passed. Company production migrations require a separate Django implementation.
 
-These checks cover imported code and the regression scenarios above. They are not a full production penetration test or a claim of zero defects. The latest internal insurance backup files were imported as private source assets. Tests used fictional fixtures; no live Sheet reads/writes, bank transfer, Google auto-write or production database operation was performed. Original live deployments were not changed. The new launcher is local development tooling, not production authentication. Dependency installation completed with scripts disabled; the package lock is committed for repeatability.
+## Tested review risks
 
-## Latest insurance merge coverage
+Regression coverage includes name reuse with a new employee ID, missing legacy ownership/reapproval, claim identity in frozen exports, stale payroll previews, incomplete FX quotes, asynchronous upload versus reservation, stale open editors, focused Daily Updates drafts and current-employee session binding. Payroll instructions reject duplicate current rows, conflicting duplicate imports and wildcard email criteria; real Google Sheets acceptance still belongs to the staging reviewer.
 
-Five additional server checks cover canonical/server equivalence, exact domain denial, rejected-record redaction, read-only manifest and reproducible generation. HTTP integration additionally denies insurance backups, legacy HTML, live redirect and server files. See [merge report](INSURANCE_MERGE.md).
+Insurance tests require valid insurer/bank milestones before completed amounts, redact rejected server responses, and validate chronological durations. The local review uses fictional records only. Current period presets recalculate on refresh while custom dates and pagination remain intact.
+
+## Remaining release checks
+
+Local checks do not replace the exact commit's GitHub CI result, signed-in company staging acceptance, external-account denial, production load/concurrency testing or an approved real Google connection. No bank transfer, live Sheet write, deployment, merge, server SSH or company database migration was performed. The prototype's browser-local account selectors are demonstrations, not server authorization for real employee data.

@@ -21,5 +21,8 @@
     "verify": "node scripts/verify.mjs all",
     "sync:expenses": "node apps/expenses/scripts/sync-module.cjs apps/hr-portal",
     "sync:insurance": "node scripts/sync-insurance.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
   }
 }

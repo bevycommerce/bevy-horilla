@@ -24,10 +24,10 @@ function decode(text,now=today()){
  const validReceived=received!==null&&received<=now&&(began===null||received>=began),validSettled=String(r[post]).trim()==='Settled'&&settled!==null&&settled<=now&&validReceived&&settled>=received;
  const validBank=confirmed&&bank!==null&&bank<=now&&validSettled&&bank>=settled&&(began===null||bank>=began);
  const insurerRejected=String(r[post]).trim()==='Reject';const age=workingDays(began,now),autoRejected=!confirmed&&age!==null&&age>30;
- const times=[workingDays(began,received),validSettled?workingDays(received,settled):null,validBank?workingDays(settled,bank):null,validBank?workingDays(began,bank):null];
+ const times=[validReceived?workingDays(began,received):null,validSettled?workingDays(received,settled):null,validBank?workingDays(settled,bank):null,validBank?workingDays(began,bank):null];
  let conclusion=validBank?'Bank confirmed':validSettled?'Settled; bank confirmation pending':String(r[post]).trim()==='Reject'?'Rejected':'Awaiting settlement';
  const issue=confirmed&&!validBank?'Bank confirmation needs a valid receipt date':bank!==null&&!confirmed?'Bank date entered; confirmation not checked':null;
- if(issue)conclusion=issue; if(insurerRejected)conclusion='Rejected'; if(!confirmed&&!autoRejected&&!insurerRejected)conclusion=validSettled?'Pending · bank confirmation awaited':'Pending · insurer processing';
+ if(issue)conclusion=issue; if(autoRejected||insurerRejected)conclusion='Rejected'; if(!confirmed&&!autoRejected&&!insurerRejected)conclusion=validSettled?'Pending · bank confirmation awaited':'Pending · insurer processing';
  return {portalStage:String(r[post]||'').trim()||String(r[heads.indexOf('Insurer Status')]||'').trim()||'Processing',tracking,claim:r[1],type:r[2],member:/^\*{4}\d{4}(?:-\d+)?$/.test(r[member])?r[member]:'Hidden',amount:numeric(r[4]),received:validReceived?received:null,settled:validSettled?settled:null,bank:validBank?bank:null,start:began,basis:r[basis]||'HR approval',times,conclusion,status:(autoRejected||insurerRejected)?'rejected':validBank?'done':!confirmed?'pending':'other',issue,age,autoRejected,confirmed,insurerRejected:String(r[post]).trim()==="Reject"};
  });
 }

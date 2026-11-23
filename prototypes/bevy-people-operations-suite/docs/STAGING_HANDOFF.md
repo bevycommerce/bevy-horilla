@@ -8,7 +8,7 @@
 
 The company developer should create a feature branch in the approved private company repo, review its AGENTS.md and build conventions, and import this suite under an agreed folder or adapt its workspace layout. Preserve the destination's workflows, package manager, lockfile and authentication design; do not replace them wholesale with this root. Use a reviewed PR rather than pushing to the company's protected default branch.
 
-Before copying, decide whether internal insurance backups are allowed in the company repository. They contain actual claim/member data. They are optional for running code; omit `apps/insurance/data` if the destination's data policy excludes business records, and document that omission. Never put backups in public build artifacts. Keep source provenance from source-manifest.json even if backup files are excluded.
+Internal insurance backups and live identifiers are excluded from this company handoff. Do not copy them into this public Git network. Keep staging fixtures fictional or explicitly approved and redacted. source-manifest.json records import provenance, not current file integrity after review fixes.
 
 ## 2. Establish a clean baseline
 
@@ -27,10 +27,10 @@ Use Node 24 to match CI. Open localhost:4173. CI does not deploy anything. Only 
 | --- | --- | --- |
 | HR | Company-approved SSO/gateway; adapt Worker identity contract and build target | No spoofable identity headers; no real banking/profile demo data |
 | Expenses | Initially fictional fixtures; implement authenticated API/storage before shared real use | No real payroll salaries or production Google write credentials |
-| Insurance | Copy the Sheet into restricted staging Drive; create separate Apps Script project; update Sheet constant and clasp project mapping | Do not run clasp push against the existing production project; no automatic snapshot restore |
+| Insurance | Create an approved fictional/redacted Sheet in restricted staging Drive; never copy live claim data for a demo; create separate Apps Script project; update Sheet constant and clasp project mapping | Do not run clasp push against the existing production project; no automatic snapshot restore |
 | Daily updates | Separate Supabase project; install schema once, set public URL/anon key and invite test identities | No production DB keys; never expose service-role key; disable public self-signup |
 
-For a **new** daily database use `schema.sql`. Do not then run all historical upgrades on top. For an existing installation identify its schema version, back it up, inspect the specific upgrade chain and rehearse it on a copy. Root `test:database` is disposable verification; it does not migrate a Supabase project.
+Daily SQL installers are excluded from the company repository. The optional private standalone reference and its v1→v6 upgrade chain are documented in Daily Updates README. Set BEVY_DAILY_SQL_DIR only for disposable local verification. Company database changes require a separate Django implementation and migrations.
 
 For Google staging enable Sheets v4 advanced service, retain the read-only scopes, `DOMAIN` access and `USER_DEPLOYING`. The deployer's account must read the copied Sheet. Use a separate protected staging /exec deployment. See insurance OPERATIONS.md for deployment and rollback limitations.
 
@@ -57,3 +57,26 @@ Record source commit, environment, schema version, Google script version, deploy
 ## Definition of done for the next company PR
 
 Destination conventions are respected; no real records leak into static artifacts; authentication is enforced server-side; the applicable acceptance checks above have evidence; PM/HR know which modules remain prototypes; and a named release owner can explain and execute rollback.
+
+## Review fixes — 23 November 2026
+
+- Latest `staging` is the starting point. The proposal remains one People Operations preview feature; real application payroll, database models, login and deployment configuration are unchanged.
+- Slash routes serve their index instead of redirecting forever. Signed-out page and direct-asset access is tested through the Django decorator.
+- Managers see only their own Daily Updates; HR Admin/Super Admin keep authorized workspace review. The optional standalone reference uses `hr` for that privileged policy.
+- Exception review rejects stale revisions. EOD availability uses elapsed wall time since the latest EOD edit, independently of eight net hours. Existing sessions can be corrected after a late leave approval.
+- Cross-tab refresh invalidates open editors and rebinds the current employee session. Uploads recheck the current claim/account before replacing anything. FX responses are validated completely before replacing the quote.
+- Claims retain an employee ID. Missing legacy ownership requires explicit HR verification and reapproval; name reuse cannot move an approved claim into another person's payroll.
+- Both expense copies match byte-for-byte. The two payroll runbooks match and block duplicate current payroll rows, duplicate/conflicting imports, completed runs and wildcard email matches.
+- Insurance staging is fictional. Completed amounts still require valid insurer and bank milestones; overdue rejection and invalid durations are handled consistently. Preset refresh updates dates without discarding custom filters or pagination.
+- SQL installers are excluded from the company tree under CLAUDE.md; the reviewed private standalone reference includes a v6 upgrade and disposable upgrade verification. No company database migration is performed.
+
+### Click-test before staging acceptance
+
+1. Sign out of Django and request `/hr/seed.mjs`: expect the login redirect. Sign in, open `/people-ops/`, then open all four modules. `/hr/` must load directly.
+2. Switch fictional employee/HR/Super Admin accounts. Employees/managers must have their own Daily Updates only; authorized admins get team review.
+3. Keep an HR editor open in one tab and change the workspace in another. The old editor must close. Keep an employee Daily Updates draft focused while another account updates: it must remain attached to that employee.
+4. Submit an expense with a fictional bill, approve it as HR, preview a period, sync, export, retry and confirm fictional payment. Paid/reserved claims must stay excluded from a fresh run. Replay the three-month example.
+5. In a test copy of a salary workbook, follow PAYROLL_RUNBOOK: test duplicate current rows, a READY plus non-READY duplicate import, an address containing a wildcard, and a previously paid run. Each must block instead of producing a payable amount.
+6. Open insurance, confirm the fictional label and counts, then check preset/custom filters, pagination, mobile layout and refresh.
+
+Company CI, signed-in staging checks, real Google authorization and any future backend integration remain release-owner acceptance steps. A successful local prototype build does not certify a production rollout.

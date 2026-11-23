@@ -27,7 +27,7 @@ The insurance arrow describes the existing separately deployed Google system. Ru
 | Insurance validation | `apps/insurance/logic.js` | `npm run sync:insurance` generates the Apps Script calculation core |
 | Insurance Google access/read adapter | `apps/insurance/server/adapter.gs` | Same generator combines adapter + validation into deployable Code.gs |
 | Insurance Google UI | `apps/insurance/apps-script/Dashboard.html` | Separate Apps Script deployment, not automatically published |
-| Daily updates backend contract | `apps/daily-updates/schema.sql` | New-database schema; historical upgrades are alternatives for older databases |
+| Daily updates backend contract | Private optional SQL source; `apps/daily-updates/backend-check.mjs` | SQL excluded here; company implementation needs Django migrations |
 
 Expense source lives in `dist` by historical convention. HR `dist/server` is generated build output. They must not be treated as the same kind of folder.
 

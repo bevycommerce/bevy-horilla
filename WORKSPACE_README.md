@@ -84,4 +84,4 @@ daily_updates/                  new app: Daily Updates pages, company feed, API
   - `WORKSPACE_AUTO_VALIDATE` (True: Workspace sign-outs and self-corrections are validated so they count for payroll)
   - `WORKSPACE_SHOW_BREAK` (True)
   - `WORKSPACE_IDEMPOTENCY_DAYS` (7: how long a desktop request can be retried and get its first answer back)
-  - `ATTENDANCE_TRUSTED_PROXIES` (unset: a list of proxy addresses or networks whose `X-Forwarded-For` is trusted for the office network rule; when unset, private and loopback proxies are trusted)
+  - `ATTENDANCE_TRUSTED_PROXIES` (unset: setting or environment variable, comma separated; the addresses or networks of the reverse proxies in front of the portal. Only then is `X-Forwarded-For` used for the office network rule, read from the right; when unset the header is ignored and the connecting address is used, for the header Check-In button as well)

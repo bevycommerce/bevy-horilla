@@ -1,6 +1,11 @@
 """
 The contract between the Workspace modules and the host HR system.
 
+WORKSPACE_ADAPTER replaces behaviour only. The Workspace tables and their
+migrations still point at Horilla's Employee and Attendance models (and the
+employee and attendance apps), so a port also needs compatible models and
+migration dependencies before the schema can be installed.
+
 To move the Workspace into another Django HR portal, write a new class with
 these methods and point settings.WORKSPACE_ADAPTER at it. Nothing else in
 workspace_attendance or daily_updates imports HR models.

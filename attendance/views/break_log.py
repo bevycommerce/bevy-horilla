@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from attendance.methods.utils import employee_exists
 from attendance.models import AttendanceBreak
+from employee.models import Employee
 from horilla.decorators import login_required
 
 
@@ -111,6 +112,10 @@ def break_log(request):
     if not can_view_all:
         employee, work_info = employee_exists(request)
         breaks = breaks.filter(employee_id=employee) if employee else breaks.none()
+    else:
+        # only employees of the company chosen in the company switcher (the
+        # Employee manager applies that selection, as other attendance views do)
+        breaks = breaks.filter(employee_id__in=Employee.objects.values("pk"))
 
     rows = []
     total_seconds = 0

@@ -10,6 +10,7 @@ Workspace card and the Workspace API all run exactly the same rules:
 - "Away" only stores a timestamp; it changes nothing else.
 """
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -78,31 +79,39 @@ def end_break(employee, now=None):
     """
     End the running break and open a new attendance activity.
 
-    Returns the ended break, or None when no break was running.
+    Returns the ended break, or None when no break was running. The break row
+    is locked, so two overlapping calls end it once; both writes are one
+    transaction, so a failure leaves the break open for a retry.
     """
-    running = open_break(employee)
-    if running is None:
-        return None
-
-    last_activity = (
-        AttendanceActivity.objects.filter(
-            employee_id=employee, attendance_date=running.attendance_date
+    with transaction.atomic():
+        running = (
+            AttendanceBreak.objects.select_for_update()
+            .filter(employee_id=employee, end_datetime__isnull=True)
+            .order_by("-id")
+            .first()
         )
-        .order_by("id")
-        .last()
-    )
-    now = now or timezone.localtime()
-    running.end_datetime = now
-    running.save()
+        if running is None:
+            return None
 
-    AttendanceActivity.objects.create(
-        employee_id=employee,
-        attendance_date=running.attendance_date,
-        clock_in_date=now.date(),
-        shift_day=last_activity.shift_day if last_activity else None,
-        clock_in=now.time().replace(microsecond=0),
-        in_datetime=now,
-    )
+        last_activity = (
+            AttendanceActivity.objects.filter(
+                employee_id=employee, attendance_date=running.attendance_date
+            )
+            .order_by("id")
+            .last()
+        )
+        now = now or timezone.localtime()
+        running.end_datetime = now
+        running.save()
+
+        AttendanceActivity.objects.create(
+            employee_id=employee,
+            attendance_date=running.attendance_date,
+            clock_in_date=now.date(),
+            shift_day=last_activity.shift_day if last_activity else None,
+            clock_in=now.time().replace(microsecond=0),
+            in_datetime=now,
+        )
     return running
 
 

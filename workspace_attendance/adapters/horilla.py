@@ -11,6 +11,7 @@ reuse attendance.services.breaks.
 import ipaddress
 from datetime import datetime, time, timedelta
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
@@ -41,6 +42,23 @@ from base.models import AttendanceAllowedIP, EmployeeShiftDay
 from .base import AttendanceActionError, BaseAdapter
 
 NOON_SECONDS = strtime_seconds("12:00")
+
+
+def _activity_start(activity):
+    """When an activity started, or None for a row without a check-in date."""
+    if activity.in_datetime:
+        return activity.in_datetime
+    if activity.clock_in_date and activity.clock_in:
+        return _aware(activity.clock_in_date, activity.clock_in)
+    return None
+
+
+def _work_info(employee):
+    """The employee's work information, or None when the row is missing."""
+    try:
+        return employee.employee_work_info
+    except ObjectDoesNotExist:
+        return None
 
 
 def _shift_day(day_date):
@@ -167,7 +185,7 @@ class HorillaAdapter(BaseAdapter):
             else:
                 status = "not_signed_in"
             missing = []
-            shift_id = getattr(employee.employee_work_info, "shift_id_id", None)
+            shift_id = getattr(_work_info(employee), "shift_id_id", None)
             if shift_id not in windows:
                 windows[shift_id] = self.shift_window(employee, day)
             window = windows[shift_id]
@@ -246,9 +264,10 @@ class HorillaAdapter(BaseAdapter):
         for activity in AttendanceActivity.objects.filter(
             employee_id=employee, attendance_date=work_date
         ).order_by("clock_in_date", "clock_in", "id"):
-            start = activity.in_datetime or _aware(
-                activity.clock_in_date, activity.clock_in
-            )
+            start = _activity_start(activity)
+            if start is None:
+                # incomplete legacy row (no check-in date): no time is invented
+                continue
             if signed_in_at is None:
                 signed_in_at = timezone.localtime(start)
             resumed_after_break = any(
@@ -265,15 +284,16 @@ class HorillaAdapter(BaseAdapter):
                 # a break closes the activity; older rows fall back to clock times
                 if activity.in_datetime and activity.out_datetime:
                     in_dt, out_dt = activity.in_datetime, activity.out_datetime
-                else:
+                elif activity.clock_in_date and activity.clock_out_date:
                     in_dt, out_dt = activity_datetime(activity)
+                else:
+                    continue
                 worked_seconds += max(0, int((out_dt - in_dt).total_seconds()))
 
         if running_activity is not None and session_started_at is None:
-            session_started_at = timezone.localtime(
-                running_activity.in_datetime
-                or _aware(running_activity.clock_in_date, running_activity.clock_in)
-            )
+            running_start = _activity_start(running_activity)
+            if running_start is not None:
+                session_started_at = timezone.localtime(running_start)
 
         away_since = None
         presence = EmployeePresence.objects.filter(employee_id=employee).first()
@@ -457,12 +477,30 @@ class HorillaAdapter(BaseAdapter):
         shift = employee.employee_work_info.shift_id
         date_today = now.date()
         day = _shift_day(date_today)
-        # same row clock_out_attendance_and_activity closes
-        latest = (
-            Attendance.objects.filter(employee_id=employee)
-            .order_by("-attendance_date", "-id")
-            .first()
+        # the row clock_out_attendance_and_activity finalizes: the one of the
+        # activity being closed, else the latest row
+        open_activity = (
+            AttendanceActivity.objects.filter(
+                employee_id=employee, clock_out__isnull=True
+            )
+            .order_by("attendance_date", "id")
+            .last()
         )
+        latest = None
+        if open_activity is not None:
+            latest = (
+                Attendance.objects.filter(
+                    employee_id=employee, attendance_date=open_activity.attendance_date
+                )
+                .order_by("-id")
+                .first()
+            )
+        if latest is None:
+            latest = (
+                Attendance.objects.filter(employee_id=employee)
+                .order_by("-attendance_date", "-id")
+                .first()
+            )
         if latest is not None:
             if not latest.attendance_day:
                 latest.attendance_day = _shift_day(latest.attendance_date)
@@ -565,13 +603,20 @@ class HorillaAdapter(BaseAdapter):
 
         def out_date_for(in_date, in_clock, out_clock):
             if out_clock > in_clock:
-                return in_date
+                out_date = in_date
             # equal times are never read as a 24-hour overnight interval
-            if night_shift and out_clock < in_clock:
-                return in_date + timedelta(days=1)
-            raise AttendanceActionError(
-                _("Sign out must be after sign in."), code="order"
-            )
+            elif night_shift and out_clock < in_clock:
+                out_date = in_date + timedelta(days=1)
+            else:
+                raise AttendanceActionError(
+                    _("Sign out must be after sign in."), code="order"
+                )
+            # a shift ends at the latest on the morning after its work date
+            if out_date > work_date + timedelta(days=1):
+                raise AttendanceActionError(
+                    _("Sign out must be within this shift."), code="order"
+                )
+            return out_date
 
         def in_date_for(clock):
             """
@@ -596,6 +641,16 @@ class HorillaAdapter(BaseAdapter):
                 raise AttendanceActionError(
                     _("There is no attendance for this day. Enter a sign in time."),
                     code="missing_sign_in",
+                )
+            window = self.shift_window(employee, work_date)
+            shift_over = (
+                window[1] <= now if window is not None else work_date < now.date()
+            )
+            if sign_out is None and shift_over:
+                # a sign-in alone would leave this past day signed in until now
+                raise AttendanceActionError(
+                    _("This day is over. Enter the sign out time too."),
+                    code="missing_sign_out",
                 )
             in_date = in_date_for(sign_in)
             not_future(in_date, sign_in, _("Sign in"))
@@ -764,7 +819,7 @@ class HorillaAdapter(BaseAdapter):
 
     # ---------------------------------------------------------- schedule
     def shift_window(self, employee, day_date):
-        shift = getattr(employee.employee_work_info, "shift_id", None)
+        shift = getattr(_work_info(employee), "shift_id", None)
         if shift is None:
             return None
         minimum_hour, start_sec, end_sec = shift_schedule_today(

@@ -11,8 +11,10 @@ logger = logging.getLogger(__name__)
 from datetime import date, datetime, timedelta
 
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from attendance.methods.utils import (
@@ -279,18 +281,33 @@ def clock_in(request):
                     )
                     attendance_date = date_yesterday
                     day = day_yesterday
-            attendance = clock_in_attendance_and_activity(
-                employee=employee,
-                date_today=date_today,
-                attendance_date=attendance_date,
-                day=day,
-                now=now,
-                shift=shift,
-                minimum_hour=minimum_hour,
-                start_time=start_time_sec,
-                end_time=end_time_sec,
-                in_datetime=datetime_now,
-            )
+            from attendance.services import breaks as break_service
+
+            with transaction.atomic():
+                # Same per-employee lock as the Workspace sign-in, so the two
+                # entry points cannot add activities at the same moment.
+                list(
+                    type(employee)
+                    ._base_manager.select_for_update(of=("self",))
+                    .filter(pk=employee.pk)
+                    .values_list("pk", flat=True)
+                )
+                if break_service.open_break(employee) is not None:
+                    return HttpResponse(
+                        _("You are on a break. End the break first.")
+                    )
+                attendance = clock_in_attendance_and_activity(
+                    employee=employee,
+                    date_today=date_today,
+                    attendance_date=attendance_date,
+                    day=day,
+                    now=now,
+                    shift=shift,
+                    minimum_hour=minimum_hour,
+                    start_time=start_time_sec,
+                    end_time=end_time_sec,
+                    in_datetime=datetime_now,
+                )
             script = ""
             hidden_label = ""
             time_runner_enabled = timerunner_enabled(request)["enabled_timerunner"]
@@ -383,8 +400,16 @@ def clock_out_attendance_and_activity(employee, date_today, now, out_datetime=No
             total_seconds = days_second + seconds
             duration = duration + total_seconds
         duration = format_time(duration)
-        # update clock out of attendance
-        attendance = Attendance.objects.filter(employee_id=employee).order_by(
+        # update clock out of the attendance the closed activity belongs to
+        # (the latest row only when no row for that date exists)
+        attendance = (
+            Attendance.objects.filter(
+                employee_id=employee,
+                attendance_date=attendance_activity.attendance_date,
+            )
+            .order_by("-id")
+            .first()
+        ) or Attendance.objects.filter(employee_id=employee).order_by(
             "-attendance_date", "-id"
         )[0]
         attendance.attendance_clock_out = now + ":00"
@@ -498,12 +523,18 @@ def clock_out(request):
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime
         employee, work_info = employee_exists(request)
-        # A running break has already closed the open activity. End it first so
-        # this check-out closes the resumed activity and no break stays open.
+        # A running break has already closed the open activity. End it first, at
+        # this check-out's own time, so the check-out closes the resumed
+        # activity and no break stays open.
         from attendance.services import breaks as break_service
 
         if break_service.open_break(employee) is not None:
-            break_service.end_break(employee)
+            checkout_at = (
+                timezone.make_aware(datetime_now)
+                if timezone.is_naive(datetime_now)
+                else datetime_now
+            )
+            break_service.end_break(employee, now=timezone.localtime(checkout_at))
         shift = work_info.shift_id
         date_today = date.today()
         if request.__dict__.get("date"):

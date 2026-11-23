@@ -133,8 +133,9 @@ def run_idempotent(employee, key, action, func):
     The employee row is locked before the key is looked up, in the same
     transaction as func(), so a retry that arrives while the first request is
     still running waits for it and then replays its answer instead of running
-    the action again on the new state. Keys older than WORKSPACE_IDEMPOTENCY_DAYS
-    are not replayed; they are removed when looked up, so the key can be used again.
+    the action again on the new state. Answers older than
+    WORKSPACE_IDEMPOTENCY_DAYS are removed on each keyed request of the employee,
+    so they are not replayed and the key can be used again.
     """
     if not key:
         return func()
@@ -143,12 +144,13 @@ def run_idempotent(employee, key, action, func):
     try:
         with transaction.atomic():
             _lock_employee(employee)
+            # drop this employee's expired answers (the retention window)
+            WorkspaceIdempotencyKey.objects.filter(
+                employee=employee, created_at__lt=_idempotency_limit()
+            ).delete()
             existing = WorkspaceIdempotencyKey.objects.filter(
                 employee=employee, key=key
             ).first()
-            if existing is not None and existing.created_at < _idempotency_limit():
-                existing.delete()
-                existing = None
             if existing is not None:
                 return _replay(existing, action)
             status, response = func()

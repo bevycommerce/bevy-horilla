@@ -348,6 +348,9 @@ def _redact(response, update_id):
         for part in (MIDDAY, EOD, COMBINED):
             if (day.get(part) or {}).get("id") == update_id:
                 day[part] = None
+                if part == MIDDAY:
+                    # carry_forward is copied from the Midday "ongoing" text
+                    day["carry_forward"] = ""
         response["day"] = day
     return response
 

@@ -92,6 +92,11 @@ class AppendOnlyQuerySet(models.QuerySet):
     def delete(self):
         raise ValueError("AttendanceCorrectionLog rows cannot be deleted.")
 
+    def bulk_create(self, objs, *args, **kwargs):
+        if kwargs.get("update_conflicts"):
+            raise ValueError("AttendanceCorrectionLog rows cannot be changed.")
+        return super().bulk_create(objs, *args, **kwargs)
+
 
 class AttendanceCorrectionLog(models.Model):
     """

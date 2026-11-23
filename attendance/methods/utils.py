@@ -594,46 +594,65 @@ def sort_activity_dicts(activity_dicts):
     return sorted_activity_dicts
 
 
+def _trusted_proxies():
+    """
+    Networks of the reverse proxies whose X-Forwarded-For may be used, from
+    settings.ATTENDANCE_TRUSTED_PROXIES or the ATTENDANCE_TRUSTED_PROXIES
+    environment variable (comma separated). Empty means: trust no proxy.
+    """
+    import ipaddress
+    import os
+
+    from django.conf import settings
+
+    raw = getattr(settings, "ATTENDANCE_TRUSTED_PROXIES", None)
+    if raw is None:
+        raw = os.environ.get("ATTENDANCE_TRUSTED_PROXIES", "")
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    networks = []
+    for item in raw:
+        try:
+            networks.append(ipaddress.ip_network(str(item).strip(), strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
 def get_client_ip(request):
     """
     The client address used for the office network (allowed IP) rule.
 
-    REMOTE_ADDR is used unless the request came through a trusted proxy: then
-    the first X-Forwarded-For entry is the client. Trusted proxies are the
-    addresses or networks in settings.ATTENDANCE_TRUSTED_PROXIES when set;
-    otherwise private and loopback peers (a reverse proxy on the same host or
-    Docker network). A client that reaches the app directly from a public
-    address cannot choose its address with the header.
+    REMOTE_ADDR is the client unless REMOTE_ADDR is one of the configured
+    trusted proxies (ATTENDANCE_TRUSTED_PROXIES). Then X-Forwarded-For is read
+    from right to left, skipping trusted proxy hops, and the first address
+    that is not a trusted proxy is the client. Entries a client added on the
+    left are never used, so the header cannot be used to pick an office address.
+    Without trusted proxies configured the header is ignored.
     """
     import ipaddress
 
-    from django.conf import settings
-
     remote = (request.META.get("REMOTE_ADDR") or "").strip()
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if not forwarded or not remote:
-        return remote or None
+    if not remote:
+        return None
+    trusted = _trusted_proxies()
+    if not forwarded or not trusted:
+        return remote
+
+    def is_trusted(address):
+        return any(address in network for network in trusted)
+
     try:
-        peer = ipaddress.ip_address(remote)
+        if not is_trusted(ipaddress.ip_address(remote)):
+            return remote
     except ValueError:
         return remote
-    trusted = getattr(settings, "ATTENDANCE_TRUSTED_PROXIES", None)
-    if trusted:
-        is_trusted = False
-        for network in trusted:
-            try:
-                if peer in ipaddress.ip_network(str(network).strip(), strict=False):
-                    is_trusted = True
-                    break
-            except ValueError:
-                continue
-    else:
-        is_trusted = peer.is_private or peer.is_loopback
-    if not is_trusted:
-        return remote
-    first = forwarded.split(",")[0].strip()
-    try:
-        ipaddress.ip_address(first)
-    except ValueError:
-        return remote
-    return first
+    for entry in reversed(forwarded.split(",")):
+        try:
+            address = ipaddress.ip_address(entry.strip())
+        except ValueError:
+            return remote  # malformed hop: do not guess
+        if not is_trusted(address):
+            return str(address)
+    return remote

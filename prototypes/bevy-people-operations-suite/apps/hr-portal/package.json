@@ -1,0 +1,13 @@
+{
+  "name": "bevy-hr-portal-prototype",
+  "private": true,
+  "version": "1.4.1",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check web/app.js && node --check web/seed.mjs && node --check web/domain.mjs && node --check worker/gate.mjs && node --check web/permissions.mjs && node --check web/profile-schema.mjs",
+    "start": "python3 serve.py",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/preview.mjs"
+  }
+}

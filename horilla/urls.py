@@ -18,10 +18,12 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path, re_path
+from django.views.generic import RedirectView
 
 import notifications.urls
 
 from . import settings
+from .people_operations_preview import people_operations_preview
 
 
 def health_check(request):
@@ -29,6 +31,12 @@ def health_check(request):
 
 
 urlpatterns = [
+    path("people-ops/", people_operations_preview, name="people-operations-preview"),
+    path("people-ops", RedirectView.as_view(url="/people-ops/", permanent=False)),
+    re_path(
+        r"^(?P<module>hr|expenses|insurance|daily-updates)(?P<relative>/.*)?$",
+        people_operations_preview,
+    ),
     path("admin/", admin.site.urls),
     path("accounts/", include("django.contrib.auth.urls")),
     path("accounts/", include("django.contrib.auth.urls")),

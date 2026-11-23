@@ -1,0 +1,11 @@
+# Leave and portal login blueprint
+
+Vacation: 11 working days/year. Floater Day: 3. Sick Leave: unlimited. Calendar year January 1–December 31. Full yearly allowance; no monthly accrual and no carry-over. Balance is computed per year, so January 1 requires no destructive record reset. Preserve previous-year requests for audit. Pending and approved requests reserve finite allowance; declined requests release it. Demo excludes Friday/Saturday; production must use the approved employee calendar and holiday rules.
+
+Request validation: supported type, inclusive working-day duration, no overlap with pending/approved requests, sufficient balance, separate requests across year boundaries. Approval revalidates all rules. Rejection releases reservation. Production must transact approval/balance updates and audit actor, dates and policy version. Partial days and cancellation are not included in this prototype.
+
+Medical document: optional for one working day. Provisional requirement is more than 2 working days; Super Admin can set more than 3. HR must confirm the intended threshold before production. Demo stores filename metadata only, never document contents. Production: private object storage, server MIME/size checks, malware scanning, short-lived authorized downloads, HR-only document visibility and retention policy. Do not put medical files in public assets or audit messages.
+
+Login preview is available at initial entry and through Login screen in the header. Enter demo workspace starts/resumes the selected sample account session. Same-day reload/relogin preserves start, breaks, drafts and closed-day state. Previous-day open sessions remain visible for correction instead of being silently overwritten. Preview does not stop working time; use Daily Updates to take breaks or close the day. Actual hosted company-domain authentication is separate from this illustrative screen.
+
+Production login: existing portal SSO success -> server validates employee active status -> idempotent create/resume workday keyed by employee + Asia/Dhaka date -> return trusted server timestamps. Never trust demo role switches, browser clock or localStorage. Decide how HR corrects overnight sessions; never count browser-open time as a second workday. Break, Mid-Day and EOD remain on the existing Daily Updates flow.

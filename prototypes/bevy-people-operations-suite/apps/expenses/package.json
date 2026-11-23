@@ -1,0 +1,14 @@
+{
+  "name": "bevy-expense-workspace",
+  "version": "4.1.1",
+  "private": true,
+  "description": "Bevy Commerce expense-only interactive demonstration",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "check": "node --check dist/engine.js && node --check dist/app.js && node --check dist/categories.js && node --check dist/receipts.js && node --check dist/payroll.js && node --check dist/payroll-lab.js",
+    "preview": "python3 -m http.server 8000 --directory dist"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

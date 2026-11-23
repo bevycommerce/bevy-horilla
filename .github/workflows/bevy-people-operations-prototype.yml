@@ -1,0 +1,39 @@
+name: Bevy People Operations prototype
+
+on:
+  pull_request:
+    branches: [staging, bevy-hr-portal-dev-2.0]
+    paths:
+      - 'prototypes/bevy-people-operations-suite/**'
+      - '.github/workflows/bevy-people-operations-prototype.yml'
+  push:
+    branches: ['shahriyar/people-operations-prototype-*']
+    paths:
+      - 'prototypes/bevy-people-operations-suite/**'
+      - '.github/workflows/bevy-people-operations-prototype.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  prototype-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: prototypes/bevy-people-operations-suite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: prototypes/bevy-people-operations-suite/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/check-public-handoff.mjs
+      - run: npm run verify
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Django==4.2.24
+      - run: python tests/test_django_preview.py

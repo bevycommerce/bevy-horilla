@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from attendance.models import Attendance, AttendanceActivity, AttendanceBreak
 from horilla.testkit.factories import make_user
-from workspace_attendance import services, views
+from workspace_attendance import views
 from workspace_attendance.models import AttendanceCorrectionLog
 
 from .helpers import make_workspace_employee
@@ -168,7 +168,9 @@ class FixTimesTests(CardTestBase):
         return timezone.localdate() - timedelta(days=n)
 
     def test_page_lists_days_and_highlights_missing_sign_out(self):
-        services.correct_times(self.employee, self.day(1), time(9, 0), None, self.user, "web")
+        from .helpers import make_forgotten_sign_out
+
+        make_forgotten_sign_out(self.employee, self.day(1), self.user)
         response = self.client.get(reverse("workspace-fix-times"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "last 30 days")
@@ -193,13 +195,12 @@ class FixTimesTests(CardTestBase):
         self.assertEqual(AttendanceCorrectionLog.objects.filter(employee=self.employee).count(), 3)
         self.assertTrue(AttendanceCorrectionLog.objects.filter(source="web", actor=self.user).exists())
 
-    def test_empty_sign_out_is_allowed(self):
+    def test_new_past_day_needs_sign_out(self):
         day = self.day(1)
         response = self.post(
             "workspace-fix-times-save", {"date": day.isoformat(), "sign_in": "09:00", "sign_out": ""}
         )
-        self.assertContains(response, "Times saved")
-        self.assertContains(response, "Missing sign out")
+        self.assertContains(response, "Enter the sign out time too")
 
     def test_bad_time_format_is_friendly(self):
         response = self.post(

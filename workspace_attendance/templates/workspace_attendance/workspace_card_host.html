@@ -2,8 +2,10 @@
 Loads the My Workspace card and refreshes it every minute and whenever the tab
 becomes visible again, so a sign in/out done elsewhere (header Check In/Out,
 another browser, the desktop app) shows here without reloading the page.
+Automatic refreshes wait while a menu on the card is open (for example the
+Take a Break form with a note being typed), so nothing typed is lost.
 {% endcomment %}
 <div id="workspace-card"
      hx-get="{% url 'workspace-card' %}"
-     hx-trigger="load, every 60s, visibilitychange[document.visibilityState === 'visible'] from:document"
+     hx-trigger="load, every 60s[!document.querySelector('#workspace-card details[open]')], visibilitychange[document.visibilityState === 'visible' && !document.querySelector('#workspace-card details[open]')] from:document"
      hx-swap="innerHTML"></div>

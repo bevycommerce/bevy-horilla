@@ -258,8 +258,10 @@ class FixMyTimesTests(TestCase):
         self.assertEqual(fields, {"created", "sign_in", "sign_out"})
 
     def test_forgot_sign_out_yesterday(self):
+        from .helpers import make_forgotten_sign_out
+
         day = self.day(1)
-        services.correct_times(self.employee, day, time(9, 0), None, self.user, "web")
+        make_forgotten_sign_out(self.employee, day, self.user)
         att = Attendance.objects.get(attendance_date=day)
         self.assertIsNone(att.attendance_clock_out)
         services.correct_times(self.employee, day, None, time(18, 0), self.user, "desktop")

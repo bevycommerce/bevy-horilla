@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
+from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -71,16 +72,25 @@ def _work_date(request, source):
     return chosen, ""
 
 
-def _recent_updates(employee):
+def _recent_updates(employee, work_date=None):
+    """
+    The employee's updates of the last RECENT_DAYS days, plus those of the
+    selected work date when it is older, so they can still be edited or deleted.
+    """
     start = timezone.localdate() - timedelta(days=RECENT_DAYS - 1)
+    query = Q(work_date__gte=start)
+    if work_date is not None:
+        query |= Q(work_date=work_date)
     return list(
-        DailyUpdate.objects.filter(employee=employee, work_date__gte=start).order_by("-work_date", "-submitted_at")
+        DailyUpdate.objects.filter(query, employee=employee).order_by(
+            "-work_date", "-submitted_at"
+        )
     )
 
 
 def _render_day(request, employee, work_date, message="", error="", regular=False, status=200, page=False, draft=None):
     today = timezone.localdate()
-    recent = _recent_updates(employee)
+    recent = _recent_updates(employee, work_date)
     draft = draft if error else None  # only keep typed text when something failed
     for item in recent:
         item.draft = draft if draft and draft.get("update_id") == item.pk else None
@@ -119,8 +129,12 @@ def _run(request, call, draft=None):
     if employee is None:
         return HttpResponse("")
     work_date, error = _work_date(request, request.POST)
+    # keep the regular End-of-Day form if that is what the employee was using
+    regular = request.POST.get("regular") == "1"
     if error:
-        return _render_day(request, employee, work_date, error=error, draft=draft)
+        return _render_day(
+            request, employee, work_date, error=error, draft=draft, regular=regular
+        )
     message = ""
     try:
         _status, body = call(employee, work_date)
@@ -130,7 +144,15 @@ def _run(request, call, draft=None):
     except Exception:
         logger.exception("Daily update action failed")
         error = GENERIC_ERROR
-    return _render_day(request, employee, work_date, message=message, error=error, draft=draft)
+    return _render_day(
+        request,
+        employee,
+        work_date,
+        message=message,
+        error=error,
+        draft=draft,
+        regular=regular,
+    )
 
 
 @login_required
@@ -174,24 +196,38 @@ def delete(request, update_id):
 @login_required
 @require_http_methods(["GET", "HEAD"])
 def history(request, update_id):
-    """Earlier versions of one update. Updates are company-visible, so anyone may read this."""
+    """
+    Earlier versions of one update. Updates are visible to the same people as
+    the Company Updates page (the viewer's company scope), and always to the author.
+    """
     update = DailyUpdate.objects.select_related("employee").filter(pk=update_id).first()
-    context = {"update": None, "versions": [], "error": "", "embedded": _is_htmx(request)}
+    if update is not None:
+        viewer = get_adapter().get_employee(request.user)
+        own = viewer is not None and viewer.pk == update.employee_id
+        if not own and not get_adapter().is_visible_employee(update.employee_id):
+            update = None  # same answer as a missing update
+    context = {
+        "update": None,
+        "versions": [],
+        "error": "",
+        "embedded": _is_htmx(request),
+    }
     status = 200
     if update is None:
         context["error"] = _("Update not found.")
         status = 200 if _is_htmx(request) else 404
     else:
         adapter = get_adapter()
+        revisions = list(update.revisions.all())  # one read for text and times
         context.update(
             update=services.serialize_update(update),
             owner=adapter.safe_employee_card(update.employee),
-            versions=services.update_history(update),
+            versions=services.update_history(update, revisions),
         )
         context["update"]["submitted_dt"] = update.submitted_at
         context["update"]["work_date_obj"] = update.work_date
         context["update"]["edited_dt"] = update.last_edited_at
-        for version, revision in zip(context["versions"], update.revisions.all()):
+        for version, revision in zip(context["versions"], revisions):
             version["content_dt"] = revision.content_submitted_at
             version["replaced_dt"] = revision.replaced_at
     template = "daily_updates/_history.html" if _is_htmx(request) else "daily_updates/history_page.html"

@@ -48,7 +48,18 @@ class WorkspaceAPIView(APIView):
     def guard(self, mutating=False):
         """Common checks. Returns an error Response or None."""
         if self.employee is None:
-            return _error("Your account is not linked to an employee profile.", "no_employee", http.HTTP_403_FORBIDDEN)
+            return _error(
+                "Your account is not linked to an employee profile.",
+                "no_employee",
+                http.HTTP_403_FORBIDDEN,
+            )
+        if not getattr(self.employee, "is_active", True):
+            # archiving an employee leaves the login active, so check here
+            return _error(
+                "This employee profile is archived.",
+                "employee_inactive",
+                http.HTTP_403_FORBIDDEN,
+            )
         if mutating and self.require_idempotency and not self.idempotency_key():
             return _error("The Idempotency-Key header is required.", "idempotency_required", http.HTTP_400_BAD_REQUEST)
         return None

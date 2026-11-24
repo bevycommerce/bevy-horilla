@@ -1,7 +1,7 @@
 """Company-wide feed and Today board: visibility, filters and privacy."""
 
 import json
-from datetime import time, timedelta
+from datetime import timedelta
 
 from django.test import TestCase
 from django.utils import timezone
@@ -11,7 +11,10 @@ from daily_updates import services
 from daily_updates.models import EOD, MIDDAY, MiddaySkip
 from employee.models import EmployeeWorkInformation
 from workspace_attendance import services as ws
-from workspace_attendance.tests.helpers import make_workspace_employee
+from workspace_attendance.tests.helpers import (
+    make_forgotten_sign_out,
+    make_workspace_employee,
+)
 
 
 class CompanyViewTests(TestCase):
@@ -72,7 +75,7 @@ class CompanyViewTests(TestCase):
 
     def test_missing_sign_out_flag_for_yesterday(self):
         yesterday = self.today - timedelta(days=1)
-        ws.correct_times(self.alice, yesterday, time(9, 0), None, self.user_a, "web")
+        make_forgotten_sign_out(self.alice, yesterday, self.user_a)
         board = services.today_board(yesterday)
         alice_row = next(r for r in board["rows"] if r["employee"]["id"] == self.alice.pk)
         self.assertIn("sign_out", alice_row["missing"])

@@ -14,7 +14,8 @@ DEFAULTS = {
     # Workspace sign-outs and self-corrections count for payroll immediately
     # (narrowly scoped: only the Attendance rows Workspace touches).
     "WORKSPACE_AUTO_VALIDATE": True,
-    # How long a stored idempotency key is kept.
+    # How long a desktop request's stored answer is kept and replayed. Older
+    # answers are removed the next time that employee makes a keyed request.
     "WORKSPACE_IDEMPOTENCY_DAYS": 7,
     # Show the "Take a Break" button on the Workspace card and desktop app.
     # Off by owner decision (2026-11-11). The header break feature is not affected,

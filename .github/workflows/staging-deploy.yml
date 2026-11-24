@@ -1,9 +1,8 @@
-# Deploys the staging branch after a merge.
+# A push to the git branch named staging runs the deploy script on the server.
 #
-# The job runs on the staging server as the deploy user. That user can sudo
-# only /usr/local/sbin/horilla-staging-deploy. The script pulls, rebuilds the
-# app, and waits for /login/. entrypoint.sh runs migrate before gunicorn, so
-# a new table in the merge is applied. The database volume is not recreated.
+# The script deploys /root/bevy-horilla-v2 from bevy-hr-portal-dev-2.0.
+# It does not check out this branch and it does not start the v1 app.
+# The copy of the script in the repo is docs/horilla-staging-deploy.sh.
 #
 # The runner connects outbound to GitHub. Inbound SSH from GitHub is not used.
 
@@ -21,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: [self-hosted, horilla-staging]
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Run the fixed deploy command on staging
         run: sudo -n /usr/local/sbin/horilla-staging-deploy

@@ -27,14 +27,13 @@ from datetime import date, datetime
 from typing import Any
 
 from django import forms
-from django.contrib.auth.models import User
 from django.db.models import Q
 from django.forms import DateInput, TextInput
 from django.template.loader import render_to_string
-from django.utils.translation import gettext as _
-from django.utils.translation import gettext_lazy as trans
+from django.utils.translation import gettext_lazy as _
 
 from base.methods import eval_validate, reload_queryset
+from employee.filters import EmployeeFilter
 from employee.models import (
     Actiontype,
     BonusPoint,
@@ -51,6 +50,9 @@ from employee.models import (
 )
 from horilla import horilla_middlewares
 from horilla_audit.models import AccountBlockUnblock
+from horilla_auth.models import HorillaUser
+from horilla_widgets.widgets.horilla_multi_select_field import HorillaMultiSelectField
+from horilla_widgets.widgets.select_widgets import HorillaMultiSelectWidget
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ class ModelForm(forms.ModelForm):
         now = datetime.now()
 
         default_input_class = "oh-input w-100"
-        select_class = "oh-select oh-select-2"
+        select_class = "oh-select"
         checkbox_class = "oh-switch__checkbox"
 
         for field_name, field in self.fields.items():
@@ -174,7 +176,7 @@ class ModelForm(forms.ModelForm):
 
 class UserForm(ModelForm):
     """
-    Form for User model
+    Form for HorillaUser model
     """
 
     class Meta:
@@ -183,12 +185,12 @@ class UserForm(ModelForm):
         """
 
         fields = ("groups",)
-        model = User
+        model = HorillaUser
 
 
 class UserPermissionForm(ModelForm):
     """
-    Form for User model
+    Form for HorillaUser model
     """
 
     class Meta:
@@ -197,7 +199,7 @@ class UserPermissionForm(ModelForm):
         """
 
         fields = ("groups", "user_permissions")
-        model = User
+        model = HorillaUser
 
 
 class EmployeeForm(ModelForm):
@@ -219,6 +221,9 @@ class EmployeeForm(ModelForm):
             "is_directly_converted",
             "is_active",
         )
+        widgets = {
+            "dob": TextInput(attrs={"type": "date", "id": "dob"}),
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -331,10 +336,10 @@ class EmployeeForm(ModelForm):
                 pk=self.instance.pk if self.instance else None
             )
             if queryset.exists():
-                raise forms.ValidationError(trans("Badge ID must be unique."))
+                raise forms.ValidationError(_("Badge ID must be unique."))
             if not re.search(r"\d", badge_id):
                 raise forms.ValidationError(
-                    trans("Badge ID must contain at least one digit.")
+                    _("Badge ID must contain at least one digit.")
                 )
         return badge_id
 
@@ -353,6 +358,11 @@ class EmployeeWorkInformationForm(ModelForm):
         fields = "__all__"
         exclude = ("employee_id", "additional_info", "experience")
 
+        widgets = {
+            "date_joining": DateInput(attrs={"type": "date"}),
+            "contract_end_date": DateInput(attrs={"type": "date"}),
+        }
+
     def __init__(self, *args, disable=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["email"].widget.attrs["autocomplete"] = "email"
@@ -367,6 +377,11 @@ class EmployeeWorkInformationForm(ModelForm):
             self.fields[field].widget.attrs["placeholder"] = self.fields[field].label
             if disable:
                 self.fields[field].disabled = True
+        # Pay is kept on the contract. A disabled field ignores what is posted and
+        # keeps the stored value, so saving this form never changes the old copy.
+        for name in ("basic_salary", "salary_hour"):
+            if name in self.fields:
+                self.fields[name].disabled = True
         field_names = {
             "Department": "department",
             "Job Position": "job_position",
@@ -401,7 +416,7 @@ class EmployeeWorkInformationForm(ModelForm):
                             initial=field.initial,
                             widget=forms.Select(
                                 attrs={
-                                    "class": "oh-select oh-select-2",
+                                    "class": "oh-select",
                                     "onchange": f'onDynamicCreate(this.value,"{urls.get(field.label)}");',
                                 }
                             ),
@@ -433,7 +448,51 @@ class EmployeeWorkInformationUpdateForm(ModelForm):
 
         model = EmployeeWorkInformation
         fields = "__all__"
-        exclude = ("employee_id",)
+        # fields = [
+        #     "department_id",
+        #     "job_position_id",
+        #     "job_role_id",
+        #     "work_type_id",
+        #     "employee_type_id",
+        #     "reporting_manager_id",
+        #     "company_id",
+        #     "tags",
+        #     "location",
+        #     "email",
+        #     "mobile",
+        #     "shift_id",
+        #     "date_joining",
+        #     "contract_end_date",
+        #     "basic_salary",
+        #     "salary_hour",
+        # ]
+        exclude = ("employee_id", "experience", "additional_info")
+
+        widgets = {
+            "date_joining": DateInput(attrs={"type": "date"}),
+            "contract_end_date": DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["department_id"].widget.attrs.update(
+            {
+                "hx-target": "#id_job_position_id_parent_div",
+                "hx-include": "#id_job_position_id",
+                "hx-trigger": "change,load",
+                "hx-swap": "innerHTML",
+                "hx-get": "/employee/get-job-positions-hx",
+            }
+        )
+        self.fields["job_position_id"].widget.attrs.update(
+            {
+                "hx-target": "#id_job_role_id_parent_div",
+                "hx-include": "#id_job_role_id",
+                "hx-trigger": "change,load",
+                "hx-swap": "innerHTML",
+                "hx-get": "/employee/get-job-roles-hx",
+            }
+        )
 
     def as_p(self, *args, **kwargs):
         context = {"form": self}
@@ -504,48 +563,48 @@ class EmployeeBankDetailsUpdateForm(ModelForm):
 
 
 excel_columns = [
-    ("badge_id", trans("Badge ID")),
-    ("employee_first_name", trans("First Name")),
-    ("employee_last_name", trans("Last Name")),
-    ("email", trans("Email")),
-    ("phone", trans("Phone")),
-    ("experience", trans("Experience")),
-    ("gender", trans("Gender")),
-    ("dob", trans("Date of Birth")),
-    ("country", trans("Country")),
-    ("state", trans("State")),
-    ("city", trans("City")),
-    ("address", trans("Address")),
-    ("zip", trans("Zip Code")),
-    ("marital_status", trans("Marital Status")),
-    ("children", trans("Children")),
-    ("is_active", trans("Is active")),
-    ("emergency_contact", trans("Emergency Contact")),
-    ("emergency_contact_name", trans("Emergency Contact Name")),
-    ("emergency_contact_relation", trans("Emergency Contact Relation")),
-    ("employee_work_info__email", trans("Work Email")),
-    ("employee_work_info__mobile", trans("Work Phone")),
-    ("employee_work_info__department_id", trans("Department")),
-    ("employee_work_info__job_position_id", trans("Job Position")),
-    ("employee_work_info__job_role_id", trans("Job Role")),
-    ("employee_work_info__shift_id", trans("Shift")),
-    ("employee_work_info__work_type_id", trans("Work Type")),
-    ("employee_work_info__reporting_manager_id", trans("Reporting Manager")),
-    ("employee_work_info__employee_type_id", trans("Employee Type")),
-    ("employee_work_info__location", trans("Location")),
-    ("employee_work_info__date_joining", trans("Date Joining")),
-    ("employee_work_info__basic_salary", trans("Basic Salary")),
-    ("employee_work_info__salary_hour", trans("Salary Hour")),
-    ("employee_work_info__contract_end_date", trans("Contract End Date")),
-    ("employee_work_info__company_id", trans("Company")),
-    ("employee_bank_details__bank_name", trans("Bank Name")),
-    ("employee_bank_details__branch", trans("Branch")),
-    ("employee_bank_details__account_number", trans("Account Number")),
-    ("employee_bank_details__any_other_code1", trans("Bank Code #1")),
-    ("employee_bank_details__any_other_code2", trans("Bank Code #2")),
-    ("employee_bank_details__country", trans("Bank Country")),
-    ("employee_bank_details__state", trans("Bank State")),
-    ("employee_bank_details__city", trans("Bank City")),
+    ("badge_id", _("Badge ID")),
+    ("employee_first_name", _("First Name")),
+    ("employee_last_name", _("Last Name")),
+    ("email", _("Email")),
+    ("phone", _("Phone")),
+    ("experience", _("Experience")),
+    ("gender", _("Gender")),
+    ("dob", _("Date of Birth")),
+    ("country", _("Country")),
+    ("state", _("State")),
+    ("city", _("City")),
+    ("address", _("Address")),
+    ("zip", _("Zip Code")),
+    ("marital_status", _("Marital Status")),
+    ("children", _("Children")),
+    ("is_active", _("Active")),
+    ("emergency_contact", _("Emergency Contact")),
+    ("emergency_contact_name", _("Emergency Contact Name")),
+    ("emergency_contact_relation", _("Emergency Contact Relation")),
+    ("employee_work_info__email", _("Work Email")),
+    ("employee_work_info__mobile", _("Work Phone")),
+    ("employee_work_info__department_id", _("Department")),
+    ("employee_work_info__job_position_id", _("Job Position")),
+    ("employee_work_info__job_role_id", _("Job Role")),
+    ("employee_work_info__shift_id", _("Shift")),
+    ("employee_work_info__work_type_id", _("Work Type")),
+    ("employee_work_info__reporting_manager_id", _("Reporting Manager")),
+    ("employee_work_info__employee_type_id", _("Employee Type")),
+    ("employee_work_info__location", _("Location")),
+    ("employee_work_info__date_joining", _("Date Joining")),
+    ("employee_work_info__basic_salary", _("Basic Salary")),
+    ("employee_work_info__salary_hour", _("Salary Hour")),
+    ("employee_work_info__contract_end_date", _("Contract End Date")),
+    ("employee_work_info__company_id", _("Company")),
+    ("employee_bank_details__bank_name", _("Bank Name")),
+    ("employee_bank_details__branch", _("Branch")),
+    ("employee_bank_details__account_number", _("Account Number")),
+    ("employee_bank_details__any_other_code1", _("Bank Code #1")),
+    ("employee_bank_details__any_other_code2", _("Bank Code #2")),
+    ("employee_bank_details__country", _("Bank Country")),
+    ("employee_bank_details__state", _("Bank State")),
+    ("employee_bank_details__city", _("Bank City")),
 ]
 fields_to_remove = [
     "badge_id",
@@ -601,7 +660,7 @@ class BulkUpdateFieldForm(forms.Form):
         ]
         self.fields["update_fields"].choices = updated_choices
         for visible in self.visible_fields():
-            visible.field.widget.attrs["class"] = "oh-select oh-select-2 oh-input w-100"
+            visible.field.widget.attrs["class"] = "oh-select oh-input w-100"
 
 
 class EmployeeNoteForm(ModelForm):
@@ -667,10 +726,37 @@ class PolicyForm(ModelForm):
     PolicyForm
     """
 
+    employees = HorillaMultiSelectField(
+        queryset=Employee.objects.all(),
+        required=False,
+        widget=HorillaMultiSelectWidget(
+            filter_route_name="employee-widget-filter",
+            filter_class=EmployeeFilter,
+            filter_instance_context_name="f",
+            filter_template_path="employee_filters.html",
+        ),
+        label=_("Employees"),
+        help_text=_(
+            "Used only when 'Publish' is disabled below -- restricts the "
+            "policy to these employees plus anyone in the selected department(s) "
+            "or job position(s)."
+        ),
+    )
+
+    cols = {
+        "title": 12,
+        "body": 12,
+        "employees": 12,
+        "department": 12,
+        "job_position": 12,
+        "company_id": 12,
+        "is_visible_to_all": 12,
+    }
+
     class Meta:
         model = Policy
         fields = "__all__"
-        exclude = ["attachments", "is_active"]
+        exclude = ["attachments", "is_active", "filtered_employees"]
         widgets = {
             "body": forms.Textarea(
                 attrs={"data-summernote": "", "style": "display:none;"}
@@ -680,25 +766,54 @@ class PolicyForm(ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["attachment"] = MultipleFileField(
-            label=trans("Attachments"), required=False
+            label="Attachments", required=False
         )
 
+        self.order_fields(
+            [
+                "title",
+                "body",
+                "attachment",
+                "is_visible_to_all",
+                "employees",
+                "department",
+                "job_position",
+                "company_id",
+            ]
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if not cleaned_data.get("is_visible_to_all"):
+            employees = cleaned_data.get("employees")
+            department = cleaned_data.get("department")
+            job_position = cleaned_data.get("job_position")
+            if not employees and not department and not job_position:
+                message = _(
+                    "Select at least one of Employees, Department or Job "
+                    "Position when Publish to all is disabled."
+                )
+                self.add_error("employees", message)
+                self.add_error("department", message)
+                self.add_error("job_position", message)
+        return cleaned_data
+
     def save(self, *args, commit=True, **kwargs):
-        attachemnt = []
+        attachment = []
         multiple_attachment_ids = []
-        attachemnts = None
+        attachments = None
         if self.files.getlist("attachment"):
-            attachemnts = self.files.getlist("attachment")
+            attachments = self.files.getlist("attachment")
             multiple_attachment_ids = []
-            for attachemnt in attachemnts:
+            for attachment in attachments:
                 file_instance = PolicyMultipleFile()
-                file_instance.attachment = attachemnt
+                file_instance.attachment = attachment
                 file_instance.save()
                 multiple_attachment_ids.append(file_instance.pk)
         instance = super().save(commit)
         if commit:
             instance.attachments.add(*multiple_attachment_ids)
-        return instance, attachemnts
+        return instance, attachments
 
 
 class BonusPointAddForm(ModelForm):
@@ -733,13 +848,26 @@ class DisciplinaryActionForm(ModelForm):
         model = DisciplinaryAction
         fields = "__all__"
         exclude = ["objects", "is_active"]
+        widgets = {
+            "start_date": forms.DateInput(attrs={"type": "date"}),
+        }
 
+    employee_id = HorillaMultiSelectField(
+        queryset=Employee.objects.filter(employee_work_info__isnull=False),
+        widget=HorillaMultiSelectWidget(
+            filter_route_name="employee-widget-filter",
+            filter_class=EmployeeFilter,
+            filter_instance_context_name="f",
+            filter_template_path="employee_filters.html",
+        ),
+        label=_("Employees"),
+    )
     action = forms.ModelChoiceField(
         queryset=Actiontype.objects.all(),
         label=_("Action"),
         widget=forms.Select(
             attrs={
-                "class": "oh-select oh-select-2",
+                "class": "oh-select",
                 "onchange": "actionTypeChange($(this))",
             }
         ),
@@ -754,6 +882,26 @@ class DisciplinaryActionForm(ModelForm):
         if self.instance.pk is None:
             self.fields["action"].choices += [("create", _("Create new action type "))]
 
+    def clean(self):
+        cleaned_data = super().clean()
+
+        # Remove 'employee_id' field error if it's handled manually
+        if isinstance(self.fields["employee_id"], HorillaMultiSelectField):
+            self.errors.pop("employee_id", None)
+            employee_data = self.fields["employee_id"].queryset.filter(
+                id__in=self.data.getlist("employee_id")
+            )
+            if not employee_data.exists():
+                self.add_error("employee_id", _("This field is required."))
+            cleaned_data["employee_id"] = employee_data
+
+        if cleaned_data.get("unit_in") == "hours" and not (
+            cleaned_data.get("hours") or ""
+        ).strip("0:"):
+            self.add_error("hours", _("This field is required."))
+
+        return cleaned_data
+
     def as_p(self):
         """
         Render the form fields as HTML table rows with Bootstrap styling.
@@ -764,19 +912,13 @@ class DisciplinaryActionForm(ModelForm):
 
 
 class ActiontypeForm(ModelForm):
+
+    cols = {"title": 12, "action_type": 12}
+
     class Meta:
         model = Actiontype
         fields = "__all__"
         exclude = ["is_active"]
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.fields["action_type"].widget.attrs.update(
-            {
-                "onchange": "actionChange($(this))",
-            }
-        )
 
 
 class EmployeeTagForm(ModelForm):
@@ -800,8 +942,7 @@ class EmployeeGeneralSettingPrefixForm(forms.ModelForm):
     class Meta:
 
         model = EmployeeGeneralSetting
-        exclude = ["objects"]
+        fields = ["badge_id_prefix"]
         widgets = {
             "badge_id_prefix": forms.TextInput(attrs={"class": "oh-input w-100"}),
-            "company_id": forms.Select(attrs={"class": "oh-select oh-select-2 w-100"}),
         }

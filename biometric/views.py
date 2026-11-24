@@ -14,11 +14,14 @@ from urllib.parse import parse_qs, unquote
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
+from django.conf import settings
 from django.contrib import messages
+from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
 from django.utils import timezone as django_timezone
+from django.utils.html import format_html
 from django.utils.translation import gettext as __
 from django.utils.translation import gettext_lazy as _
 from zk import ZK
@@ -36,8 +39,8 @@ from horilla.decorators import (
     permission_required,
 )
 from horilla.filters import HorillaPaginator
-from horilla.horilla_settings import BIO_DEVICE_THREADS
 from horilla.http.response import HorillaRedirect
+from horilla.scheduling import register_job
 from horilla.settings import TIME_ZONE
 
 from .anviz import CrossChexCloudAPI
@@ -146,12 +149,11 @@ class ZKBioAttendance(Thread):
             zk_device = ZK(
                 self.machine_ip,
                 port=self.port_no,
-                timeout=5,
+                timeout=60,
                 password=self.password,
                 force_udp=False,
                 ommit_ping=False,
             )
-            patch_direction = {"in": 0, "out": 1}
             conn = zk_device.connect()
             self.conn = conn
             if conn:
@@ -164,11 +166,7 @@ class ZKBioAttendance(Thread):
                         for attendance in attendances:
                             if attendance:
                                 user_id = attendance.user_id
-                                punch_code = (
-                                    patch_direction[device.device_direction]
-                                    if device.device_direction in patch_direction
-                                    else attendance.punch
-                                )
+                                punch_code = attendance.punch
                                 date_time = django_timezone.make_aware(
                                     attendance.timestamp
                                 )
@@ -418,7 +416,7 @@ def biometric_device_schedule(request, device_id):
                     zk_device = ZK(
                         machine_ip,
                         port=port_no,
-                        timeout=5,
+                        timeout=60,
                         password=int(password),
                         force_udp=False,
                         ommit_ping=False,
@@ -487,10 +485,10 @@ def biometric_device_schedule(request, device_id):
                 device.scheduler_duration = duration
                 device.save()
                 scheduler = BackgroundScheduler()
-                existing_thread = BIO_DEVICE_THREADS.get(device.id)
+                existing_thread = settings.BIO_DEVICE_THREADS.get(device.id)
                 if existing_thread:
                     existing_thread.stop()
-                    del BIO_DEVICE_THREADS[device.id]
+                    del settings.BIO_DEVICE_THREADS[device.id]
                 scheduler.add_job(
                     lambda: cosec_biometric_attendance_scheduler(device.id),
                     "interval",
@@ -885,7 +883,7 @@ def biometric_device_bulk_fetch_logs(request):
     zk_devices = BiometricDevices.objects.filter(id__in=zk_ids, machine_type="zk")
 
     if not zk_devices:
-        messages.error(request, _(""))
+        messages.error(request, "")
         script = render_connection_response(
             _("Biometric device not supported."),
             _(
@@ -1192,7 +1190,10 @@ def find_employees_in_zk(device_id):
         )
     )
     zk_device = ZK(
-        device.machine_ip, port=device.port, password=int(device.zk_password), timeout=5
+        device.machine_ip,
+        port=device.port,
+        password=int(device.zk_password),
+        timeout=60,
     )
     conn = zk_device.connect()
     zk_users = {user.user_id: user.uid for user in conn.get_users()}
@@ -1319,7 +1320,8 @@ def search_employee_device(request):
         employees = zk_employees_fetch(device)
         if search:
             search_employees = BiometricEmployees.objects.filter(
-                employee_id__employee_first_name__icontains=search
+                Q(employee_id__employee_first_name__icontains=search)
+                | Q(employee_id__employee_last_name__icontains=search)
             )
             search_uids = search_employees.values_list("uid", flat=True)
             employees = [
@@ -1335,8 +1337,9 @@ def search_employee_device(request):
     elif device.machine_type == "dahua" or device.machine_type == "etimeoffice":
         search_employees = BiometricEmployees.objects.filter(device_id=device)
         if search:
-            search_employees = BiometricEmployees.objects.filter(
-                employee_id__employee_first_name__icontains=search, device_id=device
+            search_employees = search_employees.filter(
+                Q(employee_id__employee_first_name__icontains=search)
+                | Q(employee_id__employee_last_name__icontains=search)
             )
         template = (
             "biometric_users/dahua/list_dahua_employees.html"
@@ -1352,7 +1355,8 @@ def search_employee_device(request):
         employees = cosec_employee_fetch(device_id)
         if search:
             search_employees = BiometricEmployees.objects.filter(
-                employee_id__employee_first_name__icontains=search, device_id=device
+                Q(employee_id__employee_first_name__icontains=search)
+                | Q(employee_id__employee_last_name__icontains=search)
             )
         else:
             search_employees = BiometricEmployees.objects.filter(device_id=device)
@@ -1396,7 +1400,7 @@ def delete_biometric_user(request, uid, device_id):
     zk_device = ZK(
         device.machine_ip,
         port=device.port,
-        timeout=5,
+        timeout=60,
         password=int(device.zk_password),
         force_udp=False,
         ommit_ping=False,
@@ -1619,7 +1623,7 @@ def bio_users_bulk_delete(request):
         zk_device = ZK(
             device.machine_ip,
             port=device.port,
-            timeout=5,
+            timeout=60,
             password=int(device.zk_password),
             force_udp=False,
             ommit_ping=False,
@@ -1716,15 +1720,20 @@ def add_biometric_user(request, device_id):
                 zk_device = ZK(
                     device.machine_ip,
                     port=device.port,
-                    timeout=5,
+                    timeout=60,
                     password=int(device.zk_password),
                     force_udp=False,
                     ommit_ping=False,
                 )
                 conn = zk_device.connect()
                 conn.enable_device()
-                existing_uids = [user.uid for user in conn.get_users()]
-                existing_user_ids = [user.user_id for user in conn.get_users()]
+                # Fetch once: get_users() is a round trip to the device.
+                device_users = conn.get_users()
+                existing_uids = [user.uid for user in device_users]
+                # The device reports user_id as a string. Compare like with like,
+                # otherwise the guard below never detects a taken user_id and can
+                # hand out one that already belongs to an enrolled employee.
+                existing_user_ids = {str(user.user_id) for user in device_users}
                 uid = 1
                 user_id = 1000
                 employee_ids = request.POST.getlist("employee_ids")
@@ -1734,12 +1743,11 @@ def add_biometric_user(request, device_id):
                         employee_id=employee, device_id=device
                     ).first()
                     if existing_biometric_employee is None:
-                        while uid in existing_uids or user_id in existing_user_ids:
-                            user_id = int(user_id)
+                        while uid in existing_uids or str(user_id) in existing_user_ids:
                             uid += 1
                             user_id += 1
                         existing_uids.append(uid)
-                        existing_user_ids.append(user_id)
+                        existing_user_ids.add(str(user_id))
                         employee_name = employee.get_full_name()
                         conn.set_user(
                             uid=uid,
@@ -1823,6 +1831,7 @@ def add_biometric_user(request, device_id):
 @login_required
 @install_required
 @hx_request_required
+@permission_required("biometric.add_biometricemployees")
 def map_biometric_users(request, device_id):
     """
     Maps an horilla employee to a biometric user on a specified biometric device.
@@ -1862,6 +1871,7 @@ def map_biometric_users(request, device_id):
 @login_required
 @install_required
 @hx_request_required
+@permission_required("biometric.add_biometricemployees")
 def add_dahua_biometric_user(request, device_id):
     """
     Adds a new employee to a Dahua biometric device.
@@ -1886,7 +1896,9 @@ def add_dahua_biometric_user(request, device_id):
             except Employee.DoesNotExist:
                 messages.error(request, _("Employee not found."))
                 return render(
-                    request, "biometric_users/dahua/add_dahua_user.html", context
+                    request,
+                    "biometric_users/dahua/add_dahua_user.html",
+                    {"form": form, "device_id": device_id},
                 )
 
             dahua = DahuaAPI(
@@ -1961,12 +1973,15 @@ def delete_dahua_user(request, obj_id=None):
             user_ids = request.GET.getlist("ids")
             device_id = request.GET.get("device_id")
             if device_id:
-                script = f"""
-                            <span hx-get="/biometric/biometric-device-employees/{device_id}/"
-                                hx-target="#dahuUsersList" hx-select="#dahuUsersList" hx-trigger="load delay:200ms"
-                                hx-swap="outerHTML" hx-on-htmx-before-request="reloadMessage();">
-                            </span>
-                        """
+                # device_id is request-controlled and interpolated into
+                # hand-built HTML, where autoescaping does not apply.
+                script = format_html(
+                    '<span hx-get="/biometric/biometric-device-employees/{}/" '
+                    'hx-target="#dahuUsersList" hx-select="#dahuUsersList" '
+                    'hx-trigger="load delay:200ms" hx-swap="outerHTML" '
+                    'hx-on-htmx-before-request="reloadMessage();"></span>',
+                    device_id,
+                )
             if user_ids:
                 users = BiometricEmployees.objects.filter(user_id__in=user_ids)
                 if users:
@@ -2006,12 +2021,15 @@ def delete_etimeoffice_user(request, obj_id=None):
         user_ids = request.GET.getlist("ids")
         device_id = request.GET.get("device_id")
         if device_id:
-            script = f"""
-                            <span hx-get="/biometric/biometric-device-employees/{device_id}/"
-                                hx-target="#eTimeOfficeUsersList" hx-select="#eTimeOfficeUsersList" hx-trigger="load delay:200ms"
-                                hx-swap="outerHTML" hx-on-htmx-before-request="reloadMessage();">
-                            </span>
-                        """
+            # device_id is request-controlled and interpolated into
+            # hand-built HTML, where autoescaping does not apply.
+            script = format_html(
+                '<span hx-get="/biometric/biometric-device-employees/{}/" '
+                'hx-target="#eTimeOfficeUsersList" hx-select="#eTimeOfficeUsersList" '
+                'hx-trigger="load delay:200ms" hx-swap="outerHTML" '
+                'hx-on-htmx-before-request="reloadMessage();"></span>',
+                device_id,
+            )
         if user_ids:
             users = BiometricEmployees.objects.filter(user_id__in=user_ids)
             if users:
@@ -2055,7 +2073,7 @@ def biometric_device_live(request):
                 zk_device = ZK(
                     machine_ip,
                     port=port_no,
-                    timeout=5,
+                    timeout=60,
                     password=int(password),
                     force_udp=False,
                     ommit_ping=False,
@@ -2083,7 +2101,7 @@ def biometric_device_live(request):
                     device.save()
                     thread = COSECBioAttendanceThread(device.id)
                     thread.start()
-                    BIO_DEVICE_THREADS[device.id] = thread
+                    settings.BIO_DEVICE_THREADS[device.id] = thread
                 else:
                     raise TimeoutError
             else:
@@ -2097,7 +2115,7 @@ def biometric_device_live(request):
                       timer: 1500,
                       timerProgressBar: true, // Show a progress bar as the timer counts down
                       didClose: () => {
-                        location.reload(); // Reload the page after the SweetAlert is closed
+                        location.reload();
                         },
                     });
                     </script>
@@ -2128,10 +2146,10 @@ def biometric_device_live(request):
         device.is_live = False
         device.save()
         if device.machine_type == "cosec":
-            existing_thread = BIO_DEVICE_THREADS.get(device.id)
+            existing_thread = settings.BIO_DEVICE_THREADS.get(device.id)
             if existing_thread:
                 existing_thread.stop()
-                del BIO_DEVICE_THREADS[device.id]
+                del settings.BIO_DEVICE_THREADS[device.id]
 
         script = """
            <script>
@@ -2182,7 +2200,7 @@ def zk_biometric_attendance_logs(device_or_devices):
         zk_device = ZK(
             machine_ip,
             port=port_no,
-            timeout=5,
+            timeout=60,
             password=int(device.zk_password),
             force_udp=False,
             ommit_ping=False,
@@ -2629,55 +2647,65 @@ def etimeoffice_biometric_attendance_scheduler(device_id):
         etimeoffice_biometric_attendance_logs(device)
 
 
-try:
-    devices = BiometricDevices.objects.all().update(is_live=False)
+# Device polling runs as one registered job in the scheduler process rather
+# than a BackgroundScheduler started at import. Import happens once per
+# gunicorn worker, so the old form started a scheduler per worker per device
+# and polled each device N times over. It also queried the database at import
+# time and swallowed every failure with a bare `except: pass`.
+#
+# Devices are read on each tick instead of at registration, so adding or
+# reconfiguring a device takes effect without a restart. Interval is the
+# shortest configured duration; each device is polled only when its own
+# interval has elapsed.
+_BIOMETRIC_SCHEDULERS = {
+    "anviz": anviz_biometric_attendance_scheduler,
+    "zk": zk_biometric_attendance_scheduler,
+    "dahua": dahua_biometric_attendance_scheduler,
+    "cosec": cosec_biometric_attendance_scheduler,
+    "etimeoffice": etimeoffice_biometric_attendance_scheduler,
+}
+
+_biometric_last_run: dict[int, float] = {}
+
+
+def poll_biometric_devices():
+    """Poll each scheduler-enabled device when its interval has elapsed."""
+    import time
+
+    now = time.monotonic()
     for device in BiometricDevices.objects.filter(is_scheduler=True):
-        if device:
-            if str_time_seconds(device.scheduler_duration) > 0:
-                if device.machine_type == "anviz":
-                    scheduler = BackgroundScheduler()
-                    scheduler.add_job(
-                        lambda: anviz_biometric_attendance_scheduler(device.id),
-                        "interval",
-                        seconds=str_time_seconds(device.scheduler_duration),
-                    )
-                    scheduler.start()
-                elif device.machine_type == "zk":
-                    scheduler = BackgroundScheduler()
-                    scheduler.add_job(
-                        lambda: zk_biometric_attendance_scheduler(device.id),
-                        "interval",
-                        seconds=str_time_seconds(device.scheduler_duration),
-                        id=f"biometric_{device.id}",
-                    )
-                    scheduler.start()
-                elif device.machine_type == "dahua":
-                    scheduler = BackgroundScheduler()
-                    scheduler.add_job(
-                        lambda: dahua_biometric_attendance_scheduler(device.id),
-                        "interval",
-                        seconds=str_time_seconds(device.scheduler_duration),
-                    )
-                    scheduler.start()
+        handler = _BIOMETRIC_SCHEDULERS.get(device.machine_type)
+        if handler is None:
+            continue
+        try:
+            interval = str_time_seconds(device.scheduler_duration)
+        except Exception:
+            logger.exception(
+                "Biometric device %s has an unreadable scheduler_duration",
+                device.pk,
+            )
+            continue
+        if interval <= 0:
+            continue
+        last = _biometric_last_run.get(device.pk)
+        if last is not None and (now - last) < interval:
+            continue
+        _biometric_last_run[device.pk] = now
+        try:
+            # Bind the id per iteration: the previous lambdas closed over the
+            # loop variable, so every device could poll the last one's id.
+            handler(device.pk)
+        except Exception:
+            logger.exception(
+                "Biometric polling failed for device %s (%s)",
+                device.pk,
+                device.machine_type,
+            )
 
-                elif device.machine_type == "cosec":
-                    scheduler = BackgroundScheduler()
-                    scheduler.add_job(
-                        lambda: cosec_biometric_attendance_scheduler(device.id),
-                        "interval",
-                        seconds=str_time_seconds(device.scheduler_duration),
-                    )
-                    scheduler.start()
 
-                elif device.machine_type == "etimeoffice":
-                    scheduler = BackgroundScheduler()
-                    scheduler.add_job(
-                        lambda: etimeoffice_biometric_attendance_scheduler(device.id),
-                        "interval",
-                        seconds=str_time_seconds(device.scheduler_duration),
-                    )
-                    scheduler.start()
-                else:
-                    pass
-except:
-    pass
+register_job(
+    poll_biometric_devices,
+    "interval",
+    job_id="biometric.poll_devices",
+    minutes=1,
+)

@@ -1,7 +1,28 @@
 {% extends 'index.html' %} {% block content %} {% load static %}
+
+<style>
+    .oh-onboarding-card {
+        background-color: hsl(0, 0%, 100%);
+        width: 90%;
+        max-width: 600px;
+        box-shadow: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.06) 0px 1px 2px 0px;
+    }
+
+    @media (min-width: 1400px) {
+        .oh-onboarding-card {
+            max-width: 800px;
+        }
+    }
+</style>
+
 <div id="contractFormTarget">
-    <div class="oh-wrapper d-flex justify-content-center mt-4 mb-4">
-        <form action="" hx-swap="none" class="oh-onboarding-card" method="post" enctype="multipart/form-data">
+    <div class="oh-wrapper d-flex flex-column align-items-center mt-4 mb-4">
+        {% if form.contract_status %}
+        <div class="oh-onboarding-card d-flex justify-content-end p-3">
+            <div style="min-width: 160px">{{ form.contract_status }}</div>
+        </div>
+        {% endif %}
+        <form id="contractForm" action="" hx-swap="none" class="oh-onboarding-card" method="post" enctype="multipart/form-data">
             {% csrf_token %} {{form.as_p}}
         </form>
     </div>
@@ -20,20 +41,24 @@
             }
         }
         function toggleFunction() {
-            if ($("#id_calculate_daily_leave_amount").is(":checked")) {
-                $(
-                    "#id_deduction_for_one_leave_amount,[for=id_deduction_for_one_leave_amount]"
-                ).hide();
-            } else {
-                $(
-                    "#id_deduction_for_one_leave_amount,[for=id_deduction_for_one_leave_amount]"
-                ).show();
+            var computed = $("#id_calculate_daily_leave_amount").is(":checked");
+
+            // The grid cell, not the input's parent: the field is wrapped in
+            // an .oh-input-group inside the cell, so hiding the parent leaves
+            // an empty half-width column sitting in the row.
+            function cell(id) {
+                return $(id).closest(".col-12, .col-md-6, .col-md-12");
             }
-            if ($("#id_calculate_daily_leave_amount").is(":checked")) {
-                $("#id_deduction_for_one_leave_amount").parent().hide();
-            } else {
-                $("#id_deduction_for_one_leave_amount").parent().show();
-            }
+
+            // The flat per-leave figure: only when the amount is NOT computed.
+            cell("#id_deduction_for_one_leave_amount").toggle(!computed);
+
+            // What the computed amount is a share of, and how many days it is
+            // shared between. Hidden when the figure is typed in, because
+            // neither would affect anything -- a setting that does nothing is
+            // worse than no setting.
+            cell("#id_daily_leave_amount_base").toggle(computed);
+            cell("#id_daily_leave_amount_divisor").toggle(computed);
         }
         function contractInitial(element) {
             var employee_id = $(element).val();
@@ -62,6 +87,9 @@
                     $("#id_contract_end_date").val(data.contract_end_date);
                     document.getElementById("id_contract_end_date").dispatchEvent(change)
                 },
+                error: () => {
+                    reloadmessage()
+                }
             });
         }
 

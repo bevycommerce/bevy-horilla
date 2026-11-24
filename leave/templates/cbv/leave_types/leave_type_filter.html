@@ -1,0 +1,76 @@
+{% load i18n %}
+<div class="oh-dropdown__filter-body">
+	<div class="oh-accordion{% if modern_filter %} oh-accordion--show{% endif %}">
+		<div class="oh-accordion-header">
+			<span class="oh-filter-section-icon"><ion-icon name="pricetag-outline"></ion-icon></span>
+			{% trans "Leave Type" %}
+		</div>
+		<div class="oh-accordion-body">
+			<div class="row">
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Name" %}</label>
+						{{form.name}}
+					</div>
+				</div>
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Payment Method" %}</label>
+						{{form.payment}}
+					</div>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Reset" %}</label>
+						{{form.reset}}
+					</div>
+				</div>
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Carry Forward Type" %}</label>
+						{{form.carryforward_type}}
+					</div>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Require Approval" %}</label>
+						{{form.require_approval}}
+					</div>
+				</div>
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Require Attachment" %}</label>
+						{{form.require_attachment}}
+					</div>
+				</div>
+			</div>
+			<div class="row">
+				<div class="col-sm-12 col-md-12 col-lg-6">
+					<div class="oh-input-group">
+						<label class="oh-label">{% trans "Encashable" %}</label>
+						{{form.is_encashable}}
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="oh-accordion{% if modern_filter %} oh-accordion--show{% endif %}">
+		<div class="oh-accordion-header">
+			<span class="oh-filter-section-icon"><ion-icon name="options-outline"></ion-icon></span>
+			{% trans "Advanced" %}
+		</div>
+		<div class="oh-accordion-body">
+<div class="row"><div class="col-sm-12"><div class="oh-input-group">
+<div id="customFilterRowsContainer-leave-type" class="oh-custom-filter-rows"></div>
+<button type="button" class="oh-custom-filter-add" onclick="addCustomFilterRow('leave-type')">+ {% trans "Add filter" %}</button>
+</div></div></div>
+</div></div></div>
+{{ custom_filter_fields|json_script:"customFilterFields-leave-type" }}
+{{ custom_filter_rows|json_script:"customFilterRows-leave-type" }}
+<script>initCustomFilterBuilder('leave-type');</script>

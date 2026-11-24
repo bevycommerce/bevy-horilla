@@ -1,0 +1,37 @@
+{% load i18n %}
+{% with attendees=instance.get_attendees %}
+    <div data-cell-index="1" class="oh-avatar-stack">
+        <div class="oh-avatar-stack__images">
+            {% for attendee in attendees|slice:":3" %}
+                <div class="oh-avatar-stack__img">
+                    <img
+                        src="https://ui-avatars.com/api/?name={{ attendee.get_full_name }}&background=random"
+                        alt="{{ attendee.get_full_name }}"
+                    >
+                </div>
+            {% endfor %}
+            {% with extra=attendees|length|add:"-3" %}
+                {% if extra > 0 %}
+                    <div class="oh-avatar-stack__img oh-avatar-stack__more">+{{ extra }}</div>
+                {% endif %}
+            {% endwith %}
+            {% if not attendees %}
+                <span class="oh-avatar-stack__empty">{% trans "No attendees" %}</span>
+            {% endif %}
+        </div>
+        {% if attendees %}
+            <div class="oh-avatar-stack__popover-content">
+                <div class="oh-avatar-stack__popover-title">{% trans "Attendees" %}</div>
+                {% for attendee in attendees %}
+                    <div class="oh-avatar-stack__popover-row">
+                        <img
+                            src="https://ui-avatars.com/api/?name={{ attendee.get_full_name }}&background=random"
+                            alt=""
+                        >
+                        <span>{{ attendee.get_full_name }}</span>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    </div>
+{% endwith %}

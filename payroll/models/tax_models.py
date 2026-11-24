@@ -8,11 +8,13 @@ import math
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.urls import reverse
 from django.utils.text import format_lazy
 from django.utils.translation import gettext_lazy as _
 
 from base.horilla_company_manager import HorillaCompanyManager
 from base.models import Company
+from horilla.horilla_middlewares import _thread_locals, get_selected_company
 from horilla.models import HorillaModel
 from payroll.models.models import FilingStatus
 
@@ -24,7 +26,7 @@ class PayrollSettings(HorillaModel):
 
     choices = [
         ("prefix", _("Prefix")),
-        ("postfix", _("Postfix")),
+        ("postfix", _("Suffix")),
     ]
 
     currency_symbol = models.CharField(null=True, default="$", max_length=5)
@@ -41,6 +43,50 @@ class PayrollSettings(HorillaModel):
 
     def __str__(self):
         return f"Payroll Settings {self.currency_symbol}"
+
+    @classmethod
+    def for_selected_company(cls):
+        """
+        Return the selected company's settings, else the settings without a
+        company, else any settings (None if there are none).
+
+        HorillaCompanyManager also lets the row without a company through, so
+        a bare .objects.first() returns whichever row has the lower id. That
+        is usually the "$" row default_currency() creates on the very first
+        page load, not the company's own row saved from the settings page.
+
+        Remembered on the current request, per company: a payroll list formats
+        every amount through the currency filter. Saving or deleting settings
+        forgets it (payroll/signals.py).
+        """
+        request = _thread_locals.request
+        company_id = get_selected_company()
+        remembered = getattr(request, "_payroll_settings", None) or {}
+        if company_id in remembered:
+            return remembered[company_id]
+        settings = None
+        if company_id and company_id != "all":
+            settings = cls.objects.filter(company_id=company_id).first()
+        if settings is None:
+            settings = cls.objects.filter(company_id__isnull=True).first()
+        if settings is None:
+            settings = cls.objects.first()
+        if request is not None:
+            request._payroll_settings = {**remembered, company_id: settings}
+        return settings
+
+    @classmethod
+    def currency_for_selected_company(cls):
+        """The selected company's currency symbol; "$" when none is set up."""
+        settings = cls.for_selected_company()
+        return (settings.currency_symbol if settings else None) or "$"
+
+    @staticmethod
+    def forget_remembered():
+        """Drop the settings remembered on the current request."""
+        request = _thread_locals.request
+        if request is not None and hasattr(request, "_payroll_settings"):
+            del request._payroll_settings
 
 
 class TaxBracket(HorillaModel):
@@ -74,6 +120,23 @@ class TaxBracket(HorillaModel):
             f"{self.min_income} for {self.filing_status_id}"
         )
 
+    def band_label(self):
+        """
+        The income range this slab covers, as one phrase.
+
+        One column rather than a From and a To. Split across two, a range reads
+        as two unrelated numbers with the page's width between them, which is
+        what made a seven-slab table hard to follow.
+
+        The open-ended top slab is stored as NULL by some tax packs and as
+        float("inf") by others, and only the first was handled -- so the last
+        row of a US table read "inf". Both mean the same thing and both say so.
+        """
+        top = self.max_income
+        if top is None or top == math.inf:
+            return _("%(floor)s and above") % {"floor": f"{self.min_income:,.0f}"}
+        return f"{self.min_income:,.0f} – {top:,.0f}"
+
     def get_display_max_income(self):
         """
         Retrieves the maximum income.
@@ -83,6 +146,20 @@ class TaxBracket(HorillaModel):
         if self.max_income != math.inf:
             return self.max_income
         return None
+
+    def get_update_url(self):
+        """
+        Returns the URL for updating the tax bracket.
+        """
+
+        return reverse("tax-bracket-update", kwargs={"pk": self.pk})
+
+    def get_delete_url(self):
+        """
+        Returns the URL for updating the tax bracket.
+        """
+
+        return reverse("tax-bracket-delete", kwargs={"tax_bracket_id": self.pk})
 
     def clean(self):
         super().clean()
@@ -96,28 +173,33 @@ class TaxBracket(HorillaModel):
         if existing_bracket.exists():
             raise ValidationError(_("This tax bracket already exists"))
 
-        if self.max_income is None:
-            self.max_income = math.inf
+        # Open-ended is NULL, read as infinity but never written back as it.
+        top = math.inf if self.max_income is None else self.max_income
 
-        if self.min_income >= self.max_income:
+        if self.min_income >= top:
             raise ValidationError(
                 {"max_income": _("Maximum income must be greater than minimum income.")}
             )
 
-        existing_brackets = TaxBracket.objects.filter(
+        # The slab grid validates the whole table itself.
+        if getattr(self, "_table_validated", False):
+            return
+
+        # Slabs that meet are fine; only a real overlap is refused.
+        overlapping = TaxBracket.objects.filter(
             filing_status_id=self.filing_status_id
         ).exclude(pk=self.pk)
-        if existing_brackets.filter(max_income__gte=self.min_income).exists():
-            tax_bracket = existing_brackets.filter(
-                max_income__gte=self.min_income
-            ).first()
-            if tax_bracket.min_income <= self.max_income:
-                raise ValidationError(
-                    {
-                        "min_income": format_lazy(
-                            "The minimum income of this tax bracket must be \
-                                greater than the maximum income of {}.",
-                            tax_bracket,
-                        )
-                    }
-                )
+        overlapping = overlapping.filter(
+            models.Q(max_income__isnull=True) | models.Q(max_income__gt=self.min_income)
+        )
+        if top != math.inf:
+            overlapping = overlapping.filter(min_income__lt=top)
+        tax_bracket = overlapping.first()
+        if tax_bracket is not None:
+            raise ValidationError(
+                {
+                    "min_income": format_lazy(
+                        "This tax bracket overlaps {}.", tax_bracket
+                    )
+                }
+            )

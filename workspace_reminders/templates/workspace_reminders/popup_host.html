@@ -1,0 +1,7 @@
+{% comment %} Checks every minute whether the Midday box is due. Included once on every portal page. {% endcomment %}
+{% if request.user.is_authenticated %}
+<div id="ws-popup-host"
+     hx-get="{% url 'ws-midday-popup' %}"
+     hx-trigger="load delay:3s, every 60s"
+     hx-swap="innerHTML"></div>
+{% endif %}

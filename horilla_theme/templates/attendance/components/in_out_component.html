@@ -1,0 +1,301 @@
+{% load static horillafilters attendancefilters breakfilters i18n %}
+<style>#attendance-activity-container { display: flex; align-items: center; gap: 4px; }</style>
+
+{% if request.user.employee_get %}
+    {% with get_forecasted_at_work=request.user.employee_get.get_forecasted_at_work geo_on=request|is_geofencing_enabled active_break=request.user|open_break %}
+        {% if request.session.selected_company == "all" or request.user.employee_get.employee_work_info.company_id.id == request.session.selected_company|default:"-1"|add:"0" %}
+            <!-- "CHEKING WETHER Check in/check out enabled" -->
+            {% if request|is_check_in_enabled %}
+                {% if active_break %}
+                    <style>
+    .brk-row { display: inline-flex; align-items: center; gap: 4px; position: relative; }
+    .brk-end-btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: .9rem; font-weight: 500; white-space: nowrap; cursor: pointer; }
+    .brk-end-btn .brk-timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .brk-reason { font-size: 11px; color: #e9910d; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .brk-arrow { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 38px; padding: 0; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: 10px; cursor: pointer; }
+    .brk-menu { display: none; position: absolute; top: 44px; right: 0; width: 250px; padding: 8px; background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 1060; }
+    .brk-menu.brk-open { display: block; }
+    .brk-note { width: 100%; height: 34px; margin-bottom: 6px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; color: #333; background: #fff; }
+    .brk-item { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; color: #333; cursor: pointer; }
+    .brk-item:hover { background: rgb(233 145 13 / 10%); color: #e9910d; }
+    @media (max-width: 991px) { .brk-row { display: none; } }
+</style>
+                    <div class="brk-row">
+                        <button
+                            type="button"
+                            class="brk-end-btn"
+                            title="{{ active_break.get_reason_display }}{% if active_break.note %}: {{ active_break.note }}{% endif %}"
+                            hx-get="{% url 'break-end' %}"
+                            hx-target="#attendance-activity-container"
+                            hx-swap="innerHTML"
+                        >
+                            <i class="fa-solid fa-mug-hot"></i>
+                            <span>{% trans "End Break" %}</span>
+                            <span class="brk-timer" id="break-timer">00:00:00</span>
+                        </button>
+                    </div>
+                    <span
+                        class="at_work_seconds"
+                        data-at-work-seconds="{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}"
+                        data-run="0"
+                    ></span>
+                    <script>
+                        (function () {
+                            var secs = {{ active_break|break_elapsed_seconds|default:0 }};
+                            function fmt(s) {
+                                var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+                                return (h < 10 ? "0" + h : h) + ":" + (m < 10 ? "0" + m : m) + ":" + (r < 10 ? "0" + r : r);
+                            }
+                            if (window.__breakInterval) clearInterval(window.__breakInterval);
+                            var el = document.getElementById("break-timer");
+                            if (el) el.textContent = fmt(secs);
+                            window.__breakInterval = setInterval(function () {
+                                var e = document.getElementById("break-timer");
+                                if (!e) { clearInterval(window.__breakInterval); return; }
+                                secs += 1;
+                                e.textContent = fmt(secs);
+                            }, 1000);
+                        })();
+                    </script>
+                {% elif request.user|is_clocked_in and get_forecasted_at_work.has_attendance %}
+                    {% comment %} <button class="check checkout" hx-get="{% url 'clock-out' %}"  hx-target='#attendance-activity-container' hx-swap='innerHTML'>
+                        <span class="date">
+                            <i class="fa-solid fa-right-from-bracket pe-2"></i><div class="time-runner"></div>
+                        </span>
+                        <span class="con hr-Check-In-out-text">{% trans "Check Out" %}</span>
+                    </button>
+                    <span class="at_work_seconds" data-at-work-seconds = "{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}" data-run= "{{run|default:1}}" ></span> {% endcomment %}
+                    <button
+                        class="check checkout{% if geo_on %} geo-clock-btn{% endif %}"
+                        {% if geo_on %}
+                            data-clock-url="{% url 'clock-out' %}"
+                        {% else %}
+                            hx-get="{% url 'clock-out' %}"
+                        {% endif %}
+                        hx-target="#attendance-activity-container"
+                        hx-swap="innerHTML"
+                        {% if request|is_timerunner_enabled and get_forecasted_at_work.has_attendance %}
+                            onmouseenter="$(this).find('span.hr-Check-In-out-text').show();$(this).find('.time-runner').hide()"
+                            onmouseleave="$(this).find('span.hr-Check-In-out-text').hide();$(this).find('.time-runner').show()"
+                        {% endif %}
+                    >
+                        <span class="date">
+                            <i class="fa-solid fa-right-from-bracket pe-2"></i>
+                            <div class="time-runner">
+                                {% if request|is_timerunner_enabled %}
+                                    {{ get_forecasted_at_work.forecasted_at_work|default:"00:00:00" }}
+                                {% else %}
+                                    {% trans "Check Out" %}
+                                {% endif %}
+                            </div>
+                        </span>
+                        <span
+                            class="con hr-Check-In-out-text"
+                            {% if request|is_timerunner_enabled and get_forecasted_at_work.has_attendance %}
+                                style="display: none"
+                            {% endif %}
+                        >
+                            {% trans "Check Out" %}
+                        </span>
+                    </button>
+                    <span
+                        class="at_work_seconds"
+                        data-at-work-seconds="{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}"
+                        data-run="{{ run|default:1 }}"
+                    >
+                    </span>
+                    <style>
+    .brk-row { display: inline-flex; align-items: center; gap: 4px; position: relative; }
+    .brk-end-btn { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: .9rem; font-weight: 500; white-space: nowrap; cursor: pointer; }
+    .brk-end-btn .brk-timer { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .brk-reason { font-size: 11px; color: #e9910d; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .brk-arrow { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 38px; padding: 0; border: 0; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: 10px; cursor: pointer; }
+    .brk-menu { display: none; position: absolute; top: 44px; right: 0; width: 250px; padding: 8px; background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 1060; }
+    .brk-menu.brk-open { display: block; }
+    .brk-note { width: 100%; height: 34px; margin-bottom: 6px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; color: #333; background: #fff; }
+    .brk-item { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; color: #333; cursor: pointer; }
+    .brk-item:hover { background: rgb(233 145 13 / 10%); color: #e9910d; }
+    @media (max-width: 991px) { .brk-row { display: none; } }
+</style>
+                    <div class="brk-row" id="brk-dropdown-wrap">
+                        <button type="button" class="brk-arrow" id="brk-arrow" title="{% trans 'Start Break' %}">
+                            <i class="fa-solid fa-chevron-down"></i>
+                        </button>
+                        <div class="brk-menu" id="brk-menu">
+                            <input type="text" id="brk-note" class="brk-note" maxlength="300" placeholder="{% trans 'Note (optional): how long, details' %}" />
+                            <button type="button" class="brk-item" data-reason="personal_emergency">{% trans "Personal Emergency" %}</button>
+                            <button type="button" class="brk-item" data-reason="prayer">{% trans "Prayer" %}</button>
+                            <button type="button" class="brk-item" data-reason="internet_electricity">{% trans "Internet/Electricity Issue" %}</button>
+                            <button type="button" class="brk-item" data-reason="technical_issue">{% trans "Computer Device not working/Technical Issue" %}</button>
+                        </div>
+                    </div>
+                    <script>
+                        (function () {
+                            var arrow = document.getElementById("brk-arrow");
+                            var menu = document.getElementById("brk-menu");
+                            if (!arrow || !menu) return;
+                            arrow.addEventListener("click", function (ev) {
+                                ev.stopPropagation();
+                                menu.classList.toggle("brk-open");
+                            });
+                            menu.addEventListener("click", function (ev) { ev.stopPropagation(); });
+                            menu.querySelectorAll(".brk-item").forEach(function (btn) {
+                                btn.addEventListener("click", function () {
+                                    var note = document.getElementById("brk-note").value || "";
+                                    menu.classList.remove("brk-open");
+                                    htmx.ajax("GET", "{% url 'break-start' %}?reason=" + encodeURIComponent(btn.dataset.reason) + "&note=" + encodeURIComponent(note), {
+                                        target: "#attendance-activity-container",
+                                        swap: "innerHTML",
+                                    });
+                                });
+                            });
+                            if (!window.__brkCloseBound) {
+                                window.__brkCloseBound = true;
+                                document.addEventListener("click", function () {
+                                    var m = document.getElementById("brk-menu");
+                                    if (m) m.classList.remove("brk-open");
+                                });
+                            }
+                        })();
+                    </script>
+                {% else %}
+                    {% comment %} <button class="check checkin" hx-get="{% url 'clock-in' %}"  hx-target='#attendance-activity-container' hx-swap='innerHTML'>
+                        <span class="date">
+                            <i class="fa-solid fa-right-to-bracket pe-2"></i> <div class="at-work-seconds"></div>
+                        </span>
+                        <span class="con hr-Check-In-out-text">{% trans "Check In" %}</span>
+                    </button>
+                    <span class="at_work_seconds" data-at-work-seconds = "{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}" data-run= "{{run|default:0}}" ></span> {% endcomment %}
+                    <button
+                        class="check checkin{% if geo_on %} geo-clock-btn{% endif %}"
+                        {% if geo_on %}
+                            data-clock-url="{% url 'clock-in' %}"
+                        {% else %}
+                            hx-get="{% url 'clock-in' %}"
+                        {% endif %}
+                        hx-target="#attendance-activity-container"
+                        hx-swap="innerHTML"
+                        {% if request|is_timerunner_enabled %}
+                            onmouseenter="$(this).find('span.hr-Check-In-out-text').show();$(this).find('.at-work-seconds').hide()"
+                            onmouseleave="$(this).find('span.hr-Check-In-out-text').hide();$(this).find('.at-work-seconds').show()"
+                        {% endif %}
+                    >
+                        <span class="date">
+                            <i class="fa-solid fa-right-to-bracket pe-2"></i>
+                            <div class="at-work-seconds">
+                                {% if request|is_timerunner_enabled %}
+                                    {{ get_forecasted_at_work.forecasted_at_work|default:"00:00:00" }}
+                                {% else %}
+                                    {% trans "Check In" %}
+                                {% endif %}
+                            </div>
+                        </span>
+                        <span
+                            class="con hr-Check-In-out-text"
+                            {% if request|is_timerunner_enabled %}
+                                style="display: none"
+                            {% endif %}
+                        >
+                            {% trans "Check In" %}
+                        </span>
+                    </button>
+                    <span
+                        class="at_work_seconds"
+                        data-at-work-seconds="{{ get_forecasted_at_work.forecasted_at_work_seconds|default:0 }}"
+                        data-run="{{ run|default:0 }}"
+                    >
+                    </span>
+
+                    {% if request|is_timerunner_enabled %}
+                        <script>
+                            $(document).ready(function () {
+                                $('.at-work-seconds').html(secondsToDuration({{get_forecasted_at_work.forecasted_at_work_seconds}}))
+                            });
+                            run = 0
+                        </script>
+                    {% endif %}
+                {% endif %}
+            {% endif %}
+        {% endif %}
+        {% if geo_on %}
+            <script>
+                // Delegated on document, guarded, so a re-render of this
+                // (htmx-swappable) component never double-binds. The
+                // geo-fence is enforced server-side; a browser that refuses
+                // or lacks geolocation still gets a clean, fail-closed
+                // denial from the server rather than a silent bypass.
+                if (!window.__geoClockBound) {
+                    window.__geoClockBound = true;
+                    document.addEventListener("click", function (ev) {
+                        var btn = ev.target.closest(".geo-clock-btn");
+                        if (!btn) return;
+                        ev.preventDefault();
+                        var url = btn.dataset.clockUrl;
+                        var go = function (finalUrl) {
+                            htmx.ajax("GET", finalUrl, {
+                                target: "#attendance-activity-container",
+                                swap: "innerHTML",
+                            });
+                        };
+                        if (!navigator.geolocation) {
+                            go(url);
+                            return;
+                        }
+                        navigator.geolocation.getCurrentPosition(
+                            function (pos) {
+                                go(
+                                    url +
+                                        "?latitude=" + pos.coords.latitude +
+                                        "&longitude=" + pos.coords.longitude
+                                );
+                            },
+                            function () {
+                                go(url);
+                            },
+                            { enableHighAccuracy: true, timeout: 10000 }
+                        );
+                    });
+                }
+            </script>
+        {% endif %}
+    {% endwith %}
+{% endif %}
+
+{% if request|is_timerunner_enabled %}
+    <script>
+        var at_work_seconds = $(".at_work_seconds").data("at-work-seconds");
+        var run = $(".at_work_seconds").data("run");
+        var whiteLabelCompany = $("#whiteLabelCompany").data("company");
+
+        // time-runner
+        function secondsToDuration(seconds) {
+            if (seconds < 0){
+                seconds = 0
+            }
+            var hours = Math.floor(seconds / 3600);
+            var minutes = Math.floor((seconds % 3600) / 60);
+            var remainingSeconds = Math.floor(seconds % 60);
+
+            var formattedHours = (hours < 10) ? "0" + hours : hours;
+            var formattedMinutes = (minutes < 10) ? "0" + minutes : minutes;
+            var formattedSeconds = (remainingSeconds < 10) ? "0" + remainingSeconds : remainingSeconds;
+
+            return formattedHours + ":" + formattedMinutes + ":" + formattedSeconds;
+        }
+
+        if (window.timeRunnerInterval) {
+            clearInterval(window.timeRunnerInterval);
+        }
+
+        $(".time-runner").not("title").html(secondsToDuration(at_work_seconds));
+        $("title.time-runner").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
+
+        if (run) {
+            window.timeRunnerInterval = setInterval(() => {
+                at_work_seconds = parseInt(at_work_seconds) + 1;
+                $("div.time-runner").html(secondsToDuration(at_work_seconds));
+                $("title").html(` ${whiteLabelCompany} | ` + secondsToDuration(at_work_seconds));
+            }, 1000);
+        }
+    </script>
+{% endif %}

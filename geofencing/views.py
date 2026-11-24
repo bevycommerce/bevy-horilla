@@ -1,11 +1,11 @@
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.decorators import permission_required
 from django.http import QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from geopy.distance import geodesic
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -13,9 +13,10 @@ from rest_framework.views import APIView
 
 from base.models import Company
 from geofencing.forms import GeoFencingSetupForm
+from horilla.decorators import login_required
 
 from .models import GeoFencing
-from .serializers import *
+from .serializers import EmployeeLocationSerializer, GeoFencingSetupSerializer
 
 
 class GeoFencingSetupGetPostAPIView(APIView):
@@ -27,7 +28,7 @@ class GeoFencingSetupGetPostAPIView(APIView):
     )
     def get(self, request):
         company = request.user.employee_get.get_company()
-        location = get_object_or_404(GeoFencing, company_id=company.id)
+        location = get_object_or_404(GeoFencing, pk=company.id)
         serializer = GeoFencingSetupSerializer(location)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -53,12 +54,18 @@ class GeoFencingSetupGetPostAPIView(APIView):
 class GeoFencingSetupPutDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def get_location(self, pk):
+        try:
+            return GeoFencing.objects.get(pk=pk)
+        except Exception as e:
+            raise serializers.ValidationError(e)
+
     @method_decorator(
         permission_required("geofencing.change_geofencing", raise_exception=True),
         name="dispatch",
     )
     def put(self, request, pk):
-        location = get_object_or_404(GeoFencing, pk=pk)
+        location = self.get_location(pk)
         company = request.user.employee_get.get_company()
         if request.user.is_superuser or company == location.company_id:
             serializer = GeoFencingSetupSerializer(
@@ -68,14 +75,14 @@ class GeoFencingSetupPutDeleteAPIView(APIView):
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        raise serializers.ValidationError("Access Denied..")
+        raise serializers.ValidationError(_("Access Denied.."))
 
     @method_decorator(
         permission_required("geofencing.delete_geofencing", raise_exception=True),
         name="dispatch",
     )
     def delete(self, request, pk):
-        location = get_object_or_404(GeoFencing, pk=pk)
+        location = self.get_location(pk)
         company = request.user.employee_get.get_company()
         if request.user.is_superuser or company == location.company_id:
             location.delete()
@@ -83,7 +90,7 @@ class GeoFencingSetupPutDeleteAPIView(APIView):
                 {"message": "GeoFencing location deleted successfully"},
                 status=status.HTTP_200_OK,
             )
-        raise serializers.ValidationError("Access Denied..")
+        raise serializers.ValidationError(_("Access Denied.."))
 
 
 class GeoFencingEmployeeLocationCheckAPIView(APIView):
@@ -98,11 +105,10 @@ class GeoFencingEmployeeLocationCheckAPIView(APIView):
 
     def get_company_location(self, request):
         company = self.get_company(request)
-        try:
-            location = GeoFencing.objects.get(company_id=company)
-            return location
-        except Exception as e:
-            raise serializers.ValidationError(e)
+        location = GeoFencing.for_company(company)
+        if location is None:
+            raise serializers.ValidationError(_("No geofencing is configured."))
+        return location
 
     def post(self, request):
         serializer = EmployeeLocationSerializer(data=request.data)
@@ -127,7 +133,7 @@ class GeoFencingEmployeeLocationCheckAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        raise serializers.ValidationError("Geofencing is not yet started..")
+        raise serializers.ValidationError(_("Geofencing is not yet started.."))
 
 
 class GeoFencingSetUpPermissionCheck(APIView):
@@ -152,38 +158,28 @@ def get_company(request):
         raise serializers.ValidationError(e)
 
 
-def get_company_location(request):
-    company = get_company(request)
-    try:
-        location = GeoFencing.objects.get(company_id=company)
-        return location
-    except Exception as e:
-        raise serializers.ValidationError(e)
-
-
 @login_required
 @permission_required("geofencing.add_localbackup")
 def geo_location_config(request):
+    """
+    Edit the geofence of the selected company, or the global one when "all companies" is
+    selected. The instance is given its company *before* the form is validated: the model's
+    clean() allows only one fence without a company, so validating a company's new fence while
+    its company was still empty was rejected ("Not valid") as soon as a global fence existed.
+    """
+    try:
+        company = get_company(request)
+    except serializers.ValidationError:
+        messages.error(request, _("Select a company first."))
+        return render(request, "geo_config.html", {"form": GeoFencingSetupForm()})
+    own_fence = GeoFencing.objects.filter(company_id=company).first()
+    instance = own_fence or GeoFencing(company_id=company)
+    form = GeoFencingSetupForm(instance=instance)
     if request.method == "POST":
-        try:
-            form = GeoFencingSetupForm(
-                request.POST, instance=get_company_location(request)
-            )
-        except Exception as e:
-            data = request.POST
-            if isinstance(data, QueryDict):
-                data = data.dict()
-            if get_company(request) == None:
-                data["company_id"] = None
-            form = GeoFencingSetupForm(data=data)
+        form = GeoFencingSetupForm(request.POST, instance=instance)
         if form.is_valid():
             form.save()
             messages.success(request, _("Geofencing config created successfully."))
         else:
-            messages.info(request, "Not valid")
-
-    try:
-        form = GeoFencingSetupForm(instance=get_company_location(request))
-    except Exception as e:
-        form = GeoFencingSetupForm()
+            messages.info(request, _("Not valid"))
     return render(request, "geo_config.html", {"form": form})

@@ -1,0 +1,31 @@
+{% extends 'index.html' %}
+{% load i18n %}
+{% block content %}
+    <div class="border border-[#ebebeb] rounded-md">
+        <div hx-get="{% url 'question-list-nav' template_id=question_template.id %}" hx-trigger="load"></div>
+
+        <div
+            class="oh-checkpoint-badge mb-2"
+            id="selectedInstances"
+            data-ids="[]"
+            data-clicked=""
+            style="display: none"
+        >
+        </div>
+
+        <div class="oh-wrapper" id="listContainer"></div>
+    </div>
+
+    <script>
+        function toggleQuestionOptions() {
+            var form = $("#questionFormForm");
+            var isChoice = form.find('select[name="question_type"]').val() === "4";
+            form.find('[id^="id_option_"][id$="_parent_div"]').toggle(isChoice);
+        }
+
+        $(document)
+            .off("change.questionOptions htmx:afterSettle.questionOptions")
+            .on("change.questionOptions", '#questionFormForm select[name="question_type"]', toggleQuestionOptions)
+            .on("htmx:afterSettle.questionOptions", toggleQuestionOptions);
+    </script>
+{% endblock %}

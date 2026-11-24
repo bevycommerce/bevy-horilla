@@ -16,21 +16,24 @@ from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 
 from base.methods import get_subordinates
+from employee.models import Employee
 from horilla.http import HorillaRedirect
 from horilla.methods import handle_no_permission
 from horilla_views.cbv_methods import login_required
+from horilla_views.generic.cbv.kanban import HorillaKanbanView
 from horilla_views.generic.cbv.views import (
-    HorillaCardView,
     HorillaDetailedView,
     HorillaFormView,
     HorillaListView,
     HorillaNavView,
     TemplateView,
 )
+from project.cbv.cbv_decorators import is_projectmanager_or_member_or_perms
 from project.cbv.project_stage import StageDynamicCreateForm
 from project.cbv.projects import DynamicProjectCreationFormView
 from project.filters import TaskAllFilter
 from project.forms import TaskAllForm
+from project.methods import employees_for_project
 from project.models import Project, ProjectStage, Task
 from project.templatetags.taskfilters import task_crud_perm
 
@@ -38,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 
 @method_decorator(login_required, name="dispatch")
+@method_decorator(
+    is_projectmanager_or_member_or_perms(perm="project.view_task"), name="dispatch"
+)
 class TasksTemplateView(TemplateView):
     """
     view page of the task page
@@ -56,6 +62,10 @@ class TaskListView(HorillaListView):
     filter_class = TaskAllFilter
     action_method = "actions"
 
+    header_attrs = {
+        "action": """style="width:150px !important;" """,
+    }
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.view_id = "task-list-container"
@@ -63,15 +73,20 @@ class TaskListView(HorillaListView):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        active = (
+            True
+            if self.request.GET.get("is_active", True)
+            in ["unknown", "True", "true", True]
+            else False
+        )
+        queryset = queryset.filter(is_active=active)
         if not self.request.user.has_perm("project.view_task"):
             employee_id = self.request.user.employee_get
             subordinates = get_subordinates(self.request)
             subordinate_ids = [subordinate.id for subordinate in subordinates]
             project = queryset.filter(
                 Q(project__managers=employee_id)
-                | Q(project__members=employee_id)
                 | Q(project__managers__in=subordinate_ids)
-                | Q(project__members__in=subordinate_ids)
             )
             queryset = (
                 queryset.filter(
@@ -109,60 +124,68 @@ class TaskListView(HorillaListView):
             (get_field("status").verbose_name, "status"),
         ]
 
+    row_status_class = "status-{status}"
+
+    row_attrs = """
+        hx-get='{task_detail_view}?instance_ids={ordered_ids}'
+        hx-target="#genericModalBody"
+        data-target="#genericModal"
+        data-toggle="oh-modal-toggle"
+    """
+
+    nested_group_by_fields = [
+        "project",
+        "stage",
+        "status",
+        "is_active",
+        "start_date",
+        "end_date",
+    ]
+
     row_status_indications = [
         (
             "todo--dot",
             _("To Do"),
             """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('to_do');
-                $('#applyFilter').click();
-            "
+                onclick="
+                    $('#applyFilter').closest('form').find('[name=status]').val('to_do');
+                    $('#applyFilter').click();
+                "
             """,
         ),
         (
             "in-progress--dot",
             _("In progress"),
             """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('in_progress');
-                $('#applyFilter').click();
-
-            "
+                onclick="
+                    $('#applyFilter').closest('form').find('[name=status]').val('in_progress');
+                    $('#applyFilter').click();
+                "
             """,
         ),
         (
             "completed--dot",
             _("Completed"),
             """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('completed');
-                $('#applyFilter').click();
-
-            "
+                onclick="
+                    $('#applyFilter').closest('form').find('[name=status]').val('completed');
+                    $('#applyFilter').click();
+                "
             """,
         ),
         (
             "expired--dot",
             _("Expired"),
             """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('expired');
-                $('#applyFilter').click();
-
-            "
+                onclick="
+                    $('#applyFilter').closest('form').find('[name=status]').val('expired');
+                    $('#applyFilter').click();
+                "
             """,
         ),
     ]
-
-    row_status_class = "status-{status}"
-
-    row_attrs = """
-                hx-get='{task_detail_view}?instance_ids={ordered_ids}'
-                hx-target="#genericModalBody"
-                data-target="#genericModal"
-                data-toggle="oh-modal-toggle"
-                """
+    show_quick_date_filters = True
+    quick_date_fields = ("end_date", "end_from", "end_till")
 
 
 @method_decorator(login_required, name="dispatch")
@@ -176,74 +199,89 @@ class TasksNavBar(HorillaNavView):
         "stage",
         "status",
     ]
+    default_group_by = "status"
+
+    nested_group_by_fields = [
+        "project",
+        "stage",
+        "status",
+        "is_active",
+        "start_date",
+        "end_date",
+    ]
     filter_form_context_name = "form"
     filter_instance = TaskAllFilter()
     search_swap_target = "#listContainer"
     filter_body_template = "cbv/tasks/task_filter.html"
+    modern_filter = True
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self.search_url = reverse("tasks-card-view")
+        self.view_types = [
+            {
+                "type": "card",
+                "icon": "grid-outline",
+                "url": reverse("tasks-card-view"),
+                "attrs": f"""
+                    title ='{_("Card")}'
+                """,
+            },
+            {
+                "type": "list",
+                "icon": "list-outline",
+                "url": reverse("tasks-list-view"),
+                "attrs": f"""
+                    title ='{_("List")}'
+                """,
+            },
+        ]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
         employee = self.request.user.employee_get
         projects = Project.objects.all()
         managers = [
             manager for project in projects for manager in project.managers.all()
         ]
-        self.search_url = reverse("tasks-list-view")
         if employee in managers or self.request.user.has_perm("project.add_task"):
             self.create_attrs = f"""
-                                    onclick = "event.stopPropagation();"
-                                    data-toggle="oh-modal-toggle"
-                                    data-target="#genericModal"
-                                    hx-target="#genericModalBody"
-                                    hx-get="{reverse('create-task-all')}"
-                                    """
-
-        self.view_types = [
-            {
-                "type": "list",
-                "icon": "list-outline",
-                "url": reverse("tasks-list-view"),
-                "attrs": """
-                        title ='List'
-                        """,
-            },
-            {
-                "type": "card",
-                "icon": "grid-outline",
-                "url": reverse("tasks-card-view"),
-                "attrs": """
-                          title ='Card'
-                          """,
-            },
-        ]
+                onclick = "event.stopPropagation();"
+                data-toggle="oh-modal-toggle"
+                data-target="#genericModal"
+                hx-target="#genericModalBody"
+                hx-get="{reverse('create-task-all')}"
+            """
 
         if self.request.user.has_perm("project.view_task"):
             self.actions = [
                 {
                     "action": _("Archive"),
                     "attrs": """
-                            id="archiveTask",
-                            style="cursor: pointer;"
-                            """,
+                        id="archiveTask",
+                        style="cursor: pointer;"
+                    """,
                 },
                 {
                     "action": _("Un-Archive"),
                     "attrs": """
-                            id="unArchiveTask",
-                            style="cursor: pointer;"
-                            """,
+                        id="unArchiveTask",
+                        style="cursor: pointer;"
+                    """,
                 },
                 {
                     "action": _("Delete"),
                     "attrs": """
-                                class="oh-dropdown__link--danger"
-                                data-action = "delete"
-                                id="deleteTask"
-                                style="cursor: pointer; color:red !important"
-
-                                """,
+                        class="oh-dropdown__link--danger"
+                        data-action = "delete"
+                        id="deleteTask"
+                        style="cursor: pointer; color:red !important"
+                    """,
                 },
             ]
+        context["actions"] = self.actions
+        context["create_attrs"] = self.create_attrs
+        return context
 
 
 @method_decorator(login_required, name="dispatch")
@@ -269,13 +307,26 @@ class TaskCreateForm(HorillaFormView):
         project_id = self.kwargs.get("project_id")
         stage_id = self.kwargs.get("stage_id")
         task_id = self.kwargs.get("pk")
-        # try:
+        if not task_id and not Project.objects.exists():
+            messages.error(request, _("Please create a project first."))
+            return HorillaRedirect(request)
+
         if project_id:
             project = Project.objects.filter(id=project_id).first()
+            if not project:
+                messages.error(request, _("Project not found."))
+                return HorillaRedirect(request)
         elif stage_id:
-            project = ProjectStage.objects.filter(id=stage_id).first().project
+            stage = ProjectStage.objects.filter(id=stage_id).first()
+            if not stage:
+                messages.error(request, _("Stage not found."))
+                return HorillaRedirect(request)
+            project = stage.project
         elif task_id:
             task = Task.objects.filter(id=task_id).first()
+            if not task:
+                messages.error(request, _("Task not found."))
+                return HorillaRedirect(request)
             project = task.project
         elif not task_id:
             return super().get(request, *args, pk=pk, **kwargs)
@@ -295,10 +346,6 @@ class TaskCreateForm(HorillaFormView):
 
         else:
             return handle_no_permission(request)
-        # except Exception as e:
-        #     logger.error(e)
-        #     messages.error(request, _("Something went wrong!"))
-        #     return HorillaRedirect(self.request)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -315,8 +362,12 @@ class TaskCreateForm(HorillaFormView):
             self.form.fields["stage"].choices = (
                 [("", _("Select Stage"))]
                 + [(stage.pk, stage) for stage in stages]
-                + [("dynamic_create", _("Dynamic Create"))]
+                + [("dynamic_create", _("Create %(label)s") % {"label": _("Stage")})]
             )
+            dynamic_project = Project.objects.filter(id=dynamic_project_id).first()
+            employees = employees_for_project(dynamic_project)
+            self.form.fields["task_managers"].queryset = employees
+            self.form.fields["task_members"].queryset = employees
 
         if task_id and not dynamic_project_id:
             task = self.form.instance
@@ -324,16 +375,24 @@ class TaskCreateForm(HorillaFormView):
             self.form.fields["stage"].choices = (
                 [("", _("Select Stage"))]
                 + [(stage.pk, stage) for stage in stages]
-                + [("dynamic_create", _("Dynamic Create"))]
+                + [("dynamic_create", _("Create %(label)s") % {"label": _("Stage")})]
             )
 
         if stage_id:
             stage = ProjectStage.objects.filter(id=stage_id).first()
-            project = stage.project
-            self.form.fields["stage"].initial = stage
-            self.form.fields["stage"].choices = [(stage.id, stage.title)]
-            self.form.fields["project"].initial = project
-            self.form.fields["project"].choices = [(project.id, project.title)]
+            if stage:
+                project = stage.project
+                self.form.fields["stage"].initial = stage
+                self.form.fields["stage"].choices = [(stage.id, stage.title)]
+                self.form.fields["stage"].widget = forms.HiddenInput()
+                self.form.fields["project"].initial = project
+                self.form.fields["project"].choices = [(project.id, project.title)]
+                self.form.fields["project"].widget = forms.HiddenInput()
+                self.form.initial["project"] = project.pk
+                self.form.initial["stage"] = stage.pk
+                employees = employees_for_project(project)
+                self.form.fields["task_managers"].queryset = employees
+                self.form.fields["task_members"].queryset = employees
         elif project_id:
             project = Project.objects.get(id=project_id)
             self.form.fields["project"].initial = project
@@ -342,6 +401,9 @@ class TaskCreateForm(HorillaFormView):
             self.form.fields["stage"].choices = [
                 (stage.id, stage.title) for stage in stages
             ]
+            employees = employees_for_project(project)
+            self.form.fields["task_managers"].queryset = employees
+            self.form.fields["task_members"].queryset = employees
         elif self.form.instance.pk:
             self.form_class.verbose_name = _("Update Task")
             if self.request.GET.get("project_task"):
@@ -361,10 +423,16 @@ class TaskCreateForm(HorillaFormView):
             ):
 
                 self.form.fields["project"].choices.append(
-                    ("dynamic_create", "Dynamic create")
+                    (
+                        "dynamic_create",
+                        _("Create %(label)s") % {"label": _("Project")},
+                    )
                 )
                 self.form.fields["stage"].choices.append(
-                    ("dynamic_create", "Dynamic create")
+                    (
+                        "dynamic_create",
+                        _("Create %(label)s") % {"label": _("Stage")},
+                    )
                 )
 
         return context
@@ -380,7 +448,7 @@ class TaskCreateForm(HorillaFormView):
             messages.success(self.request, _(message))
             if stage_id or self.request.GET.get("project_task"):
                 return HorillaRedirect(self.request)
-            return self.HttpResponse("<script>$('#taskFilterButton').click();</script>")
+            return self.HttpResponse("<script>$('#applyFilter').click();</script>")
         return super().form_valid(form)
 
 
@@ -398,6 +466,9 @@ class DynamicTaskCreateFormView(TaskCreateForm):
                 self.form.fields["project"].initial = project
                 self.form.fields["project"].choices = [(project.id, project.title)]
                 self.form.fields["stage"].queryset = stages
+                employees = employees_for_project(project)
+                self.form.fields["task_managers"].queryset = employees
+                self.form.fields["task_members"].queryset = employees
                 # self.form.fields["project"].widget = forms.HiddenInput()
         return context
 
@@ -417,26 +488,39 @@ class TaskDetailView(HorillaDetailedView):
     def body(self):
         get_field = self.model()._meta.get_field
         return [
-            (get_field("title").verbose_name, "title"),
             (get_field("project").verbose_name, "project"),
             (get_field("stage").verbose_name, "stage"),
             (get_field("task_managers").verbose_name, "get_managers"),
             (get_field("task_members").verbose_name, "get_members"),
             (get_field("status").verbose_name, "get_status_display"),
             (get_field("end_date").verbose_name, "end_date"),
-            (get_field("description").verbose_name, "description"),
+            (get_field("allocated_hours").verbose_name, "allocated_hours"),
+            ("", "timesheet_progress_col", True),
             (get_field("document").verbose_name, "document_col", True),
+            (get_field("description").verbose_name, "description"),
         ]
+
+    cols = {
+        "get_managers": 12,
+        "get_members": 12,
+        "timesheet_progress_col": 12,
+        "description": 12,
+    }
 
 
 @method_decorator(login_required, name="dispatch")
-class TaskCardView(HorillaCardView):
+class TaskCardView(HorillaKanbanView):
     """
-    card view of the page
+    kanban card view of the page, with tasks arranged into columns by status
     """
 
     model = Task
     filter_class = TaskAllFilter
+    disable_group_by = True
+    filter_keys_to_remove = ["field"]
+    group_key = "status"
+    show_kanban_confirmation = False
+    custom_card_content_template = "cbv/tasks/task_card_extra.html"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -447,50 +531,62 @@ class TaskCardView(HorillaCardView):
                 "action": _("Edit"),
                 "accessibility": "project.cbv.accessibility.task_crud_accessibility",
                 "attrs": """
-                        data-toggle = "oh-modal-toggle"
-                        data-target = "#genericModal"
-                        hx-target="#genericModalBody"
-                        hx-get ='{get_update_url}'
-                        class="oh-dropdown__link"
-                        style="cursor: pointer;"
-                        """,
+                    data-toggle = "oh-modal-toggle"
+                    data-target = "#genericModal"
+                    hx-target="#genericModalBody"
+                    hx-get ='{get_update_url}'
+                    class="oh-dropdown__link"
+                    style="cursor: pointer;"
+                """,
             },
             {
                 "action": _("archive_status"),
                 "accessibility": "project.cbv.accessibility.task_crud_accessibility",
                 "attrs": """
-                href="{get_archive_url}"
-                        onclick="return confirm('Do you want to {archive_status} this task?')"
-                        class="oh-dropdown__link"
-                        """,
+                    hx-get="{get_archive_url}"
+                    hx-target="#listContainer"
+                    hx-swap="innerHTML"
+                    hx-confirm="Do you want to {archive_status} this task?"
+                    onclick="event.stopPropagation()"
+                    class="oh-dropdown__link"
+                """,
             },
             {
                 "action": _("Delete"),
                 "accessibility": "project.cbv.accessibility.task_crud_accessibility",
                 "attrs": """
-                    onclick="
-                                event.stopPropagation()
-                                deleteItem({get_delete_url});
-                                "
+                    hx-post="{get_delete_url}"
+                    hx-target="#listContainer"
+                    hx-swap="innerHTML"
+                    hx-confirm="Do you want Delete this Task ?"
+                    onclick="event.stopPropagation()"
                     class="oh-dropdown__link oh-dropdown__link--danger"
-                    """,
+                """,
             },
         ]
 
+    show_quick_date_filters = True
+    quick_date_fields = ("end_date", "end_from", "end_till")
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        self.queryset = super().get_queryset()
+        active = (
+            True
+            if self.request.GET.get("is_active", True)
+            in ["unknown", "True", "true", True]
+            else False
+        )
+        self.queryset = self.queryset.filter(is_active=active)
         if not self.request.user.has_perm("project.view_task"):
             employee_id = self.request.user.employee_get
             subordinates = get_subordinates(self.request)
             subordinate_ids = [subordinate.id for subordinate in subordinates]
-            project = queryset.filter(
+            project = self.queryset.filter(
                 Q(project__managers=employee_id)
-                | Q(project__members=employee_id)
                 | Q(project__managers__in=subordinate_ids)
-                | Q(project__members__in=subordinate_ids)
             )
-            queryset = (
-                queryset.filter(
+            self.queryset = (
+                self.queryset.filter(
                     Q(task_members=employee_id)
                     | Q(task_managers=employee_id)
                     | Q(task_members__in=subordinate_ids)
@@ -498,92 +594,55 @@ class TaskCardView(HorillaCardView):
                 )
                 | project
             )
-        return queryset.distinct()
+        self.queryset = self.queryset.distinct()
+        return self.queryset
 
     details = {
-        "image_src": "get_avatar",
+        "image_src": "{get_avatar}",
         "title": "{title}",
-        "subtitle": "Project Name : {if_project} <br> Stage Name : {stage}<br> End Date : {end_date}",
+        "Project": "{if_project}",
+        "Stage": "{stage}",
     }
 
-    card_attrs = """
-                hx-get='{task_detail_view}?instance_ids={ordered_ids}'
-                hx-target="#genericModalBody"
-                data-target="#genericModal"
-                data-toggle="oh-modal-toggle"
-                """
-
-    card_status_indications = [
-        (
-            "todo--dot",
-            _("To Do"),
-            """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('to_do');
-                $('#applyFilter').click();
-            "
-            """,
-        ),
-        (
-            "in-progress--dot",
-            _("In progress"),
-            """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('in_progress');
-                $('#applyFilter').click();
-
-            "
-            """,
-        ),
-        (
-            "completed--dot",
-            _("Completed"),
-            """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('completed');
-                $('#applyFilter').click();
-
-            "
-            """,
-        ),
-        (
-            "expired--dot",
-            _("Expired"),
-            """
-            onclick="
-                $('#applyFilter').closest('form').find('[name=status]').val('expired');
-                $('#applyFilter').click();
-
-            "
-            """,
-        ),
-    ]
-
-    card_status_class = "status-{status}"
+    kanban_attrs = """
+        hx-get='{task_detail_view}?instance_ids={ordered_ids}'
+        hx-target="#genericModalBody"
+        data-target="#genericModal"
+        data-toggle="oh-modal-toggle"
+    """
 
 
+@method_decorator(login_required, name="dispatch")
 class TasksInIndividualView(TaskListView):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         employee_id = self.request.GET.get("employee_id")
         self.row_attrs = f"""
-                hx-get='{{task_detail_view}}?instance_ids={{ordered_ids}}&employee_id={employee_id}'
-                hx-target="#genericModalBody"
-                data-target="#genericModal"
-                data-toggle="oh-modal-toggle"
-                """
+            hx-get='{{task_detail_view}}?instance_ids={{ordered_ids}}&employee_id={employee_id}'
+            hx-target="#genericModalBody"
+            data-target="#genericModal"
+            data-toggle="oh-modal-toggle"
+        """
 
     def get_queryset(self):
-        queryset = HorillaListView.get_queryset(self)
+        queryset = super().get_queryset()
         employee_id = self.request.GET.get("employee_id")
         project_id = self.request.GET.get("project_id")
         queryset = queryset.filter(
-            Q(task_members=employee_id) | Q(task_manager=employee_id)
+            Q(task_members=employee_id) | Q(task_managers=employee_id)
         )
-        queryset = queryset.filter(project=project_id)
+        queryset = queryset.filter(project=project_id).distinct()
         return queryset
 
+    sortby_mapping = []
+    header_attrs = {
+        "title": """ style="width: 150px !important;" """,
+    }
+
+    show_filter_tags = False
     row_status_indications = None
-    bulk_select_option = None
+    show_quick_date_filters = False
+    bulk_select_option = False
     action_method = None
+    custom_empty_template = "cbv/projects/compact_empty.html"

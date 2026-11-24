@@ -1,0 +1,187 @@
+"""Dashboard role resolver, prefs migration, and Phase 5/6 guards."""
+
+from __future__ import annotations
+
+import re
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.urls import Resolver404, resolve, reverse
+
+from base.dashboard import _normalize_dashboard_chart_prefs
+from base.dashboard_roles import (
+    DEMOTED_BY_DEFAULT,
+    ROLE_DEFAULT_VISIBLE,
+    can_see_analytics_home,
+    resolve_home_role,
+    role_default_prefs,
+)
+from base.views import _charts_use_modern_prefs
+from horilla.testkit.factories import make_company, make_employee, make_user
+
+
+class ResolveHomeRoleTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def _request(self, user, **get):
+        request = self.factory.get("/dashboard/", get)
+        request.user = user
+        request.session = {}
+        return request
+
+    def test_superuser_is_leadership(self):
+        user = SimpleNamespace(
+            is_superuser=True,
+            is_staff=False,
+            has_perm=lambda p: False,
+            employee_get=None,
+        )
+        self.assertEqual(resolve_home_role(self._request(user)), "leadership")
+
+    def test_employee_leave_recruitment_is_leadership(self):
+        perms = {
+            "employee.view_employee",
+            "leave.view_leaverequest",
+            "recruitment.view_recruitment",
+        }
+        user = SimpleNamespace(
+            is_superuser=False,
+            is_staff=False,
+            has_perm=lambda p: p in perms,
+            employee_get=None,
+        )
+        self.assertEqual(resolve_home_role(self._request(user)), "leadership")
+
+    def test_employee_leave_is_hr(self):
+        perms = {"employee.view_employee", "leave.view_leaverequest"}
+        user = SimpleNamespace(
+            is_superuser=False,
+            is_staff=False,
+            has_perm=lambda p: p in perms,
+            employee_get=None,
+        )
+        with patch("base.dashboard_roles._is_reporting_manager", return_value=False):
+            self.assertEqual(resolve_home_role(self._request(user)), "hr")
+
+    def test_reporting_manager_is_manager(self):
+        user = SimpleNamespace(
+            is_superuser=False,
+            is_staff=False,
+            has_perm=lambda p: False,
+            employee_get=object(),
+        )
+        with patch("base.dashboard_roles._is_reporting_manager", return_value=True):
+            self.assertEqual(resolve_home_role(self._request(user)), "manager")
+
+    def test_pure_employee(self):
+        user = SimpleNamespace(
+            is_superuser=False,
+            is_staff=False,
+            has_perm=lambda p: False,
+            employee_get=None,
+        )
+        with patch("base.dashboard_roles._is_reporting_manager", return_value=False):
+            self.assertEqual(resolve_home_role(self._request(user)), "employee")
+            self.assertFalse(can_see_analytics_home("employee"))
+
+
+class RoleDefaultPrefsTests(SimpleTestCase):
+    def test_manager_default_visible_at_most_eight(self):
+        prefs = role_default_prefs("manager")
+        visible = [p["id"] for p in prefs if p["visible"]]
+        self.assertLessEqual(len(visible), 8)
+        for demoted in DEMOTED_BY_DEFAULT:
+            self.assertNotIn(demoted, visible)
+        for expected in ROLE_DEFAULT_VISIBLE["manager"]:
+            self.assertIn(expected, visible)
+
+    def test_hr_includes_turnover(self):
+        prefs = role_default_prefs("hr")
+        visible = {p["id"] for p in prefs if p["visible"]}
+        self.assertIn("employee_turnover", visible)
+        self.assertIn("gender_distribution", visible)
+
+    def test_every_default_chart_has_a_card(self):
+        """Every chart id in the defaults has a card in templates/dashboard.html."""
+        import re
+        from pathlib import Path
+
+        text = Path("templates/dashboard.html").read_text(encoding="utf-8")
+        cards = set(re.findall(r'data-chart-id="([a-z_]+)"', text))
+        named = {p["id"] for p in role_default_prefs("leadership")}
+        for visible in ROLE_DEFAULT_VISIBLE.values():
+            named.update(visible)
+        self.assertEqual(named - cards, set())
+
+
+class PrefsMigrationTests(SimpleTestCase):
+    def test_legacy_string_list_normalizes_empty(self):
+        self.assertEqual(
+            _normalize_dashboard_chart_prefs(["gender_chart", "employees_chart"]),
+            [],
+        )
+
+    def test_modern_prefs_preserved(self):
+        modern = [
+            {"id": "leave_trends", "visible": True},
+            {"id": "gender_distribution", "visible": False},
+        ]
+        self.assertEqual(_normalize_dashboard_chart_prefs(modern), modern)
+
+    def test_modern_prefs_guard_helper(self):
+        self.assertTrue(
+            _charts_use_modern_prefs([{"id": "leave_trends", "visible": True}])
+        )
+        self.assertFalse(_charts_use_modern_prefs(["gender_chart"]))
+        self.assertFalse(_charts_use_modern_prefs([]))
+
+
+class ModernDashboardFetchInventoryTests(TestCase):
+    """The dashboard page must only call data endpoints that exist."""
+
+    @classmethod
+    def setUpTestData(cls):
+        company = make_company("Dash Co")
+        cls.user = make_user("dash-boss", is_superuser=True)
+        make_employee(company=company, email="dash-boss@dash.test", user=cls.user)
+
+    def test_dashboard_fetches_only_current_chart_endpoints(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("home-page"), follow=True)
+        self.assertEqual(response.status_code, 200)
+
+        # Every URL the page's scripts fetch must resolve to a live view. A
+        # chart endpoint removed from urls.py but still fetched leaves a
+        # spinner that never ends.
+        fetched = set(
+            re.findall(r"""fetch[P]?\(\s*["'`]([^"'`?]+)""", response.content.decode())
+        )
+        # The shared layout fetches its own endpoints too (notifications and so
+        # on); only the dashboard's data endpoints are this test's business.
+        names = set()
+        for path in sorted(p for p in fetched if "dashboard" in p):
+            try:
+                match = resolve(path)
+            except Resolver404:
+                self.fail(f"dashboard fetches a dead endpoint: {path}")
+            names.add(match.url_name)
+
+        # The charts the simplified dashboard still draws.
+        for required in (
+            "dashboard-attendance-overview",
+            "dashboard-leave-trends",
+            "dashboard-hiring-timeline",
+            "dashboard-recruitment-by-stage",
+        ):
+            self.assertIn(required, names)
+        # Endpoints removed with the KPI redesign must not come back.
+        for legacy in (
+            "department-overtime-chart",
+            "overall-leave",
+            "department-leave-chart",
+            "recruitment-pipeline",
+            "dashboard-hiring",
+        ):
+            self.assertNotIn(legacy, names)

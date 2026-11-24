@@ -10,9 +10,9 @@ from django.template.loader import render_to_string
 from django.utils.translation import gettext_lazy as _
 
 from base.forms import ModelForm
+from horilla_backup.gdrive import authenticate
 
-from .gdrive import authenticate
-from .models import *
+from .models import GoogleDriveBackup, LocalBackup
 
 
 class LocalBackupSetupForm(ModelForm):
@@ -56,9 +56,9 @@ class LocalBackupSetupForm(ModelForm):
         if not path.exists():
             raise ValidationError({"backup_path": _("The directory does not exist.")})
         if backup_db == False and backup_media == False:
-            raise forms.ValidationError("Please select any backup option.")
+            raise forms.ValidationError(_("Please select any backup option."))
         if interval == False and fixed == False:
-            raise forms.ValidationError("Please select any backup automate option.")
+            raise forms.ValidationError(_("Please select any backup automate option."))
         if interval == True and seconds == None:
             raise ValidationError({"seconds": _("This field is required.")})
         if fixed == True and hour == None:
@@ -78,16 +78,16 @@ class LocalBackupSetupForm(ModelForm):
 
 
 class GdriveBackupSetupForm(ModelForm):
-    verbose_name = "Gdrive Backup"
+    verbose_name = _("Google Drive Backup")
     backup_db = forms.BooleanField(
         required=False,
         label="Backup DB",
-        help_text=_("Enable to backup database to Gdrive"),
+        help_text=_("Enable to backup database to Google Drive"),
     )
     backup_media = forms.BooleanField(
         required=False,
         label="Backup Media",
-        help_text=_("Enable to backup all media files to Gdrive"),
+        help_text=_("Enable to backup all media files to Google Drive"),
     )
     interval = forms.BooleanField(
         required=False,
@@ -99,12 +99,7 @@ class GdriveBackupSetupForm(ModelForm):
 
     class Meta:
         model = GoogleDriveBackup
-        exclude = [
-            "active",
-            "access_token",
-            "refresh_token",
-            "token_expiry",
-        ]  # Exclude token fields
+        exclude = ["active"]
 
     def as_p(self):
         """
@@ -170,7 +165,9 @@ class GdriveBackupSetupForm(ModelForm):
 
             except json.JSONDecodeError:
                 raise forms.ValidationError(
-                    "Please provide a valid OAuth credentials file (must be valid JSON)."
+                    _(
+                        "Please provide a valid OAuth credentials file (must be valid JSON)."
+                    )
                 )
             except Exception as e:
                 raise forms.ValidationError(
@@ -179,12 +176,12 @@ class GdriveBackupSetupForm(ModelForm):
         elif not instance or not instance.pk:
             # If creating new instance and no file provided, raise error
             raise forms.ValidationError(
-                "Please provide a valid OAuth credentials file."
+                _("Please provide a valid OAuth credentials file.")
             )
         if backup_db == False and backup_media == False:
-            raise forms.ValidationError("Please select any backup option.")
+            raise forms.ValidationError(_("Please select any backup option."))
         if interval == False and fixed == False:
-            raise forms.ValidationError("Please select any backup automate option.")
+            raise forms.ValidationError(_("Please select any backup automate option."))
         if interval == True and seconds == None:
             raise ValidationError({"seconds": _("This field is required.")})
         if fixed == True and hour == None:

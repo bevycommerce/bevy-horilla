@@ -1,0 +1,51 @@
+{% load i18n %}
+{% if not answers and not kr_feedbacks %}
+    {# nothing submitted yet: the Answers sidebar would otherwise open blank #}
+    <li class="list-none">
+        <div class="flex flex-col items-center justify-center py-10">
+            <img src="/static/horilla_theme/assets/img/no-records.svg" alt="" width="200" class="mb-4">
+            <p class="text-[#666] mb-0">{% trans "No answers have been submitted yet" %}</p>
+        </div>
+    </li>
+{% endif %}
+{% for answer in answers %}
+    <li class="list-none mb-2">
+        <div class="bg-white border border-secondary-200 rounded-xl px-4 py-3">
+            <p class="text-sm font-semibold text-dark-200 mb-2">{{ answer.question_id.question }}</p>
+
+            {% if answer.question_id.question_type == '1' %}
+                <p class="px-3 py-1.5 bg-secondary-50 border border-secondary-200 rounded-md text-sm text-dark-200 break-words">{{ answer.answer.answer }}</p>
+            {% elif answer.question_id.question_type == '2' %}
+                <div class="flex items-center gap-1.5 text-base">
+                    {% for i in "12345" %}
+                        <i class="fa-solid fa-star" style="color: {% if i <= answer.answer.answer %}#FFA800{% else %}#dfdfdf{% endif %}"></i>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-medium">
+                    {% if answer.question_id.question_type == '3' %}
+                        <i class="fa-solid {% if answer.answer.answer|lower == 'yes' %}fa-check{% else %}fa-xmark{% endif %}"></i>
+                        {{ answer.answer.answer|capfirst }}
+                    {% else %}
+                        {{ answer.answer.answer }}
+                    {% endif %}
+                </span>
+            {% endif %}
+        </div>
+    </li>
+{% endfor %}
+{% if kr_feedbacks %}
+    <li class="list-none">
+        <h3 class="text-base font-bold mt-4 mb-2">{% trans "Key Result" %}</h3>
+    </li>
+    {% for kr_feedback in kr_feedbacks %}
+        <li class="list-none mb-2">
+            <div class="bg-white border border-secondary-200 rounded-xl px-4 py-3">
+                <p class="text-sm font-semibold text-dark-200 mb-2">{{ kr_feedback.key_result_id.key_result|default:kr_feedback.key_result_id.key_result_id }}</p>
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-medium">
+                    {{ kr_feedback.answer.answer }}
+                </span>
+            </div>
+        </li>
+    {% endfor %}
+{% endif %}

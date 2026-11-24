@@ -3,9 +3,10 @@
 import uuid
 
 import pandas as pd
+from django.conf import settings
 from django.http import HttpResponse
 
-from horilla.horilla_settings import DYNAMIC_URL_PATTERNS
+from base.import_template_data import write_import_xlsx
 from horilla.methods import remove_dynamic_url
 
 
@@ -46,7 +47,6 @@ def handle_attendance_errors(error_list):
         "Minimum Hour Error": [],
         "Attendance Date Error": [],
         "Check-out Date Error": [],
-        "Check-out Date Error": [],
         "Other Errors": [],
     }
     for item in error_list:
@@ -65,7 +65,7 @@ def handle_attendance_errors(error_list):
     data_frame = pd.DataFrame(error_data, columns=error_data.keys())
     response = HttpResponse(content_type="application/ms-excel")
     response["Content-Disposition"] = 'attachment; filename="ImportError.xlsx"'
-    data_frame.to_excel(response, index=False)
+    write_import_xlsx(data_frame, response)
 
     def get_error_sheet(request):
         remove_dynamic_url(path_info)
@@ -76,6 +76,6 @@ def handle_attendance_errors(error_list):
     # Create a unique path for the error file download
     path_info = f"error-sheet-{uuid.uuid4()}"
     urlpatterns.append(path(path_info, get_error_sheet, name=path_info))
-    DYNAMIC_URL_PATTERNS.append(path_info)
+    settings.DYNAMIC_URL_PATTERNS.append(path_info)
     path_info = f"attendance/{path_info}"
     return path_info

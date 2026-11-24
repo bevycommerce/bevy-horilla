@@ -3,7 +3,7 @@
   <span class="oh-modal__dialog-title" id="createModalLabel">
     {% trans "Allowances" %}
   </span>
-  <button type="button" class="oh-modal__close" aria-label="Close">
+  <button type="button" class="oh-modal__close" aria-label="{% trans 'Close' %}">
     <ion-icon name="close-outline"></ion-icon>
   </button>
 </div>
@@ -33,7 +33,7 @@
     {{ form.employee_id }}
 
     <div class="col-12 col-sm-12 col-md-12 col-lg-6">
-      <label class="oh-label" for="id_is_fixed">{% trans "Is Fixed" %}</label>
+      <label class="oh-label" for="id_is_fixed">{% trans "Fixed" %}</label>
       <div class="oh-switch">{{ form.is_fixed }} {{ form.is_fixed.errors }}</div>
     </div>
 

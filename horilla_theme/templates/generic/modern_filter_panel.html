@@ -1,0 +1,649 @@
+{% comment %}
+    Shared CSS + JS for the slide-over Filter panel. Used by horilla_nav.html,
+    inline_nav.html and plain pages that build their own filter dropdown.
+
+    Include once per page (ids and functions aren't namespaced, so one panel
+    per page), then build the markup as:
+        <button id="modernFilterTrigger"
+                onclick="toggleModernFilterPanel(true)">...</button>
+        <div class="oh-filter-backdrop" id="modernFilterBackdrop"
+             onclick="toggleModernFilterPanel(false)"></div>
+        <div class="oh-filter-panel" id="modernFilterPanel">
+            <div class="oh-filter-panel__header">...</div>
+            <div class="oh-filter-panel__search">
+                <input id="modernFilterFieldSearch"
+                       oninput="filterModernPanelFields(this.value)">
+            </div>
+            <div class="oh-filter-panel__body">
+                <div class="oh-filter-modern">
+                    <div class="oh-accordion oh-accordion--show">
+                        <div class="oh-accordion-header">Section</div>
+                        <div class="oh-accordion-body">
+                            ...oh-input-group / oh-label / oh-input fields...
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="oh-filter-panel__footer">...</div>
+        </div>
+    Examples: employee/templates/cbv/employees_view/filter_employee.html,
+    attendance/templates/attendance/work_record/work_record_view.html.
+{% endcomment %}
+<style>
+    .oh-filter-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(20, 18, 14, 0.35);
+        /* Above #sidebar and #sidebarFlyout (10060) to cover the whole page. */
+        z-index: 10100;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.2s ease;
+    }
+    .oh-filter-backdrop.oh-filter-backdrop--open {
+        opacity: 1;
+        visibility: visible;
+    }
+    .oh-filter-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 420px;
+        max-width: 92vw;
+        background: #fff;
+        z-index: 10101;
+        display: flex;
+        flex-direction: column;
+        transform: translateX(100%);
+        transition: transform 0.25s ease;
+        box-shadow: -8px 0 30px 0 rgb(0 0 0 / 12%);
+    }
+    .oh-filter-panel.oh-filter-panel--open {
+        transform: translateX(0);
+    }
+    /* Select2 dropdowns are appended to body at z-index 1051, so lift them
+       above the panel while open. */
+    .select2-container--open .select2-dropdown {
+        z-index: 10200;
+    }
+    .oh-filter-panel__header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid #EAE8E3;
+        flex-shrink: 0;
+    }
+    .oh-filter-panel__header h3 {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #26251F;
+    }
+    .oh-filter-count-badge {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 999px;
+        background: var(--oh-filter-accent, var(--primary-600, #e54f38));
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        /* Line-height matches the badge height so the glyph is vertically centered. */
+        line-height: 16px;
+        text-align: center;
+    }
+    .oh-filter-count-badge--header {
+        min-width: 18px;
+        height: 18px;
+        line-height: 18px;
+        font-size: 11px;
+        vertical-align: middle;
+        margin-left: 4px;
+    }
+    .oh-filter-count-badge--hidden {
+        display: none;
+    }
+    .oh-filter-panel__close {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: none;
+        background: #F6F5F1;
+        color: #6F6D66;
+        font-size: 16px;
+        flex-shrink: 0;
+        cursor: pointer;
+    }
+    .oh-filter-panel__close:hover {
+        background: #EFEDE7;
+    }
+    .oh-filter-panel__search {
+        padding: 14px 20px;
+        border-bottom: 1px solid #EAE8E3;
+        flex-shrink: 0;
+    }
+    .oh-filter-panel__search input {
+        width: 100%;
+        height: 36px;
+        padding: 0 12px;
+        border: 1px solid #DEDBD4;
+        border-radius: 8px;
+        font-size: 12.5px;
+        background: #F6F5F1;
+    }
+    .oh-filter-panel__search input:focus {
+        outline: none;
+        border-color: var(--oh-filter-accent, var(--primary-600, #e54f38));
+        background: #fff;
+    }
+    .oh-filter-panel__body {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding: 6px 20px 20px;
+    }
+    .oh-filter-panel__footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 20px;
+        border-top: 1px solid #EAE8E3;
+        flex-shrink: 0;
+    }
+    .oh-filter-panel__clear {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border: none;
+        background: none;
+        color: #C0392B;
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 0;
+    }
+    .oh-filter-panel__clear:hover {
+        text-decoration: underline;
+    }
+    .oh-filter-panel__apply {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border: none;
+        background: var(--oh-filter-accent, var(--primary-600, #e54f38));
+        color: #fff;
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 8px 16px;
+        border-radius: 6px;
+    }
+    .oh-filter-panel__apply:hover {
+        opacity: 0.9;
+    }
+
+    .oh-filter-modern .oh-accordion {
+        background: transparent;
+        border: none;
+        margin-top: 0 !important;
+    }
+    /* Divider between accordion sections. Group By isn't a sibling of the
+       filter body's accordions, so it opts in via .oh-accordion--top-divider. */
+    .oh-filter-modern .oh-accordion + .oh-accordion,
+    .oh-filter-modern .oh-accordion--top-divider {
+        margin-top: 4px !important;
+        padding-top: 14px;
+        border-top: 1px solid #EAE8E3;
+    }
+    .oh-filter-modern .oh-accordion-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent !important;
+        border-radius: 0 !important;
+        margin-bottom: 12px !important;
+        padding: 0 !important;
+        color: #26251F !important;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    .oh-filter-modern .oh-accordion-header::after {
+        display: none !important;
+    }
+    .oh-filter-modern .oh-accordion-header::before {
+        content: "";
+        /* Leading chevron, so no margin-left:auto (it would push the row right). */
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9IiM5QzlBOTIiIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cGF0aCBkPSJtNyAxMCA1IDUgNS01SDdaIj48L3BhdGg+Cjwvc3ZnPg==");
+        background-size: contain;
+        background-repeat: no-repeat;
+        transition: transform 0.2s ease;
+    }
+    .oh-filter-modern .oh-accordion--show .oh-accordion-header::before {
+        transform: rotate(180deg);
+    }
+    .oh-filter-modern .oh-accordion-body {
+        display: none;
+        padding: 0 !important;
+    }
+    .oh-filter-modern .oh-accordion--show .oh-accordion-body {
+        display: block !important;
+        opacity: 1 !important;
+    }
+    .oh-filter-modern .oh-filter-section-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        flex-shrink: 0;
+    }
+
+    .oh-checkbox-list {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        max-height: 170px;
+        overflow-y: auto;
+        padding: 3px 4px 3px 1px;
+    }
+    .oh-checkbox-list__item {
+        display: flex;
+        /* Top-aligned so the checkbox stays level with the first line of a
+           wrapped label. */
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: #26251F;
+        cursor: pointer;
+        margin: 0;
+    }
+
+    .oh-segmented {
+        display: inline-flex;
+        border: 1px solid #DEDBD4;
+        border-radius: 6px;
+        overflow: hidden;
+        width: 100%;
+        max-width: 260px;
+    }
+    .oh-segmented__item {
+        flex: 1 1 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 30px;
+        padding: 0;
+        font-size: 12px;
+        font-weight: 500;
+        color: #6F6D66;
+        cursor: pointer;
+        margin: 0;
+        border-right: 1px solid #DEDBD4;
+        transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    .oh-segmented__item:last-child {
+        border-right: none;
+    }
+    .oh-segmented__item input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+    .oh-segmented__item input:checked ~ span {
+        color: var(--oh-filter-accent, var(--primary-600, #e54f38));
+    }
+    .oh-segmented__item:has(input:checked) {
+        background: rgb(229 79 56 / 8%);
+    }
+
+    .oh-filter-field-hidden {
+        display: none !important;
+    }
+
+    .oh-custom-filter-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .oh-custom-filter-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr auto;
+        gap: 6px;
+        align-items: center;
+        padding: 6px;
+        border: 1px solid #EAE8E3;
+        border-radius: 8px;
+        background: #FBFAF8;
+    }
+    .oh-filter-modern .oh-custom-filter-row .oh-input,
+    .oh-filter-modern .oh-custom-filter-row select:not(.oh-select-ajax) {
+        margin-bottom: 0 !important;
+        height: 30px !important;
+        border-radius: 6px !important;
+        font-size: 11px !important;
+        font-weight: 400 !important;
+        padding: 0 8px !important;
+    }
+    .oh-filter-modern .oh-custom-filter-row select option {
+        font-weight: 400 !important;
+    }
+    .oh-filter-modern .oh-custom-filter-row .select2-container--default .select2-selection--single {
+        height: 30px !important;
+        border-radius: 6px !important;
+        font-size: 11px !important;
+        font-weight: 400 !important;
+    }
+    .oh-custom-filter-remove {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border: none;
+        border-radius: 50%;
+        background: #F6F5F1;
+        color: #C0392B;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+    .oh-custom-filter-remove:hover {
+        background: #FDECEA;
+    }
+    .oh-custom-filter-add {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 8px;
+        border: none;
+        background: none;
+        color: var(--oh-filter-accent, var(--primary-600, #e54f38));
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 0;
+    }
+    .oh-custom-filter-add:hover {
+        text-decoration: underline;
+    }
+    @media (max-width: 480px) {
+        .oh-custom-filter-row {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .oh-filter-modern .oh-input-group {
+        margin-bottom: 10px;
+    }
+    .oh-filter-modern .oh-label {
+        display: block;
+        /* Overrides the global .oh-label margin-top, which doubles the gap. */
+        margin-top: 0 !important;
+        margin-bottom: 4px;
+        color: #6F6D66;
+        font-size: 10.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+    .oh-filter-modern .oh-input,
+    .oh-filter-modern select:not(.oh-select-ajax),
+    .oh-filter-modern .oh-select {
+        height: 38px !important;
+        margin-bottom: 0 !important;
+        border: 1px solid #DEDBD4 !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        font-size: 12.5px !important;
+        box-shadow: none !important;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+    }
+    .oh-filter-modern .oh-input:focus,
+    .oh-filter-modern .oh-input:focus-visible,
+    .oh-filter-modern select:focus {
+        border: 1px solid var(--oh-filter-accent, var(--primary-600, #e54f38)) !important;
+        box-shadow: 0 0 0 3px rgb(219 109 98 / 12%) !important;
+    }
+    .oh-filter-modern input[type="checkbox"],
+    .oh-filter-modern input[type="radio"] {
+        width: 15px;
+        height: 15px;
+        accent-color: var(--oh-filter-accent, var(--primary-600, #e54f38));
+        flex-shrink: 0;
+    }
+    .oh-checkbox-list__item input[type="checkbox"] {
+        margin-top: 2px;
+    }
+
+    .oh-filter-modern .select2 {
+        /* !important beats Select2's inline width when the column is narrow. */
+        width: 100% !important;
+    }
+    .oh-filter-modern .select2-container--default .select2-selection--single {
+        height: 38px !important;
+        border: 1px solid #DEDBD4 !important;
+        border-radius: 8px !important;
+        display: flex;
+        align-items: center;
+    }
+    .oh-filter-modern .select2-container--default.select2-container--focus .select2-selection--single,
+    .oh-filter-modern .select2-container--default.select2-container--open .select2-selection--single {
+        border: 1px solid var(--oh-filter-accent, var(--primary-600, #e54f38)) !important;
+        box-shadow: 0 0 0 3px rgb(219 109 98 / 12%);
+    }
+    .oh-filter-modern .select2-container--default .select2-selection--single .select2-selection__rendered {
+        padding-left: 12px;
+        font-size: 12.5px;
+        color: #26251F;
+        line-height: 36px;
+    }
+    .oh-filter-modern .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 36px;
+    }
+    .oh-filter-modern .select2-container--default .select2-selection--single .select2-selection__placeholder {
+        color: #9C9A92;
+    }
+    .oh-filter-modern .select2-dropdown {
+        border: 1px solid #DEDBD4;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0px 10px 24px 0px rgb(0 0 0 / 10%);
+    }
+    .oh-filter-modern .select2-search--dropdown .select2-search__field {
+        border: 1px solid #DEDBD4;
+        border-radius: 6px;
+        padding: 5px 8px;
+    }
+    .oh-filter-modern .select2-results__option--highlighted {
+        background: var(--oh-filter-accent, var(--primary-600, #e54f38)) !important;
+    }
+
+    .dropdown-content.filter-force-closed {
+        opacity: 0 !important;
+        visibility: hidden !important;
+    }
+
+    .oh-filter-modern .filterButton {
+        border-radius: 8px;
+        margin-top: 4px;
+    }
+
+    body.dark .oh-filter-panel {
+        background: #242424;
+        box-shadow: -8px 0 30px 0 rgb(0 0 0 / 50%);
+    }
+    body.dark .oh-filter-panel__header,
+    body.dark .oh-filter-panel__search,
+    body.dark .oh-filter-panel__footer,
+    body.dark .oh-filter-modern .oh-accordion + .oh-accordion,
+    body.dark .oh-filter-modern .oh-accordion--top-divider {
+        border-color: #444444;
+    }
+    body.dark .oh-filter-panel__header h3,
+    body.dark .oh-checkbox-list__item {
+        color: #ffffff;
+    }
+    body.dark .oh-filter-panel__close {
+        background: #333333;
+        color: #dfdfdf;
+    }
+    body.dark .oh-filter-panel__close:hover {
+        background: #444444;
+    }
+    body.dark .oh-filter-panel__search input {
+        background: #1a1a1a;
+        border-color: #656565;
+        color: #dfdfdf;
+    }
+    body.dark .oh-filter-panel__search input:focus {
+        background: #111111;
+    }
+    body.dark .oh-filter-modern .oh-accordion-header {
+        background: transparent !important;
+        color: #ffffff !important;
+    }
+    body.dark .oh-filter-modern .oh-label {
+        color: #bbbbbb !important;
+    }
+    body.dark .oh-filter-modern .oh-input,
+    body.dark .oh-filter-modern select:not(.oh-select-ajax),
+    body.dark .oh-filter-modern .oh-select {
+        background: #1a1a1a !important;
+        border-color: #656565 !important;
+        color: #dfdfdf !important;
+    }
+    body.dark .oh-filter-modern .select2-container--default .select2-selection--single {
+        background: #1a1a1a !important;
+        border-color: #656565 !important;
+    }
+    body.dark .oh-filter-modern .select2-container--default .select2-selection--single .select2-selection__rendered {
+        color: #dfdfdf;
+    }
+    body.dark .oh-filter-modern .select2-container--default .select2-selection--single .select2-selection__placeholder {
+        color: #9c9a92;
+    }
+    body.dark .oh-segmented,
+    body.dark .oh-segmented__item {
+        border-color: #656565;
+        color: #dfdfdf;
+    }
+    body.dark .oh-custom-filter-row {
+        background: #1a1a1a;
+        border-color: #444444;
+    }
+    body.dark .oh-custom-filter-remove {
+        background: #333333;
+    }
+    body.dark .oh-custom-filter-remove:hover {
+        background: #4a2622;
+    }
+</style>
+<script>
+    // Modern Filter panel (slide-over), click-toggled; guarded so it is only
+    // defined once when the partial is included twice on a page.
+    if (typeof toggleModernFilterPanel !== 'function') {
+        window.toggleModernFilterPanel = function (open) {
+            var $panel = $('#modernFilterPanel');
+            var $backdrop = $('#modernFilterBackdrop');
+            if (!$panel.length) return;
+            $panel.toggleClass('oh-filter-panel--open', open);
+            $backdrop.toggleClass('oh-filter-backdrop--open', open);
+            if (open) {
+                $('#modernFilterFieldSearch').val('');
+                filterModernPanelFields('');
+            }
+        };
+        $(document).on('keydown', function (e) {
+            if (e.key === 'Escape' && $('#modernFilterPanel').hasClass('oh-filter-panel--open')) {
+                toggleModernFilterPanel(false);
+            }
+        });
+
+        var liveFilterTimer;
+        $(document).on('change input', '.navFilterForm #modernFilterPanel :input, .navFilterForm .dropdown-content :input', function (e) {
+            var el = this;
+            if (!el.name || el.name === 'search' || $(el).is('button, [type=button], [type=submit]')) return;
+            if ($(el).closest('.oh-custom-filter-row, #nestedGroupByLevels').length) return;
+            // 'input' only for free-text/number; others wait for 'change'.
+            if (e.type === 'input' && !$(el).is('input[type=text], input[type=search], input[type=number], textarea')) return;
+            var form = $(el).closest('form')[0];
+            if (!form) return;
+            clearTimeout(liveFilterTimer);
+            liveFilterTimer = setTimeout(function () {
+                if (form.checkValidity()) form.requestSubmit();
+            }, e.type === 'input' ? 500 : 150);
+        });
+
+        $(document).on('click', '.filterButton', function () {
+            var btn = this;
+            var $panel = $(btn).closest('#modernFilterPanel');
+            var $dropdown = $(btn).closest('.dropdown-content');
+            if (!$panel.length && !$dropdown.length) return;
+            var form = $(btn).closest('form')[0];
+            if (form && typeof form.checkValidity === 'function' && !form.checkValidity()) return;
+            setTimeout(function () {
+                if ($panel.length) {
+                    toggleModernFilterPanel(false);
+                } else {
+                    $dropdown.addClass('filter-force-closed');
+                    $dropdown.parent().one('mouseleave', function () {
+                        $dropdown.removeClass('filter-force-closed');
+                    });
+                    if (document.activeElement) document.activeElement.blur();
+                }
+            }, 0);
+        });
+
+        // "Find a filter": hides rows (and empty sections) whose label or
+        // checkbox/segmented options don't match the query.
+        window.filterModernPanelFields = function (query) {
+            var q = (query || '').trim().toLowerCase();
+            $('#modernFilterPanel .oh-input-group').each(function () {
+                var $group = $(this);
+                var label = $group.find('.oh-label').first().text().toLowerCase();
+                var labelMatches = !q || label.indexOf(q) !== -1;
+
+                var $choiceItems = $group.find('.oh-checkbox-list__item, .oh-segmented__item');
+                var anyItemMatches = false;
+                $choiceItems.each(function () {
+                    var itemMatches = !q || labelMatches || $(this).text().toLowerCase().indexOf(q) !== -1;
+                    $(this).toggleClass('oh-filter-field-hidden', !itemMatches);
+                    if (itemMatches) {
+                        anyItemMatches = true;
+                    }
+                });
+
+                var matches = labelMatches || anyItemMatches;
+                $group.toggleClass('oh-filter-field-hidden', !matches);
+            });
+            $('#modernFilterPanel .oh-accordion').each(function () {
+                var $section = $(this);
+                var $groups = $section.find('.oh-input-group');
+                // Sections without .oh-input-group rows (e.g. nested Group By)
+                // aren't searchable, so never hide them.
+                if (!$groups.length) {
+                    return;
+                }
+                var anyVisible = $groups.not('.oh-filter-field-hidden').length > 0;
+                $section.toggleClass('oh-filter-field-hidden', !anyVisible);
+                if (q && anyVisible) {
+                    $section.addClass('oh-accordion--show');
+                }
+            });
+        };
+    }
+</script>

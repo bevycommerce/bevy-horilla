@@ -33,10 +33,6 @@
     .ws-timer-block { min-width: 200px; }
     .ws-timer { font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
     .ws-timer--break { color: var(--ws-break); }
-    .ws-timer--paused { opacity: 0.6; }
-    .ws-paused { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 4px; background: var(--ws-break); color: #fff; font-size: 11px; font-weight: 600; }
-    .ws-break-line { color: var(--ws-break); font-weight: 600; }
-    #ws-break-timer { font-variant-numeric: tabular-nums; }
     .ws-timer-label { margin-top: 4px; font-size: 12px; color: var(--ws-muted); }
     .ws-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .ws-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 16px; border: 1px solid var(--ws-border); border-radius: 5px; background: var(--ws-bg); color: var(--ws-text); font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
@@ -51,8 +47,6 @@
     .ws-menu > summary::-webkit-details-marker { display: none; }
     .ws-menu__panel { position: absolute; right: 0; top: 44px; z-index: 50; width: 260px; padding: 12px; border: 1px solid var(--ws-border); border-radius: 8px; background: var(--ws-bg); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14); }
     .ws-menu__panel label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--ws-muted); }
-    .ws-menu__panel textarea { width: 100%; margin-bottom: 4px; padding: 6px 8px; border: 1px solid var(--ws-border); border-radius: 5px; background: var(--ws-bg); color: var(--ws-text); font-size: 13px; font-family: inherit; resize: vertical; }
-    .ws-menu__hint { margin: 0 0 10px; font-size: 11px; color: var(--ws-muted); }
     .ws-menu__panel select, .ws-menu__panel input[type="text"] { width: 100%; height: 34px; margin-bottom: 10px; padding: 0 8px; border: 1px solid var(--ws-border); border-radius: 5px; background: var(--ws-bg); color: var(--ws-text); font-size: 13px; }
     .ws-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 14px; font-size: 12px; color: var(--ws-muted); }
     .ws-foot a { color: var(--ws-muted); text-decoration: underline; }
@@ -107,10 +101,8 @@
             </div>
         {% elif state.status == "on_break" %}
             <div class="ws-timer-block">
-                {# During a break the main work timer stays paused. #}
-                <div class="ws-timer ws-timer--paused" id="ws-timer" data-seconds="{{ state.worked_seconds }}" data-running="0">00:00:00</div>
-                <div class="ws-timer-label">{% trans "Worked today" %} <span class="ws-paused">{% trans "Paused" %}</span></div>
-                <div class="ws-timer-label ws-break-line">{% trans "On break" %}: {{ state.break.reason_label }}{% if state.break.note %} ({{ state.break.note }}){% endif %} &middot; <span id="ws-break-timer" data-seconds="{{ state.break.seconds }}">00:00:00</span></div>
+                <div class="ws-timer ws-timer--break" id="ws-timer" data-seconds="{{ state.break.seconds }}" data-running="1">00:00:00</div>
+                <div class="ws-timer-label">{% trans "On break" %}: {{ state.break.reason_label }}{% if state.break.note %} ({{ state.break.note }}){% endif %}</div>
             </div>
             <div class="ws-actions">
                 <form hx-post="{% url 'workspace-break-end' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
@@ -133,10 +125,6 @@
                     <input type="hidden" name="longitude" class="ws-lng" />
                     <button type="submit" class="ws-btn ws-btn--danger">{% trans "Sign Out" %}</button>
                 </form>
-                <form hx-post="{% url 'workspace-away' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
-                    <input type="hidden" name="away" value="{% if state.status == 'away' %}0{% else %}1{% endif %}" />
-                    <button type="submit" class="ws-btn">{% if state.status == "away" %}{% trans "I'm Back" %}{% else %}{% trans "Away" %}{% endif %}</button>
-                </form>
                 {% if show_break %}
                 <details class="ws-menu">
                     <summary class="ws-btn ws-btn--break">{% trans "Take a Break" %}</summary>
@@ -147,13 +135,16 @@
                                 <option value="{{ reason.value }}">{{ reason.label }}</option>
                             {% endfor %}
                         </select>
-                        <label for="ws-break-note">{% trans "Note (optional): why are you taking a break?" %}</label>
-                        <textarea name="note" id="ws-break-note" maxlength="300" rows="2"></textarea>
-                        <p class="ws-menu__hint">{% trans "Your note is shown in the Break Log." %}</p>
+                        <label for="ws-break-note">{% trans "Note (optional)" %}</label>
+                        <input type="text" name="note" id="ws-break-note" maxlength="300" />
                         <button type="submit" class="ws-btn ws-btn--break" style="width: 100%">{% trans "Start Break" %}</button>
                     </form>
                 </details>
                 {% endif %}
+                <form hx-post="{% url 'workspace-away' %}" hx-target="#workspace-card" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <input type="hidden" name="away" value="{% if state.status == 'away' %}0{% else %}1{% endif %}" />
+                    <button type="submit" class="ws-btn">{% if state.status == "away" %}{% trans "I'm Back" %}{% else %}{% trans "Away" %}{% endif %}</button>
+                </form>
                 <a href="{% url 'daily-updates' %}" class="ws-btn">{% trans "Write Today's Update" %}</a>
             </div>
         {% endif %}
@@ -193,20 +184,6 @@
             };
             paint();
             if (running) { window.__wsTimer = setInterval(paint, 1000); }
-        }
-        // Break length keeps counting while the main timer is paused.
-        if (window.__wsBreakTimer) { clearInterval(window.__wsBreakTimer); window.__wsBreakTimer = null; }
-        var bt = document.getElementById("ws-break-timer");
-        if (bt) {
-            var bBase = parseInt(bt.getAttribute("data-seconds"), 10) || 0;
-            var b0 = Date.now();
-            var paintBreak = function () {
-                var e = document.getElementById("ws-break-timer");
-                if (!e) { clearInterval(window.__wsBreakTimer); return; }
-                e.textContent = fmt(bBase + Math.floor((Date.now() - b0) / 1000));
-            };
-            paintBreak();
-            window.__wsBreakTimer = setInterval(paintBreak, 1000);
         }
 
         // Location (only needed when the company uses location checks). Filled silently when the

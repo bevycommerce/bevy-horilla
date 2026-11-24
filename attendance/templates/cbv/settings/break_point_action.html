@@ -1,0 +1,29 @@
+{% load i18n %}
+{% load static %}
+<div class="flex justify-center gap-1">
+    {% if perms.attendance.change_attendancevalidationcondition %}
+        <a
+            title="{% trans 'Edit' %}"
+            class="oh-btn oh-btn--light-bkg oh-btn--sq-sm"
+            hx-get="{% url 'break-point-update-form' instance.id %}?instance_ids={{ instance.ordered_ids }}"
+            hx-target="#genericModalBody"
+            data-toggle="oh-modal-toggle"
+            data-target="#genericModal"
+        >
+            <ion-icon name="create-outline" role="img" class="md hydrated"></ion-icon>
+        </a>
+    {% endif %}
+    {% if perms.attendance.delete_attendancevalidationcondition %}
+        <button
+            type="button"
+            class="oh-btn oh-btn--danger oh-btn--sq-sm"
+            title="{% trans 'Remove' %}"
+            hx-get="{% url 'generic-delete' %}?model=attendance.attendancevalidationcondition&pk={{ instance.pk }}"
+            data-toggle="oh-modal-toggle"
+            data-target="#deleteConfirmation"
+            hx-target="#deleteConfirmationBody"
+        >
+            <ion-icon name="trash-outline" class="text-white"></ion-icon>
+        </button>
+    {% endif %}
+</div>

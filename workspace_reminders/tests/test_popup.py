@@ -1,0 +1,128 @@
+"""Portal Midday popup: shows when due, close hides it until the next hour, actions work."""
+
+from datetime import datetime, time
+from unittest import mock
+
+from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
+
+from daily_updates.models import DailyUpdate, MiddaySkip
+from workspace_attendance import services as ws
+from workspace_attendance.tests.helpers import make_workspace_employee
+from workspace_reminders import engine
+from workspace_reminders.models import ReminderDelivery
+
+HX = {"HTTP_HX_REQUEST": "true"}
+
+
+def at(hour, minute=0):
+    return timezone.make_aware(datetime.combine(timezone.localdate(), time(hour, minute)))
+
+
+class MiddayPopupTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.company, cls.shift, cls.user, cls.employee = make_workspace_employee("popup_emp")
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        ws.correct_times(self.employee, timezone.localdate(), time(9, 0), None, self.user, "web")
+
+    def make_due(self):
+        delivered = engine.process_employee(self.employee, at(13, 1))
+        return [d for d in delivered if d.kind == "midday"][0]
+
+    def get_popup(self):
+        return self.client.get(reverse("ws-midday-popup"), **HX)
+
+    def test_midday_follows_sign_in_even_after_the_shift(self):
+        # signed in at 09:00 and still working late in the evening: no shift rule applies
+        delivered = engine.process_employee(self.employee, at(21, 1))
+        kinds = {d.kind: d.attempt for d in delivered}
+        self.assertEqual(kinds.get("midday"), 9)  # 13:00 + 8 hourly repeats = 21:00
+        self.assertNotIn("eod", kinds)
+        self.assertNotIn("sign_out", kinds)
+
+    def test_test_mode_one_minute(self):
+        with mock.patch.dict("os.environ", {"WORKSPACE_REMINDER_TEST_MINUTES": "1"}):
+            self.assertEqual(engine.process_employee(self.employee, at(9, 0)), [])
+            first = [d for d in engine.process_employee(self.employee, at(9, 1)) if d.kind == "midday"]
+            self.assertEqual(len(first), 1)
+            html = self.get_popup().content.decode()
+            self.assertIn("come back in 1 minute", html)
+            self.client.post(reverse("ws-midday-popup-close", args=[first[0].pk]), **HX)
+            self.assertEqual(self.get_popup().content, b"")
+            again = [d for d in engine.process_employee(self.employee, at(9, 2)) if d.kind == "midday"]
+            self.assertEqual(again[0].attempt, 2)
+        # without the switch: back to 4 hours, then every hour
+        from workspace_reminders import conf
+
+        self.assertEqual(conf.get()["kinds"]["midday"]["offset"], 240)
+        self.assertEqual(conf.midday_repeat_minutes(), 60)
+
+    def test_nothing_before_due(self):
+        self.assertEqual(self.get_popup().content, b"")
+
+    def test_popup_shows_when_due(self):
+        self.make_due()
+        html = self.get_popup().content.decode()
+        self.assertIn("Time for your Midday update", html)
+        self.assertIn("Skip Midday", html)
+        self.assertIn("Sign Out", html)
+        self.assertNotIn("Late", html)
+        self.assertIn("come back in 1 hour", html)
+
+    def test_close_hides_until_next_hour(self):
+        delivery = self.make_due()
+        self.client.post(reverse("ws-midday-popup-close", args=[delivery.pk]), **HX)
+        self.assertEqual(self.get_popup().content, b"")
+        engine.process_employee(self.employee, at(14, 2))
+        self.assertIn("Time for your Midday update", self.get_popup().content.decode())
+
+    def test_submit_midday(self):
+        delivery = self.make_due()
+        html = self.client.post(
+            reverse("ws-midday-popup-submit", args=[delivery.pk]), {"summary": "Fixed bugs"}, **HX
+        ).content.decode()
+        self.assertIn("Midday update sent", html)
+        self.assertEqual(DailyUpdate.objects.get().summary, "Fixed bugs")
+        self.assertEqual(self.get_popup().content, b"")
+
+    def test_empty_note_shows_error(self):
+        delivery = self.make_due()
+        html = self.client.post(reverse("ws-midday-popup-submit", args=[delivery.pk]), {"summary": " "}, **HX).content.decode()
+        self.assertIn("Please write a short note", html)
+        self.assertFalse(DailyUpdate.objects.exists())
+
+    def test_skip_combine_then_hourly_box_asks_for_the_combined_update(self):
+        delivery = self.make_due()
+        self.client.post(reverse("ws-midday-popup-skip", args=[delivery.pk]), **HX)
+        self.assertEqual(MiddaySkip.objects.get().choice, MiddaySkip.COMBINE)
+        self.assertFalse(DailyUpdate.objects.exists())
+        self.assertEqual(self.get_popup().content, b"")
+        # next hour: the box comes back, now for the Midday + End of Day update, without Skip
+        nxt = [d for d in engine.process_employee(self.employee, at(14, 1)) if d.kind == "midday"][0]
+        html = self.get_popup().content.decode()
+        self.assertIn("Midday + End of Day update", html)
+        self.assertNotIn("Skip Midday", html)
+        self.client.post(reverse("ws-midday-popup-submit", args=[nxt.pk]), {"summary": "Whole day note"}, **HX)
+        self.assertEqual(DailyUpdate.objects.get().update_type, "combined")
+        self.assertEqual(self.get_popup().content, b"")
+        self.assertEqual([d for d in engine.process_employee(self.employee, at(15, 1)) if d.kind == "midday"], [])
+
+    def test_sign_out_from_popup(self):
+        delivery = self.make_due()
+        with mock.patch("workspace_attendance.adapters.horilla.HorillaAdapter.check_allowed"):
+            self.client.post(reverse("ws-midday-popup-sign-out", args=[delivery.pk]), **HX)
+        self.assertEqual(ws.get_state(self.employee)["status"], "signed_out")
+        self.assertEqual(self.get_popup().content, b"")
+
+    def test_cannot_act_on_someone_elses_popup(self):
+        delivery = self.make_due()
+        other_user = make_workspace_employee("popup_other", company=self.company, shift=self.shift)[2]
+        self.client.force_login(other_user)
+        self.client.post(reverse("ws-midday-popup-submit", args=[delivery.pk]), {"summary": "x"}, **HX)
+        self.client.post(reverse("ws-midday-popup-close", args=[delivery.pk]), **HX)
+        self.assertFalse(DailyUpdate.objects.exists())
+        self.assertIsNone(ReminderDelivery.objects.get(pk=delivery.pk).acknowledged_at)

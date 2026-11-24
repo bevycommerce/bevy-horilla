@@ -79,25 +79,6 @@ class WorkspaceAttendanceEvent(models.Model):
         return f"{self.employee_id} {self.action} {self.reported_time}"
 
 
-class AppendOnlyQuerySet(models.QuerySet):
-    """
-    Bulk update() and delete() bypass Model.save()/delete(), so they are refused
-    here too. Inserts work, and on_delete cleanup by related models (which uses
-    Django's deletion collector, not these methods) still runs.
-    """
-
-    def update(self, **kwargs):
-        raise ValueError("AttendanceCorrectionLog rows cannot be changed.")
-
-    def delete(self):
-        raise ValueError("AttendanceCorrectionLog rows cannot be deleted.")
-
-    def bulk_create(self, objs, *args, **kwargs):
-        if kwargs.get("update_conflicts"):
-            raise ValueError("AttendanceCorrectionLog rows cannot be changed.")
-        return super().bulk_create(objs, *args, **kwargs)
-
-
 class AttendanceCorrectionLog(models.Model):
     """
     Immutable history of Fix My Times changes. Rows can be added but never
@@ -136,8 +117,6 @@ class AttendanceCorrectionLog(models.Model):
         related_name="+",
     )
     idempotency_key = models.CharField(max_length=64, blank=True, default="")
-
-    objects = AppendOnlyQuerySet.as_manager()
 
     class Meta:
         ordering = ["-recorded_at", "-id"]

@@ -16,6 +16,12 @@ MODULE_TAGS = {
     "payroll": "Payroll",
     "attendance": "Attendance",
     "leave": "Leave Management",
+    "helpdesk": "Helpdesk",
+    "project": "Project Management",
+    "onboarding": "Onboarding",
+    "offboarding": "Offboarding",
+    "recruitment": "Recruitment",
+    "pms": "Performance Management",
 }
 
 # Common response schemas

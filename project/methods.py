@@ -1,11 +1,12 @@
 import random
 
+import pandas as pd
 from django.core.paginator import Paginator
-from django.shortcuts import render
+from django.utils.translation import gettext_lazy as _
 
 from base.methods import get_pagination, get_subordinates
 from employee.models import Employee
-from horilla.methods import handle_no_permission
+from horilla.http import HorillaRedirect
 from project.models import Project, Task, TimeSheet
 
 decorator_with_arguments = (
@@ -68,17 +69,24 @@ def generate_colors(num_colors):
     return colors
 
 
+def employees_for_project(project):
+    """
+    Employees eligible to be selected as managers/members for the given
+    project. Restricted to the project's own company; projects without a
+    company assignment (legacy data) are left unrestricted.
+    """
+    if not project:
+        return Employee.objects.none()
+    if project.company_id:
+        return Employee.objects.filter(
+            employee_work_info__company_id=project.company_id
+        )
+    return Employee.objects.all()
+
+
 def any_project_manager(user):
     employee = user.employee_get
     if employee.project_managers.all().exists():
-        return True
-    else:
-        return False
-
-
-def any_project_member(user):
-    employee = user.employee_get
-    if employee.project_members.all().exists():
         return True
     else:
         return False
@@ -110,12 +118,11 @@ def is_projectmanager_or_member_or_perms(function, perm):
         if (
             user.has_perm(perm)
             or any_project_manager(user)
-            or any_project_member(user)
             or any_task_manager(user)
             or any_task_member(user)
         ):
             return function(request, *args, **kwargs)
-        return handle_no_permission(request)
+        return HorillaRedirect(request, message=_("You don't have permission."))
 
     return _function
 
@@ -124,10 +131,13 @@ def is_task_member(request, task_id):
     """
     This method is used to check the employee is task member or not
     """
+    task = Task.find(task_id)
+    if not task:
+        return False  # Task not found, treat as not a member
     if (
         request.user.has_perm("project.change_task")
-        or request.user.employee_get in Task.objects.get(id=task_id).task_managers.all()
-        or request.user.employee_get in Task.objects.get(id=task_id).task_members.all()
+        or request.user.employee_get in task.task_managers.all()
+        or request.user.employee_get in task.task_members.all()
     ):
         return True
     return False
@@ -137,20 +147,25 @@ def is_task_manager(request, task_id):
     """
     This method is used to check the employee is task member or not
     """
+    task = Task.find(task_id)
+    if not task:
+        return False  # Task not found, treat as not a manager
     if (
         request.user.has_perm("project.delete_task")
-        or request.user.employee_get in Task.objects.get(id=task_id).task_managers.all()
+        or request.user.employee_get in task.task_managers.all()
     ):
         return True
     return False
 
 
 def time_sheet_update_permissions(request, time_sheet_id):
+    timesheet = TimeSheet.find(time_sheet_id)
+    if not timesheet:
+        return False  # Timesheet not found, treat as no permission
     if (
         request.user.has_perm("project.change_timesheet")
-        or request.user.employee_get
-        == TimeSheet.objects.get(id=time_sheet_id).employee_id
-        or TimeSheet.objects.get(id=time_sheet_id).employee_id
+        or request.user.employee_get == timesheet.employee_id
+        or timesheet.employee_id
         in Employee.objects.filter(
             employee_work_info__reporting_manager_id=request.user.employee_get
         )
@@ -184,7 +199,6 @@ def get_all_project_members_and_managers():
         all_ids.update(
             manager.id for manager in project.managers.all()
         )  # Add manager ID
-        all_ids.update(member.id for member in project.members.all())  # Add member IDs
 
     for task in all_tasks:
         all_ids.update(
@@ -222,3 +236,196 @@ def is_project_manager_or_super_user(request, project):
     return (
         request.user.employee_get in project.managers.all() or request.user.is_superuser
     )
+
+
+PROJECT_IMPORT_REQUIRED_HEADERS = ["Title", "Status", "Start Date", "Description"]
+
+PROJECT_IMPORT_ERROR_COLUMNS = [
+    "Title",
+    "Manager Badge id",
+    "Status",
+    "Start Date",
+    "End Date",
+    "Description",
+    "Company",
+    "Title Error",
+    "Company Error",
+    "Manager Error",
+    "Status Error",
+    "Start Date Error",
+    "End Date Error",
+    "Description Error",
+    "Duplicate Error",
+    "Other Error",
+]
+
+
+def project_import_error_template():
+    """Fresh column map for generate_error_report (it mutates what it is given)."""
+    return {column: [] for column in PROJECT_IMPORT_ERROR_COLUMNS}
+
+
+def valid_project_import_headers(data_frame):
+    """Return ``(is_valid, message)`` for the uploaded project file."""
+    if data_frame.empty:
+        return False, _("The uploaded file is empty, Not contain records.")
+    missing = [
+        h for h in PROJECT_IMPORT_REQUIRED_HEADERS if h not in data_frame.columns
+    ]
+    if missing:
+        return False, _(
+            "These required headers are missing in the uploaded file: "
+        ) + ", ".join(missing)
+    return True, ""
+
+
+def resolve_project_import_company(
+    name, companies, selected_company=None, allowed_ids=None
+):
+    """
+    Resolve the "Company" cell of one import row to ``(company, error)``
+    (same rules as the employee import).
+
+    - `selected_company` (a Company instance): the row must name that company;
+      a blank Company is rejected.
+    - None ("All Company"/no selection): the row may name any existing
+      company, or leave it blank (company_id=None).
+    ``allowed_ids`` (set for non-superusers) limits which companies may be
+    named. ``companies`` maps lower-cased company name -> Company.
+    """
+    name = str(name).strip() if name is not None and not pd.isna(name) else ""
+    if selected_company and not name:
+        return None, _(
+            "Company is required and must match the selected company '{}'."
+        ).format(selected_company.company)
+    if not name:
+        return None, None
+    company = companies.get(name.lower())
+    if company is None:
+        return None, _("Company '{}' does not exist.").format(name)
+    if selected_company and company.pk != selected_company.pk:
+        return None, _("Company '{}' does not match the selected company.").format(name)
+    if allowed_ids is not None and company.pk not in allowed_ids:
+        return None, _("You do not have access to company '{}'.").format(name)
+    return company, None
+
+
+def process_project_records(data_frame, selected_company=None, allowed_ids=None):
+    """
+    Validate and save the rows of a project import file.
+
+    Returns ``(created_count, error_list)``; every failed row is returned as
+    its original cells plus ``* Error`` entries, ready for the error report.
+    Valid rows are saved even when others fail. A title that already exists in
+    the same company is updated (as the importer always did); the same title
+    in another company is a separate project (title + company is unique).
+    """
+    from django.db import transaction
+
+    from base.models import Company
+    from employee.methods.methods import clean_badge_id, import_valid_date
+
+    companies = {c.company.lower(): c for c in Company.objects.all()}
+    status_lookup = {}
+    for value, label in Project.PROJECT_STATUS:
+        status_lookup[value.lower()] = value
+        status_lookup[str(label).lower()] = value
+
+    created_count, error_list = 0, []
+    for row in data_frame.to_dict("records"):
+        errors = {}
+        title = row.get("Title")
+        title = str(title).strip() if title is not None else ""
+        if not title:
+            errors["Title Error"] = _("Title is a required field.")
+        elif len(title) > 200:
+            errors["Title Error"] = _("Title cannot exceed 200 characters.")
+
+        company, company_error = resolve_project_import_company(
+            row.get("Company"), companies, selected_company, allowed_ids
+        )
+        if company_error:
+            errors["Company Error"] = company_error
+
+        status = row.get("Status")
+        status = str(status).strip() if status is not None else ""
+        if not status:
+            errors["Status Error"] = _("Status is a required field.")
+        elif status.lower() not in status_lookup:
+            errors["Status Error"] = _("{} not available in Project status").format(
+                status
+            )
+        else:
+            status = status_lookup[status.lower()]
+
+        start_date = import_valid_date(
+            row.get("Start Date"), "Start Date", errors, "Start Date Error"
+        )
+        if not start_date and "Start Date Error" not in errors:
+            errors["Start Date Error"] = _("Start Date is a required field.")
+        end_date = import_valid_date(
+            row.get("End Date"), "End Date", errors, "End Date Error"
+        )
+        if start_date and end_date and end_date < start_date:
+            errors["End Date Error"] = _("End date must be greater than Start date")
+
+        description = row.get("Description")
+        description = str(description).strip() if description is not None else ""
+        if not description:
+            errors["Description Error"] = _("Description is a required field.")
+
+        managers = []
+        raw_badges = row.get("Manager Badge id")
+        if raw_badges is not None and not pd.isna(raw_badges):
+            badge_ids = [
+                clean_badge_id(b) for b in str(raw_badges).split(",") if b.strip()
+            ]
+            found = {
+                e.badge_id: e
+                for e in Employee.objects.entire()
+                .filter(badge_id__in=badge_ids)
+                .select_related("employee_work_info")
+            }
+            problems = []
+            for badge_id in badge_ids:
+                employee = found.get(badge_id)
+                if employee is None:
+                    problems.append(f"{badge_id} - This id not exists")
+                    continue
+                work_info = getattr(employee, "employee_work_info", None)
+                employee_company_id = work_info.company_id_id if work_info else None
+                if company and employee_company_id != company.pk:
+                    problems.append(
+                        f"{badge_id} - Does not belong to company '{company.company}'"
+                    )
+                    continue
+                managers.append(employee)
+            if problems:
+                errors["Manager Error"] = "; ".join(problems)
+
+        existing = None
+        if title and "Company Error" not in errors:
+            # Title is unique per company: same title + company is updated.
+            existing = (
+                Project.objects.entire().filter(title=title, company_id=company).first()
+            )
+
+        if not errors:
+            try:
+                with transaction.atomic():
+                    project = existing or Project(title=title)
+                    project.company_id = company
+                    project.status = status
+                    project.start_date = start_date
+                    project.end_date = end_date
+                    project.description = description
+                    project.save()
+                    if managers:
+                        project.managers.add(*managers)
+                created_count += 1
+                continue
+            except Exception as exception:
+                errors["Other Error"] = str(exception)
+        row.update(errors)
+        error_list.append(row)
+    return created_count, error_list

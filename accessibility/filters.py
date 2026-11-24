@@ -5,6 +5,7 @@ accessibility/filters.py
 from functools import reduce
 
 import django_filters
+from django.contrib.auth.models import Permission
 from django.db.models import Q
 from django.template.loader import render_to_string
 from django.utils.translation import gettext as _
@@ -12,6 +13,10 @@ from django.utils.translation import gettext as _
 from employee.models import Employee
 from horilla.filters import HorillaFilterSet
 from horilla.horilla_middlewares import _thread_locals
+from horilla_auth.models import HorillaUser
+
+PERMISSION_FIELD = "employee_user_id__user_permissions"
+PERMISSION_BACKEND = "base.auth_backends.CompanyScopedBackend"
 
 
 def _filter_form_structured(self):
@@ -45,6 +50,10 @@ class AccessibilityFilter(HorillaFilterSet):
     excluded_employees = django_filters.ModelMultipleChoiceFilter(
         queryset=Employee.objects.all(),
         label=_("Exclude Employees"),
+    )
+    employee_user_id__user_permissions = django_filters.ModelMultipleChoiceFilter(
+        queryset=Permission.objects.select_related("content_type").all(),
+        label=_("Permissions"),
     )
 
     verbose_name = {
@@ -99,14 +108,34 @@ class AccessibilityFilter(HorillaFilterSet):
                 except ValueError:
                     continue  # skip invalid values
 
-                # For related fields, use __in
+                if field == PERMISSION_FIELD:
+                    continue
                 if "__" in field:
                     or_conditions.append(Q(**{f"{field}__id__in": field_value}))
                 else:
                     or_conditions.append(Q(**{f"{field}__in": field_value}))
 
         if or_conditions:
-            queryset = queryset.filter(reduce(lambda x, y: x | y, or_conditions))
+            queryset = queryset.filter(
+                reduce(lambda x, y: x | y, or_conditions)
+            ).distinct()
+
+        permission_ids = self.data.get(PERMISSION_FIELD)
+        if permission_ids:
+            if not isinstance(permission_ids, (list, tuple)):
+                permission_ids = [permission_ids]
+            permissions = Permission.objects.filter(
+                pk__in=[pk for pk in permission_ids if str(pk).isdigit()]
+            )
+            if permissions:
+                permission_q = Q(pk__in=queryset.values("pk")) if or_conditions else Q()
+                for permission in permissions:
+                    permission_q |= Q(
+                        employee_user_id__in=HorillaUser.objects.with_perm(
+                            permission, backend=PERMISSION_BACKEND
+                        )
+                    )
+                queryset = self.queryset.filter(permission_q)
 
         excluded_employees = self.data.get("excluded_employees")
         if excluded_employees:

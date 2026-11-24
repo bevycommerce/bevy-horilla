@@ -20,7 +20,7 @@
     $(formButton).click();
   }
   function clearAllFilter(element) {
-    $('[role="tooltip"]').remove();
+    $('[role="tooltip"]:not(.apexcharts-tooltip)').remove();
     let field_ids = $("[data-x-field]");
     for (var i = 0; i < field_ids.length; i++) {
       let item_id = field_ids[i].getAttribute("data-x-field");
@@ -52,29 +52,29 @@
     tags = $(`
     {% if filter_dict %}
     <span class="oh-titlebar__tag oh-titlebar__tag--custom"
-      >{% trans 'Filters' %}:</span
+      >{% trans 'Filters'|escapejs %}:</span
     >
     {% endif %}
     {%for field,values in filter_dict.items %} {% if values %}
     {% with translation_field=field|filter_field %}
     <span class="oh-titlebar__tag filter-field" >
-      {% trans translation_field %} :
+      {% trans translation_field|force_escape|escapejs_template %} :
 	  {% for value in values %}
-		${fieldLabel("{% trans value %}", "{{field}}")}
+		${fieldLabel("{% trans value|force_escape|escapejs %}", "{{field|force_escape|escapejs_template}}")}
 	  {% endfor %}
-      <button class="oh-titlebar__tag-close" onclick="clearFilterFromTag($(this))" data-x-field="{{field}}">
+      <button class="oh-titlebar__tag-close" onclick="clearFilterFromTag($(this))" data-x-field="{{field|force_escape|escapejs_template}}">
         <ion-icon
           name="close-outline"
           role="img"
           class="md hydrated close-icon"
-          aria-label="close outline"
+          aria-label="{% trans 'close outline'|escapejs %}"
         >
         </ion-icon>
       </button>
     </span>
     {% endwith %} {% endif %} {% endfor %}
     {% if filter_dict %}
-    <span class="oh-titlebar__tag oh-titlebar__tag--custom" title="{% trans 'Clear All' %}" role="button" onclick="clearAllFilter($(this));"
+    <span class="oh-titlebar__tag oh-titlebar__tag--custom" title="{% trans 'Clear All'|escapejs %}" role="button" onclick="clearAllFilter($(this));"
       ><ion-icon class="close-icon" name="close-outline"></ion-icon></span
     >
     {% endif %}

@@ -4,14 +4,139 @@ Schema configuration for API documentation
 
 from drf_yasg import openapi
 from drf_yasg.generators import OpenAPISchemaGenerator
-from drf_yasg.inspectors import SwaggerAutoSchema
+from drf_yasg.inspectors import FilterInspector, SwaggerAutoSchema
 from drf_yasg.utils import swagger_auto_schema
+
+
+class SafeFilterInspector(FilterInspector):
+    """
+    Custom FilterInspector that safely handles views without queryset attributes.
+    """
+
+    def get_filter_backend_params(self, filter_backend):
+        """
+        Override to safely handle views that don't have a queryset attribute.
+        """
+        should_cleanup = False
+        # Ensure view has queryset attribute
+        if not hasattr(self.view, "queryset"):
+            # Try to get queryset from get_queryset method
+            if hasattr(self.view, "get_queryset"):
+                import inspect
+
+                sig = inspect.signature(self.view.get_queryset)
+                params = sig.parameters
+
+                # Check if get_queryset can be called without required parameters
+                # (i.e., all params after 'self' have default values)
+                can_call_without_args = True
+                for param_name, param in params.items():
+                    if (
+                        param_name != "self"
+                        and param.default == inspect.Parameter.empty
+                    ):
+                        can_call_without_args = False
+                        break
+
+                if can_call_without_args:
+                    try:
+                        queryset = self.view.get_queryset()
+                        if queryset is not None:
+                            self.view.queryset = queryset
+                            should_cleanup = True
+                        else:
+                            # Return empty list if no queryset
+                            return []
+                    except (TypeError, AttributeError, ValueError):
+                        # Fall through to try filterset_class/serializer_class
+                        pass
+
+                # If we couldn't call get_queryset or it failed, try to infer from filterset_class
+                if not should_cleanup:
+                    try:
+                        if (
+                            hasattr(self.view, "filterset_class")
+                            and self.view.filterset_class
+                        ):
+                            if hasattr(self.view.filterset_class, "_meta") and hasattr(
+                                self.view.filterset_class._meta, "model"
+                            ):
+                                model = self.view.filterset_class._meta.model
+                                self.view.queryset = model.objects.none()
+                                should_cleanup = True
+                            else:
+                                return []
+                        elif (
+                            hasattr(self.view, "serializer_class")
+                            and self.view.serializer_class
+                        ):
+                            if hasattr(self.view.serializer_class, "Meta") and hasattr(
+                                self.view.serializer_class.Meta, "model"
+                            ):
+                                model = self.view.serializer_class.Meta.model
+                                self.view.queryset = model.objects.none()
+                                should_cleanup = True
+                            else:
+                                return []
+                        else:
+                            return []
+                    except (AttributeError, TypeError, ValueError):
+                        return []
+            else:
+                # No get_queryset method, try to infer from filterset_class or serializer_class
+                try:
+                    if (
+                        hasattr(self.view, "filterset_class")
+                        and self.view.filterset_class
+                    ):
+                        if hasattr(self.view.filterset_class, "_meta") and hasattr(
+                            self.view.filterset_class._meta, "model"
+                        ):
+                            model = self.view.filterset_class._meta.model
+                            self.view.queryset = model.objects.none()
+                            should_cleanup = True
+                        else:
+                            return []
+                    elif (
+                        hasattr(self.view, "serializer_class")
+                        and self.view.serializer_class
+                    ):
+                        if hasattr(self.view.serializer_class, "Meta") and hasattr(
+                            self.view.serializer_class.Meta, "model"
+                        ):
+                            model = self.view.serializer_class.Meta.model
+                            self.view.queryset = model.objects.none()
+                            should_cleanup = True
+                        else:
+                            return []
+                    else:
+                        return []
+                except (AttributeError, TypeError, ValueError):
+                    return []
+
+        # Now call parent method with queryset available
+        try:
+            return super().get_filter_backend_params(filter_backend)
+        except AttributeError:
+            # If still fails, return empty list
+            return []
+        finally:
+            # Clean up if we temporarily set queryset
+            if should_cleanup and hasattr(self.view, "queryset"):
+                try:
+                    delattr(self.view, "queryset")
+                except:
+                    pass
 
 
 class ModuleTaggingAutoSchema(SwaggerAutoSchema):
     """
-    Custom schema generator that automatically tags operations based on their module
+    Custom schema generator that automatically tags operations based on their module.
+    Also handles views without queryset attributes gracefully.
     """
+
+    # Use our custom FilterInspector instead of the default one
+    filter_inspectors = [SafeFilterInspector]
 
     def get_tags(self, operation_keys):
         # Extract module name from the operation keys
@@ -23,17 +148,24 @@ class ModuleTaggingAutoSchema(SwaggerAutoSchema):
 
 class OrderedTagSchemaGenerator(OpenAPISchemaGenerator):
     """
-    Custom schema generator to enforce tag ordering.
+    Custom schema generator to enforce tag ordering and auto-tag endpoints.
 
     Places 'auth' first, followed by remaining tags sorted alphabetically.
+    Automatically tags endpoints based on their URL path if no tags are specified.
     """
 
     def get_schema(self, request=None, public=False):
         schema = super().get_schema(request=request, public=public)
 
-        # Collect all tag names used in operations
+        # Collect all tag names used in operations and auto-tag if needed
         tag_names = set()
-        for path_item in schema.paths.values():
+        for path, path_item in schema.paths.items():
+            # Extract module name from path (e.g., '/api/auth/login/' -> 'auth')
+            path_parts = [p for p in path.split("/") if p]
+            module_name = None
+            if len(path_parts) > 1 and path_parts[0] == "api":
+                module_name = path_parts[1] if len(path_parts) > 1 else None
+
             for method_name in (
                 "get",
                 "put",
@@ -45,10 +177,15 @@ class OrderedTagSchemaGenerator(OpenAPISchemaGenerator):
                 "trace",
             ):
                 operation = getattr(path_item, method_name, None)
-                if operation and getattr(operation, "tags", None):
-                    for t in operation.tags:
-                        if t:
-                            tag_names.add(t)
+                if operation:
+                    # Auto-tag if no tags are specified
+                    if not getattr(operation, "tags", None) and module_name:
+                        operation.tags = [module_name]
+                        tag_names.add(module_name)
+                    elif getattr(operation, "tags", None):
+                        for t in operation.tags:
+                            if t:
+                                tag_names.add(t)
 
         # Desired order: 'auth' first, then others alphabetically
         ordered_names = ["auth"] + sorted([t for t in tag_names if t != "auth"])

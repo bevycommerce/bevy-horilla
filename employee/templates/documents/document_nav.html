@@ -1,6 +1,10 @@
 {% load static %} {% load i18n %} {% load basefilters %}
 
-<section class="oh-wrapper oh-main__topbar" x-data="{searchShow: false}">
+<section
+	class="oh-wrapper oh-main__topbar"
+	style="position: sticky; top: 75px; background: #fff; z-index: 30;"
+	x-data="{searchShow: false}"
+>
 	<div class="oh-main__titlebar oh-main__titlebar--left">
 		<a
 			href="{% url 'document-request-view' %}"
@@ -10,7 +14,7 @@
 			<a
 				class="oh-main__titlebar-search-toggle"
 				role="button"
-				aria-label="Toggle Search"
+				aria-label="{% trans 'Toggle Search' %}"
 				@click="searchShow = !searchShow"
 			>
 				<ion-icon
@@ -19,15 +23,18 @@
 				></ion-icon>
 			</a>
 		</a>
+		<div
+			class="oh-checkpoint-badge mb-0 ms-3"
+			id="selectedDocuments"
+			data-count-text="{% trans 'Documents Selected' %}"
+			style="display: none"
+		></div>
 	</div>
 	<div class="oh-main__titlebar oh-main__titlebar--right">
 		{% if documents %}
 		<form
-			hx-get="{% url 'document-request-view' %}"
+			hx-get="{% url 'document-request-filter-view' %}"
 			hx-target="#view-container"
-			hx-select="#view-container"
-			hx-swap="outerHTML"
-			hx-disinherit="*"
 			id="filterForm"
 			class="d-flex"
 			onsubmit = "event.preventDefault()"
@@ -43,7 +50,7 @@
 				<input
 					type="text"
 					class="oh-input oh-input__icon"
-					aria-label="Search Input"
+					aria-label="{% trans 'Search Input' %}"
 					placeholder="{% trans 'Search' %}"
 					name="search"
 					onkeyup="$('.filterButton').click()"
@@ -94,7 +101,7 @@
 													{{f.form.employee_id__employee_work_info__company_id}}
 												</div>
 												<div class="oh-input-group">
-													<label class="oh-label" for="{{f.form.employee_id__is_active.id_for_label}}">{% trans "Is Active" %}?</label>
+													<label class="oh-label" for="{{f.form.employee_id__is_active.id_for_label}}">{% trans "Active" %}?</label>
 													{{f.form.employee_id__is_active}}
 												</div>
 											</div>
@@ -165,7 +172,7 @@
 								<button
 									class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton"
 								>
-									{% trans "Filter" %}
+									{% trans "Apply" %}
 								</button>
 							</div>
 						</div>
@@ -187,7 +194,7 @@
 							style="display: none"
 						>
 							<ul class="oh-dropdown__items">
-								{% if perms.horilla_documnets.change_documentrequest or request.user|is_reportingmanager %}
+								{% if perms.horilla_documents.change_documentrequest or request.user|is_reportingmanager %}
 
 								<li class="oh-dropdown__item">
 									<a class="oh-dropdown__link mb-2 bulk_approve" style="cursor: pointer;" onclick="validateDocsIds(event);"

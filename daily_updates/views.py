@@ -13,7 +13,6 @@ import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -30,11 +29,7 @@ from workspace_attendance.views import login_required
 logger = logging.getLogger(__name__)
 
 RECENT_DAYS = 14
-TYPE_CHOICES = [
-    (MIDDAY, _lazy("Midday")),
-    (EOD, _lazy("End of Day")),
-    (COMBINED, _lazy("Combined")),
-]
+TYPE_CHOICES = [(MIDDAY, _lazy("Midday")), (EOD, _lazy("End of Day")), (COMBINED, _lazy("Combined"))]
 TABS = ["today", "attendance", "updates", "history"]
 GENERIC_ERROR = _lazy("Something went wrong. Please try again.")
 
@@ -44,9 +39,7 @@ def _employee(request):
 
 
 def _is_htmx(request):
-    return bool(request.headers.get("HX-Request")) and not request.headers.get(
-        "HX-Boosted"
-    )
+    return bool(request.headers.get("HX-Request")) and not request.headers.get("HX-Boosted")
 
 
 def _parse_date(raw, label):
@@ -57,9 +50,7 @@ def _parse_date(raw, label):
     try:
         return datetime.strptime(raw, "%Y-%m-%d").date(), ""
     except ValueError:
-        return None, _(
-            "%(label)s is not a valid date. Please pick a date from the calendar."
-        ) % {"label": label}
+        return None, _("%(label)s is not a valid date. Please pick a date from the calendar.") % {"label": label}
 
 
 def _fields(request):
@@ -80,35 +71,16 @@ def _work_date(request, source):
     return chosen, ""
 
 
-def _recent_updates(employee, work_date=None):
-    """
-    The employee's updates of the last RECENT_DAYS days, plus those of the
-    selected work date when it is older, so they can still be edited or deleted.
-    """
+def _recent_updates(employee):
     start = timezone.localdate() - timedelta(days=RECENT_DAYS - 1)
-    query = Q(work_date__gte=start)
-    if work_date is not None:
-        query |= Q(work_date=work_date)
     return list(
-        DailyUpdate.objects.filter(query, employee=employee).order_by(
-            "-work_date", "-submitted_at"
-        )
+        DailyUpdate.objects.filter(employee=employee, work_date__gte=start).order_by("-work_date", "-submitted_at")
     )
 
 
-def _render_day(
-    request,
-    employee,
-    work_date,
-    message="",
-    error="",
-    regular=False,
-    status=200,
-    page=False,
-    draft=None,
-):
+def _render_day(request, employee, work_date, message="", error="", regular=False, status=200, page=False, draft=None):
     today = timezone.localdate()
-    recent = _recent_updates(employee, work_date)
+    recent = _recent_updates(employee)
     draft = draft if error else None  # only keep typed text when something failed
     for item in recent:
         item.draft = draft if draft and draft.get("update_id") == item.pk else None
@@ -137,12 +109,7 @@ def my_updates(request):
     work_date, error = _work_date(request, request.GET)
     part = request.GET.get("part") == "day"
     return _render_day(
-        request,
-        employee,
-        work_date,
-        error=error,
-        regular=request.GET.get("regular") == "1",
-        page=not part,
+        request, employee, work_date, error=error, regular=request.GET.get("regular") == "1", page=not part
     )
 
 
@@ -152,12 +119,8 @@ def _run(request, call, draft=None):
     if employee is None:
         return HttpResponse("")
     work_date, error = _work_date(request, request.POST)
-    # keep the regular End-of-Day form if that is what the employee was using
-    regular = request.POST.get("regular") == "1"
     if error:
-        return _render_day(
-            request, employee, work_date, error=error, draft=draft, regular=regular
-        )
+        return _render_day(request, employee, work_date, error=error, draft=draft)
     message = ""
     try:
         _status, body = call(employee, work_date)
@@ -167,15 +130,7 @@ def _run(request, call, draft=None):
     except Exception:
         logger.exception("Daily update action failed")
         error = GENERIC_ERROR
-    return _render_day(
-        request,
-        employee,
-        work_date,
-        message=message,
-        error=error,
-        draft=draft,
-        regular=regular,
-    )
+    return _render_day(request, employee, work_date, message=message, error=error, draft=draft)
 
 
 @login_required
@@ -204,9 +159,7 @@ def edit(request, update_id):
     fields = _fields(request)
     return _run(
         request,
-        lambda e, d: services.edit_update(
-            e, update_id, fields, "web", actor=request.user
-        ),
+        lambda e, d: services.edit_update(e, update_id, fields, "web", actor=request.user),
         draft={"update_id": update_id, **fields},
     )
 
@@ -221,45 +174,27 @@ def delete(request, update_id):
 @login_required
 @require_http_methods(["GET", "HEAD"])
 def history(request, update_id):
-    """
-    Earlier versions of one update. Updates are visible to the same people as
-    the Company Updates page (the viewer's company scope), and always to the author.
-    """
+    """Earlier versions of one update. Updates are company-visible, so anyone may read this."""
     update = DailyUpdate.objects.select_related("employee").filter(pk=update_id).first()
-    if update is not None:
-        viewer = get_adapter().get_employee(request.user)
-        own = viewer is not None and viewer.pk == update.employee_id
-        if not own and not get_adapter().is_visible_employee(update.employee_id):
-            update = None  # same answer as a missing update
-    context = {
-        "update": None,
-        "versions": [],
-        "error": "",
-        "embedded": _is_htmx(request),
-    }
+    context = {"update": None, "versions": [], "error": "", "embedded": _is_htmx(request)}
     status = 200
     if update is None:
         context["error"] = _("Update not found.")
         status = 200 if _is_htmx(request) else 404
     else:
         adapter = get_adapter()
-        revisions = list(update.revisions.all())  # one read for text and times
         context.update(
             update=services.serialize_update(update),
             owner=adapter.safe_employee_card(update.employee),
-            versions=services.update_history(update, revisions),
+            versions=services.update_history(update),
         )
         context["update"]["submitted_dt"] = update.submitted_at
         context["update"]["work_date_obj"] = update.work_date
         context["update"]["edited_dt"] = update.last_edited_at
-        for version, revision in zip(context["versions"], revisions):
+        for version, revision in zip(context["versions"], update.revisions.all()):
             version["content_dt"] = revision.content_submitted_at
             version["replaced_dt"] = revision.replaced_at
-    template = (
-        "daily_updates/_history.html"
-        if _is_htmx(request)
-        else "daily_updates/history_page.html"
-    )
+    template = "daily_updates/_history.html" if _is_htmx(request) else "daily_updates/history_page.html"
     return render(request, template, context, status=status)
 
 
@@ -268,11 +203,7 @@ def _prepare_update(item):
     """Turn the ISO strings of a serialized update into dates/times the template can format."""
     item["work_date_obj"] = datetime.strptime(item["work_date"], "%Y-%m-%d").date()
     item["submitted_dt"] = datetime.fromisoformat(item["submitted_at"])
-    item["edited_dt"] = (
-        datetime.fromisoformat(item["last_edited_at"])
-        if item["last_edited_at"]
-        else None
-    )
+    item["edited_dt"] = datetime.fromisoformat(item["last_edited_at"]) if item["last_edited_at"] else None
     return item
 
 
@@ -312,9 +243,7 @@ def _company_filters(request):
         errors.append(_("The To date cannot be in the future. Showing up to today."))
         end = today
     if start > end:
-        errors.append(
-            _("The From date is after the To date. Showing the default dates instead.")
-        )
+        errors.append(_("The From date is after the To date. Showing the default dates instead."))
         start, end = default_start, today
 
     filters = {
@@ -374,19 +303,11 @@ def _company_context(request):
     }
     try:
         if tab in ("today", "attendance"):
-            board = services.today_board(
-                filters["day"],
-                query=filters["q"] or None,
-                department_id=filters["department_id"],
-            )
+            board = services.today_board(filters["day"], query=filters["q"] or None, department_id=filters["department_id"])
             context["totals"] = board["totals"]
             rows = []
             for row in board["rows"]:
-                items = [
-                    row["updates"][t]
-                    for t in (MIDDAY, EOD, COMBINED)
-                    if t in row["updates"]
-                ]
+                items = [row["updates"][t] for t in (MIDDAY, EOD, COMBINED) if t in row["updates"]]
                 if filters["type"]:
                     items = [i for i in items if i["type"] == filters["type"]]
                     if not items:
@@ -425,7 +346,5 @@ def company_tab(request):
     context = _company_context(request)
     response = render(request, "daily_updates/_company_body.html", context)
     # keep the address bar in step so a reload or a shared link shows the same view
-    response["HX-Push-Url"] = (
-        f"{reverse('daily-updates-company')}?{context['state_query']}"
-    )
+    response["HX-Push-Url"] = f"{reverse('daily-updates-company')}?{context['state_query']}"
     return response

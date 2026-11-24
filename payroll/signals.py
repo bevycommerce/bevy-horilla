@@ -1,19 +1,56 @@
 from datetime import datetime
 
 from django.apps import apps
-from django.db.models.signals import post_save, pre_save
+from django.db.models import Q
+from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 
-from employee.models import EmployeeWorkInformation
+from employee.models import Employee, EmployeeWorkInformation
 from payroll.methods.deductions import create_deductions
-from payroll.models.models import Allowance, Contract, Deduction, LoanAccount, Payslip
+from payroll.models.models import (
+    Allowance,
+    Contract,
+    Deduction,
+    EncashmentGeneralSettings,
+    LoanAccount,
+    Payslip,
+)
+from payroll.models.tax_models import PayrollSettings
 
 
-@receiver(pre_save, sender=EmployeeWorkInformation)
-def employeeworkinformation_pre_save(sender, instance, **_kwargs):
+@receiver(m2m_changed, sender=EncashmentGeneralSettings.employees.through)
+@receiver(m2m_changed, sender=EncashmentGeneralSettings.department.through)
+@receiver(m2m_changed, sender=EncashmentGeneralSettings.job_position.through)
+def encashment_settings_filtered_employees(sender, instance, action, **kwargs):
+    """
+    Recompute EncashmentGeneralSettings.filtered_employees whenever the
+    employees/department/job_position eligibility selection changes --
+    mirrors Policy's targeting in base/signals.py.
+    """
+    if action not in ["post_add", "post_remove", "post_clear"]:
+        return
+    employee_ids = list(instance.employees.values_list("id", flat=True))
+    department_ids = list(instance.department.values_list("id", flat=True))
+    job_position_ids = list(instance.job_position.values_list("id", flat=True))
+
+    employees = Employee.objects.filter(
+        Q(id__in=employee_ids)
+        | Q(employee_work_info__department_id__in=department_ids)
+        | Q(employee_work_info__job_position_id__in=job_position_ids)
+    )
+
+    instance.filtered_employees.set(employees)
+
+
+@receiver(post_save, sender=EmployeeWorkInformation)
+def employeeworkinformation_post_save(sender, instance, **_kwargs):
     """
     This method is used to override the save method for EmployeeWorkInformation Model
     """
+    # Skip during fixture load — demo contracts come from payroll_data.json
+    if _kwargs.get("raw"):
+        return
+
     active_employee = (
         instance.employee_id
         if instance.employee_id and instance.employee_id.is_active == True
@@ -32,7 +69,22 @@ def employeeworkinformation_pre_save(sender, instance, **_kwargs):
             contract.wage = (
                 instance.basic_salary if instance.basic_salary is not None else 0
             )
+            contract.contract_status = "active"
             contract.save()
+
+
+@receiver(post_save, sender=Allowance)
+@receiver(post_save, sender=Deduction)
+def standard_component_saved(sender, instance, **kwargs):
+    """
+    Editing a standard component (Loan, Fine, Reimbursement ...) reaches the rows it generated that
+    no payslip carries yet, so its Taxable / Pre-Tax setting applies to them and not only to new ones.
+    """
+    if kwargs.get("raw") or not (instance.is_system and instance.system_key):
+        return
+    from payroll.methods.system_sync import align
+
+    align(keys={instance.system_key})
 
 
 @receiver(post_save, sender=LoanAccount)
@@ -40,23 +92,40 @@ def create_installments(sender, instance, created, **kwargs):
     """
     Post save method for loan account
     """
+    # Demo fixtures carry pre-built allowance and installment relationships.
+    # Rebuilding them while loaddata is running duplicates the allowance and
+    # replaces the curated schedule with signal-generated records.
+    if kwargs.get("raw"):
+        return
+
     installments = []
     asset = True
     if apps.is_installed("asset"):
         asset = True if instance.asset_id is None else False
 
     if created and asset and instance.type != "fine":
+        from payroll.methods.deductions import LOAN_PAYOUT_KEYS
+        from payroll.system_components import policy_fields
+
         loan = Allowance()
-        loan.amount = instance.loan_amount
         loan.title = instance.title
-        loan.include_active_employees = False
         loan.amount = instance.loan_amount
+        loan.include_active_employees = False
         loan.only_show_under_employee = True
-        loan.is_fixed = True
         loan.is_fixed = True
         loan.one_time_date = instance.provided_date
         loan.is_loan = True
-        loan.include_active_employees = False
+
+        # Whether the payout is taxed, and whether it prorates, comes from the
+        # standard component for this kind. The defaults it used to inherit
+        # made a loan taxable income and prorated it by calendar days -- so a
+        # mid-month joiner received a fraction of the loan they were granted.
+        for field, value in policy_fields(
+            LOAN_PAYOUT_KEYS.get(instance.type, "loan_payout"),
+            employee=instance.employee_id,
+        ).items():
+            setattr(loan, field, value)
+
         loan.save()
         loan.specific_employees.add(instance.employee_id)
         instance.allowance_id = loan
@@ -76,6 +145,18 @@ def create_installments(sender, instance, created, **kwargs):
         installment_dict = instance.get_installments()
 
         if not payslips_with_deductions and not instance.settled:
+            # Nothing is paid yet, so the whole loan is still editable -
+            # keep the one-time payout allowance in sync with the (possibly
+            # changed) employee/amount/date/title before regenerating the
+            # installment deductions below, which already follow
+            # instance.employee_id via create_deductions().
+            if instance.allowance_id:
+                allowance = instance.allowance_id
+                allowance.title = instance.title
+                allowance.amount = instance.loan_amount
+                allowance.one_time_date = instance.provided_date
+                allowance.save()
+                allowance.specific_employees.set([instance.employee_id])
             Deduction.objects.filter(id__in=deductions).delete()
             for (
                 installment_date,
@@ -112,3 +193,28 @@ def create_installments(sender, instance, created, **kwargs):
                         installments.append(installment)
 
                 instance.deduction_ids.add(*installments)
+
+
+@receiver(post_save, sender=PayrollSettings)
+@receiver(post_delete, sender=PayrollSettings)
+def forget_remembered_payroll_settings(sender, **kwargs):
+    """A currency change shows at once, even later in the same request."""
+    PayrollSettings.forget_remembered()
+
+
+@receiver(post_delete, sender=Payslip)
+@receiver(post_save, sender=Payslip)
+def keep_batch_summary_current(sender, instance, created=False, **kwargs):
+    """A batch follows the payslips inside it: edits and deletes change its summary, and it goes with its last payslip."""
+    if kwargs.get("raw") or created or not instance.payroll_batch_id:
+        return
+    from payroll.models.payroll_batch import PayrollBatch
+
+    batch = PayrollBatch._base_manager.filter(pk=instance.payroll_batch_id).first()
+    if batch is None:
+        return
+    if kwargs.get("signal") is post_delete and not batch.payslips.exists():
+        # Its last payslip is gone, so there is nothing left for the batch to describe.
+        batch.delete()
+        return
+    batch.refresh_totals()

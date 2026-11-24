@@ -11,29 +11,19 @@ from rest_framework import status as http
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from attendance.methods.utils import get_client_ip
 from workspace_attendance import conf, services
 from workspace_attendance.adapters import get_adapter
 
-from .serializers import (
-    AwaySerializer,
-    BreakStartSerializer,
-    CoordsSerializer,
-    CorrectionSerializer,
-)
+from .serializers import AwaySerializer, BreakStartSerializer, CoordsSerializer, CorrectionSerializer
 
 
 def _error(message, code, status_code):
-    return Response(
-        {"ok": False, "code": code, "message": str(message)}, status=status_code
-    )
+    return Response({"ok": False, "code": code, "message": str(message)}, status=status_code)
 
 
 class WorkspaceAPIView(APIView):
-    # Bearer tokens only, so a missing or expired token answers 401 (the app then signs in again).
-    authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
     throttle_scope = None
     require_idempotency = True
@@ -58,24 +48,9 @@ class WorkspaceAPIView(APIView):
     def guard(self, mutating=False):
         """Common checks. Returns an error Response or None."""
         if self.employee is None:
-            return _error(
-                "Your account is not linked to an employee profile.",
-                "no_employee",
-                http.HTTP_403_FORBIDDEN,
-            )
-        if not getattr(self.employee, "is_active", True):
-            # archiving an employee leaves the login active, so check here
-            return _error(
-                "This employee profile is archived.",
-                "employee_inactive",
-                http.HTTP_403_FORBIDDEN,
-            )
+            return _error("Your account is not linked to an employee profile.", "no_employee", http.HTTP_403_FORBIDDEN)
         if mutating and self.require_idempotency and not self.idempotency_key():
-            return _error(
-                "The Idempotency-Key header is required.",
-                "idempotency_required",
-                http.HTTP_400_BAD_REQUEST,
-            )
+            return _error("The Idempotency-Key header is required.", "idempotency_required", http.HTTP_400_BAD_REQUEST)
         return None
 
     def coords(self):
@@ -112,11 +87,7 @@ class SignInView(WorkspaceAPIView):
             return error
         return self.respond(
             services.sign_in(
-                self.employee,
-                self.source,
-                client_ip=get_client_ip(request),
-                coords=self.coords(),
-                key=self.idempotency_key(),
+                self.employee, self.source, client_ip=get_client_ip(request), coords=self.coords(), key=self.idempotency_key()
             )
         )
 
@@ -128,11 +99,7 @@ class SignOutView(WorkspaceAPIView):
             return error
         return self.respond(
             services.sign_out(
-                self.employee,
-                self.source,
-                client_ip=get_client_ip(request),
-                coords=self.coords(),
-                key=self.idempotency_key(),
+                self.employee, self.source, client_ip=get_client_ip(request), coords=self.coords(), key=self.idempotency_key()
             )
         )
 
@@ -146,11 +113,7 @@ class BreakStartView(WorkspaceAPIView):
         data.is_valid(raise_exception=True)
         return self.respond(
             services.start_break(
-                self.employee,
-                data.validated_data["reason"],
-                data.validated_data["note"],
-                self.source,
-                key=self.idempotency_key(),
+                self.employee, data.validated_data["reason"], data.validated_data["note"], self.source, key=self.idempotency_key()
             )
         )
 
@@ -160,9 +123,7 @@ class BreakEndView(WorkspaceAPIView):
         error = self.guard(mutating=True)
         if error:
             return error
-        return self.respond(
-            services.end_break(self.employee, self.source, key=self.idempotency_key())
-        )
+        return self.respond(services.end_break(self.employee, self.source, key=self.idempotency_key()))
 
 
 class AwayView(WorkspaceAPIView):
@@ -173,12 +134,7 @@ class AwayView(WorkspaceAPIView):
         data = AwaySerializer(data=request.data)
         data.is_valid(raise_exception=True)
         return self.respond(
-            services.set_away(
-                self.employee,
-                data.validated_data["away"],
-                self.source,
-                key=self.idempotency_key(),
-            )
+            services.set_away(self.employee, data.validated_data["away"], self.source, key=self.idempotency_key())
         )
 
 
@@ -195,12 +151,8 @@ class CorrectionsView(WorkspaceAPIView):
                 "days": [
                     {
                         "date": d["date"].isoformat(),
-                        "sign_in": (
-                            d["sign_in"].strftime("%H:%M") if d["sign_in"] else None
-                        ),
-                        "sign_out": (
-                            d["sign_out"].strftime("%H:%M") if d["sign_out"] else None
-                        ),
+                        "sign_in": d["sign_in"].strftime("%H:%M") if d["sign_in"] else None,
+                        "sign_out": d["sign_out"].strftime("%H:%M") if d["sign_out"] else None,
                         "worked": d["worked"],
                         "missing_sign_out": d["missing_sign_out"],
                     }
@@ -218,12 +170,6 @@ class CorrectionsView(WorkspaceAPIView):
         v = data.validated_data
         return self.respond(
             services.correct_times(
-                self.employee,
-                v["date"],
-                v["sign_in"],
-                v["sign_out"],
-                request.user,
-                self.source,
-                key=self.idempotency_key(),
+                self.employee, v["date"], v["sign_in"], v["sign_out"], request.user, self.source, key=self.idempotency_key()
             )
         )

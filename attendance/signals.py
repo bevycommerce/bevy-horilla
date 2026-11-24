@@ -1,9 +1,10 @@
 # attendance/signals.py
 
+import logging
 from datetime import datetime, timedelta
 
 from django.apps import apps
-from django.db.models.signals import post_migrate, post_save, pre_delete
+from django.db.models.signals import post_delete, post_migrate, post_save, pre_delete
 from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 
@@ -13,11 +14,33 @@ from base.models import Company, PenaltyAccounts
 from employee.models import Employee
 from horilla.methods import get_horilla_model_class
 
+logger = logging.getLogger(__name__)
+
 
 @receiver(post_save, sender=Attendance)
 def attendance_post_save(sender, instance, **kwargs):
     """
     Handle post-save actions for Attendance model.
+    """
+    if kwargs.get("raw"):
+        # Fixture loading (loaddata) already ships its own explicit
+        # WorkRecords row for every Attendance row, computed the same way
+        # this signal would compute it. Running this anyway shadow-creates
+        # a second WorkRecords row (auto-assigned pk) for the same
+        # (employee, date) *before* the fixture's own explicit row gets
+        # inserted, which then collides on the (employee_id, date) unique
+        # constraint -- masked on a full --flush (pk sequences reset, so
+        # the auto-assigned pk often coincidentally matches the fixture's),
+        # but a guaranteed collision on any subsequent non-flush reload
+        # once the sequence has advanced.
+        return
+    update_work_record_from_attendance(instance)
+
+
+def update_work_record_from_attendance(instance):
+    """
+    The day's work record from its attendance; then the day's regularisation, if it has one, is
+    applied on top (the last regularisation is the one the work record shows).
     """
     min_hour_second = strtime_seconds(instance.minimum_hour)
     at_work_second = strtime_seconds(instance.attendance_worked_hour)
@@ -39,11 +62,16 @@ def attendance_post_save(sender, instance, **kwargs):
         work_records = WorkRecords.objects.filter(
             date=instance.attendance_date,
             employee_id=instance.employee_id,
-        )
+        ).order_by("id")
+
         work_record = work_records.first()
-        work_records.exclude(id=work_record.id).delete()
+
+        if work_records.count() > 1:
+            ids = work_records.exclude(id=work_record.id).values_list("id", flat=True)
+            WorkRecords._base_manager.filter(id__in=ids).delete()
+
     except Exception as e:
-        print(e)
+        logger.exception("Work record signal failed")
 
     work_record.employee_id = instance.employee_id
     work_record.date = instance.attendance_date
@@ -74,12 +102,42 @@ def attendance_post_save(sender, instance, **kwargs):
     work_record.message = message
     work_record.save()
 
+    from attendance.methods.work_record_sync import apply_resolution_for
+
+    apply_resolution_for(instance.employee_id, instance.attendance_date)
+
 
 @receiver(pre_delete, sender=Attendance)
 def handle_attendance_deletion(sender, instance, **kwargs):
     for workrecord in instance.workrecords_set.all():
         if not workrecord.leave_request_id:
             workrecord.delete()
+
+
+@receiver(post_save, sender="attendance.AttendanceConflictResolution")
+def regularisation_saved(sender, instance, **kwargs):
+    """A day was regularised (or regularised again): its work record shows the new status."""
+    if kwargs.get("raw"):
+        return
+    from attendance.methods.work_record_sync import apply_resolution
+
+    try:
+        apply_resolution(instance)
+    except Exception:
+        logger.exception("Applying a regularisation to its work record failed")
+
+
+@receiver(post_delete, sender="attendance.AttendanceConflictResolution")
+def regularisation_removed(sender, instance, **kwargs):
+    """A regularisation was undone: the work record goes back to what the day's attendance and leaves say."""
+    from attendance.methods.work_record_sync import restore_natural
+
+    try:
+        restore_natural(instance.employee_id, instance.date)
+    except Exception:
+        logger.exception(
+            "Restoring a work record after a regularisation was removed failed"
+        )
 
 
 # @receiver(post_migrate)
@@ -115,12 +173,13 @@ def add_missing_attendance_to_workrecord(sender, **kwargs):
             WorkRecords.objects.bulk_update(
                 records_to_update, ["attendance_id"], batch_size=500
             )
-            print(
-                f"Successfully updated {len(records_to_update)} work records with attendance information."
+            logger.info(
+                "Updated %s work records with attendance information",
+                len(records_to_update),
             )
 
     except Exception as e:
-        print(f"Error updating work records with attendance: {e}")
+        logger.exception("Error updating work records with attendance")
 
 
 # @receiver(post_migrate)
@@ -150,12 +209,13 @@ def add_missing_shift_to_work_record(sender, **kwargs):
             WorkRecords.objects.bulk_update(
                 records_to_update, ["shift_id"], batch_size=500
             )
-            print(
-                f"Successfully updated {len(records_to_update)} work records with shift information."
+            logger.info(
+                "Updated %s work records with shift information",
+                len(records_to_update),
             )
 
     except Exception as e:
-        print(f"Error updating work records with shift information: {e}")
+        logger.exception("Error updating work records with shift information")
 
 
 @receiver(post_save, sender=Company)
@@ -214,6 +274,7 @@ def create_missing_work_records(sender, **kwargs):
                     )
 
             except Exception as e:
-                print(
-                    f"Error creating missing work records for employee {employee}: {e}"
+                logger.exception(
+                    "Error creating missing work records for employee_id=%s",
+                    getattr(employee, "pk", employee),
                 )

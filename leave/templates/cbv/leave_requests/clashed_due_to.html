@@ -1,0 +1,23 @@
+{% load i18n %}
+{% comment %}
+    "Clashed Due To" pill for the leave clash list. Same pill shape as
+    generic/penalty_badge.html. Context: same_department, same_job_position.
+{% endcomment %}
+<div class="flex justify-center min-w-0">
+    {% if same_department and same_job_position %}
+    <span class="inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-danger/30 bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger-dark" title="{% trans 'Same Department & Job Position' %}">
+        <ion-icon name="people-outline"></ion-icon>
+        {% trans "Dept. & Job" %}
+    </span>
+    {% elif same_department %}
+    <span class="inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-dark" title="{% trans 'Same Department' %}">
+        <ion-icon name="business-outline"></ion-icon>
+        {% trans "Department" %}
+    </span>
+    {% elif same_job_position %}
+    <span class="inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-md border border-info-600/30 bg-info-600/10 px-2 py-0.5 text-xs font-medium text-info-700" title="{% trans 'Same Job Position' %}">
+        <ion-icon name="briefcase-outline"></ion-icon>
+        {% trans "Job Position" %}
+    </span>
+    {% endif %}
+</div>

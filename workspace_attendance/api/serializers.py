@@ -12,9 +12,7 @@ class CoordsSerializer(serializers.Serializer):
 
 class BreakStartSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=30)
-    note = serializers.CharField(
-        max_length=300, required=False, allow_blank=True, default=""
-    )
+    note = serializers.CharField(max_length=300, required=False, allow_blank=True, default="")
 
     def validate_reason(self, value):
         allowed = {item["value"] for item in get_adapter().break_reasons()}
@@ -29,18 +27,8 @@ class AwaySerializer(serializers.Serializer):
 
 class CorrectionSerializer(serializers.Serializer):
     date = serializers.DateField()
-    sign_in = serializers.TimeField(
-        required=False,
-        allow_null=True,
-        default=None,
-        input_formats=["%H:%M", "%H:%M:%S"],
-    )
-    sign_out = serializers.TimeField(
-        required=False,
-        allow_null=True,
-        default=None,
-        input_formats=["%H:%M", "%H:%M:%S"],
-    )
+    sign_in = serializers.TimeField(required=False, allow_null=True, default=None, input_formats=["%H:%M", "%H:%M:%S"])
+    sign_out = serializers.TimeField(required=False, allow_null=True, default=None, input_formats=["%H:%M", "%H:%M:%S"])
 
     def validate(self, attrs):
         if attrs.get("sign_in") is None and attrs.get("sign_out") is None:

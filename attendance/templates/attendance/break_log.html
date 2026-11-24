@@ -23,8 +23,6 @@
                     <input type="date" name="to" value="{{ date_to }}" style="display: block; height: 36px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px">
                 </label>
                 <button type="submit" style="height: 36px; padding: 0 16px; border: 0; border-radius: 5px; background: #e54f38; color: #fff; font-size: 13px; cursor: pointer">{% trans "Filter" %}</button>
-                <a href="?from={{ date_from }}&amp;to={{ date_to }}&amp;export=csv" download title="{% trans 'Download the breaks shown for these dates as a CSV file' %}" style="display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border: 1px solid #e54f38; border-radius: 5px; background: #fff; color: #e54f38; font-size: 13px; text-decoration: none">{% trans "Export CSV" %}</a>
-                <a href="?export=csv&amp;all=1" download title="{% trans 'Download every break, all dates, as a CSV file' %}" style="display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border: 1px solid #e54f38; border-radius: 5px; background: #fff; color: #e54f38; font-size: 13px; text-decoration: none">{% trans "Export All (CSV)" %}</a>
             </form>
         </div>
 

@@ -5,17 +5,26 @@ horilla/cbv_methods.py
 import json
 import types
 import uuid
+from datetime import timedelta
 from io import BytesIO
 from typing import Any
 from urllib.parse import urlencode
-from venv import logger
 
 from django import forms, template
+from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.core.cache import cache as CACHE
+from django.core.exceptions import FieldDoesNotExist
 from django.core.paginator import Paginator
 from django.db import models
-from django.db.models.fields.related import ForeignKey
+from django.db.models.fields.related import (
+    ForeignKey,
+    ManyToManyRel,
+    ManyToOneRel,
+    OneToOneField,
+    OneToOneRel,
+)
 from django.db.models.fields.related_descriptors import (
     ForwardManyToOneDescriptor,
     ReverseOneToOneDescriptor,
@@ -27,15 +36,19 @@ from django.template import loader
 from django.template.defaultfilters import register
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.datastructures import MultiValueDictKeyError
 from django.utils.functional import lazy
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
 from django.utils.translation import gettext_lazy as _
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from horilla import settings
+from horilla.config import logger
+from horilla.export_safety import safe_cell
 from horilla.horilla_middlewares import _thread_locals
 from horilla.methods import handle_no_permission
 from horilla_views.templatetags.generic_template_filters import getattribute
@@ -145,6 +158,20 @@ def decorator_with_arguments(decorator):
     return wrapper
 
 
+def unauthenticated_response(request):
+    """
+    Full page refresh for HTMX requests, otherwise redirect to the login page.
+    """
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Refresh": "true"})
+    login_url = reverse("login")
+    params = urlencode(request.GET)
+    url = f"{login_url}?next={request.path}"
+    if params:
+        url += f"&{params}"
+    return redirect(url)
+
+
 def login_required(view_func):
     """
     Decorator to check authenticity of users
@@ -154,6 +181,8 @@ def login_required(view_func):
         request = getattr(_thread_locals, "request")
         if not getattr(self, "request", None):
             self.request = request
+        if not request.user.is_authenticated:
+            return unauthenticated_response(request)
         path = request.path
         res = path.split("/", 2)[1].capitalize().replace("-", " ").upper()
         if res == "PMS":
@@ -161,23 +190,101 @@ def login_required(view_func):
         request.session["title"] = res
         if path == "" or path == "/":
             request.session["title"] = "Dashboard".upper()
-        if not request.user.is_authenticated:
-            login_url = reverse("login")
-            params = urlencode(request.GET)
-            url = f"{login_url}?next={request.path}"
-            if params:
-                url += f"&{params}"
-            return redirect(url)
         try:
             func = view_func(self, request, *args, **kwargs)
+        except KeyError:
+            raise
         except Exception as e:
             logger.exception(e)
             if not settings.DEBUG:
-                return render(request, "went_wrong.html")
-            return view_func(self, *args, **kwargs)
+                messages.error(request, str(e))
+                return render(request, "went_wrong.html", status=404)
+            raise e
         return func
 
     return wrapped_view
+
+
+class EmployeeScopeMixin:
+    """
+    Refuse a write that names an employee the caller may not act on.
+
+    The employee dropdown on these forms is narrowed to the caller's reports
+    only when the form is *rendered*, so a submitted ``employee_id`` was never
+    checked. This checks it on the server, before the form is bound: the caller
+    holds ``scope_perm`` (or, on an update route, ``scope_change_perm``), or
+    every submitted employee is one of their reports (or themselves, with
+    ``scope_include_self``). On an update route it also checks the employee the
+    existing record belongs to. Put it first in the bases, before
+    ``HorillaFormView``.
+    """
+
+    scope_perm = None
+    scope_change_perm = None
+    scope_fields = ("employee_id",)
+    scope_include_self = False
+    scope_instance_field = "employee_id"
+
+    def get_scope_perm(self):
+        if self.kwargs.get("pk"):
+            if self.scope_change_perm:
+                return self.scope_change_perm
+            return (self.scope_perm or "").replace(".add_", ".change_")
+        return self.scope_perm
+
+    def get_scoped_employee_ids(self, request):
+        ids = []
+        if request.method == "POST":
+            for field in self.scope_fields:
+                ids += [value for value in request.POST.getlist(field) if value]
+        pk = self.kwargs.get("pk")
+        model = getattr(self, "model", None)
+        if pk and model is not None and self.scope_instance_field:
+            instance = model.objects.filter(pk=pk).first()
+            owner = getattr(instance, self.scope_instance_field, None)
+            if owner is not None:
+                if hasattr(owner, "all"):
+                    ids += [employee.pk for employee in owner.all()]
+                else:
+                    ids.append(owner.pk)
+        return ids
+
+    def dispatch(self, request, *args, **kwargs):
+        from base.methods import employees_in_scope
+
+        ids = self.get_scoped_employee_ids(request)
+        perm = self.get_scope_perm()
+        if (
+            ids
+            and perm
+            and not employees_in_scope(request, ids, perm, self.scope_include_self)
+        ):
+            return handle_no_permission(request)
+        return super().dispatch(request, *args, **kwargs)
+
+
+class AddOrChangePermissionMixin:
+    """
+    Require ``add_perm`` to create and ``change_perm`` to edit.
+
+    A form view that serves both the create route (no ``pk``) and the update
+    route (``pk``) needs a different permission for each. Without this the
+    class carried ``login_required`` alone, so any signed-in user could write.
+    Put it first in the bases, before ``HorillaFormView``; ``login_required``
+    applied to ``dispatch`` still runs before it.
+    """
+
+    add_perm = None
+    change_perm = None
+
+    def get_required_permission(self):
+        return self.change_perm if self.kwargs.get("pk") else self.add_perm
+
+    def dispatch(self, request, *args, **kwargs):
+        perm = self.get_required_permission()
+        if perm and not request.user.has_perm(perm):
+            return handle_no_permission(request)
+        return super().dispatch(request, *args, **kwargs)
 
 
 @decorator_with_arguments
@@ -194,6 +301,99 @@ def permission_required(function, perm):
         if request.user.has_perm(perm):
             return function(self, *args, **kwargs)
         return handle_no_permission(request)
+
+    return _function
+
+
+@decorator_with_arguments
+def owner_can_enter(
+    function,
+    perm: str,
+    model: object,
+    manager_access=False,
+    employee_field: str = "employee_id",
+):
+    """
+    CBV version of owner_can_enter.
+    Only the users with permission, or the owner, or employees manager can enter.
+    If manager_access:True then all the managers can enter.
+    """
+    from employee.models import Employee, EmployeeWorkInformation
+    from horilla.decorators import check_manager
+    from horilla.http import HorillaRedirect
+
+    def _function(self, *args, **kwargs):
+        request = getattr(_thread_locals, "request")
+        if not getattr(self, "request", None):
+            self.request = request
+
+        if not request.user.is_authenticated:
+            return unauthenticated_response(request)
+
+        instance_id = None
+        if kwargs:
+            instance_id = kwargs[list(kwargs.keys())[0]]
+        elif hasattr(self, "kwargs") and self.kwargs:
+            instance_id = self.kwargs[list(self.kwargs.keys())[0]]
+
+        if model == Employee:
+            employee = Employee.objects.filter(id=instance_id).first()
+        else:
+            try:
+                obj = model.objects.filter(id=instance_id).first()
+                employee = getattr(obj, employee_field, None) if obj else None
+            except Exception as e:
+                messages.error(request, _("Sorry, something went wrong!"))
+                return HorillaRedirect(request)
+
+        can_enter = (
+            request.user.employee_get == employee
+            or request.user.has_perm(perm)
+            or check_manager(request.user.employee_get, employee)
+            or (
+                EmployeeWorkInformation.objects.filter(
+                    reporting_manager_id__employee_user_id=request.user
+                ).exists()
+                if manager_access
+                else False
+            )
+        )
+        if can_enter or not employee:
+            return function(self, *args, **kwargs)
+        return HorillaRedirect(request, message=_("You don't have permission."))
+
+    return _function
+
+
+@decorator_with_arguments
+def allocation_manager_can_enter(function):
+    """
+    Decorator for allocation manager accessibility
+    """
+    from employee.cbv.accessibility import allocation_accessibility
+    from employee.models import Employee
+
+    def _function(request, *args, **kwargs):
+        # The views read ``instance_id`` from the query string in some places
+        # and from the form body in others (the write usually reads the body).
+        # Checking only the first one found let a caller pass the gate with an
+        # employee they may reach and then write to another. Every value
+        # supplied, in either place, has to pass.
+        supplied = [
+            value
+            for value in request.GET.getlist("instance_id")
+            + request.POST.getlist("instance_id")
+            if value
+        ]
+        if not supplied:
+            return handle_no_permission(request)
+        for value in supplied:
+            employee = (
+                Employee.objects.filter(pk=value).first() if value.isdigit() else None
+            )
+            if not allocation_accessibility(request, employee):
+                return handle_no_permission(request)
+        return function(request, *args, **kwargs)
 
     return _function
 
@@ -222,9 +422,15 @@ def hx_request_required(function):
     """
 
     def _function(request, *args, **kwargs):
+        # Sec-Fetch-Mode is set by the browser itself for a genuine
+        # top-level navigation and can't be spoofed by an htmx fetch()
+        # call, unlike the HX-Request header alone -- some browser setups
+        # send HX-Request even on a real address-bar visit, which would
+        # otherwise slip through this check and render the raw fragment.
+        is_real_navigation = request.META.get("HTTP_SEC_FETCH_MODE") == "navigate"
         key = "HTTP_HX_REQUEST"
-        if key not in request.META.keys():
-            return render(request, "405.html")
+        if is_real_navigation or key not in request.META.keys():
+            return render(request, "405.html", status=405)
         return function(request, *args, **kwargs)
 
     return _function
@@ -281,10 +487,13 @@ def render_template(
     request = getattr(_thread_locals, "request", None)
     context.update(get_all_context_variables(request))
     template_loader = loader.get_template(path)
-    template_body = template_loader.template.source
-    template_bdy = template.Template(template_body)
+    # Render the already-compiled template directly instead of re-parsing its
+    # source into a new Template on every call — this function is invoked once
+    # per rendered fragment (often a dozen+ times per list page row), so the
+    # re-parse cost multiplies fast. Verified identical output to the old
+    # template.Template(source).render(...) path.
     context_instance = template.Context(context)
-    rendered_content = template_bdy.render(context_instance)
+    rendered_content = template_loader.template.render(context_instance)
     return HttpResponse(rendered_content, status=status).content.decode(decoding)
 
 
@@ -304,6 +513,112 @@ def paginator_qry(qryset, page_number, records_per_page=50):
     return qryset
 
 
+# A quick date range spanning a calendar week: (label, WEEK, weeks_from_this_week).
+WEEK = "week"
+
+
+def first_day_of_week():
+    """
+    settings.HORILLA_FIRST_DAY_OF_WEEK (0 = Sunday, 1 = Monday ... 6 =
+    Saturday). Monday, like the attendance dashboard, when it is unset,
+    empty or anything other than 0 to 6.
+    """
+    value = str(getattr(settings, "HORILLA_FIRST_DAY_OF_WEEK", "")).strip()
+    return int(value) if value in ("0", "1", "2", "3", "4", "5", "6") else 1
+
+
+def week_start(day):
+    """First day of the calendar week containing `day` (see first_day_of_week)."""
+    return day - timedelta(days=(day.isoweekday() - first_day_of_week()) % 7)
+
+
+def get_quick_date_filters(ranges, fields):
+    """
+    Build (label, onclick attrs) pairs from ranges and (exact, from, to) fields.
+
+    Each range is (label, start_offset, end_offset) in days from today (an
+    end_offset of None means that single day), or (label, WEEK, n) for a
+    whole calendar week: 0 is this week, -1 last week.
+    """
+    exact_field, from_field, to_field = fields
+    today = timezone.localdate()
+
+    def setter(name, value):
+        return (
+            f"$('#applyFilter').closest('form').find('[name={name}]').val('{value}');"
+        )
+
+    filters = []
+    for label, start_offset, end_offset in ranges:
+        if start_offset == WEEK:
+            start = week_start(today) + timedelta(weeks=end_offset)
+            end = start + timedelta(days=6)
+        else:
+            start = today + timedelta(days=start_offset)
+            end = None if end_offset is None else today + timedelta(days=end_offset)
+        steps = []
+        if end is None and exact_field:
+            steps += [setter(from_field, ""), setter(to_field, "")]
+            steps.append(setter(exact_field, start))
+        else:
+            if exact_field:
+                steps.append(setter(exact_field, ""))
+            steps.append(setter(from_field, start))
+            steps.append(setter(to_field, end or start))
+        steps.append("$('#applyFilter').click();")
+        filters.append((label, 'onclick="' + " ".join(steps) + '"'))
+    return filters
+
+
+SINGLE_VALUE_QUERY_PARAMS = {"page", "view_id", "filter_applied", "sortby"}
+
+
+def dedupe_single_value_params(query_dict):
+    """Copy of query_dict keeping only the last value of single-value params."""
+    cleaned = query_dict.copy()
+    for key in list(cleaned.keys()):
+        if key in SINGLE_VALUE_QUERY_PARAMS or key.startswith("dynamic_page"):
+            cleaned[key] = cleaned.getlist(key)[-1]
+    return cleaned
+
+
+def saved_filter_path_query(request):
+    """
+    SavedFilter rows are keyed by the request path that was active when they
+    were saved. List and Card/Kanban views of the same page live at different
+    URLs, so a filter saved from one is invisible from the other even though
+    it's the same logical page. The shared nav bar's filter form always
+    submits a "nav_url" field (the nav view's own, mode-independent path) -
+    match on that too, in addition to the exact path, so a saved filter
+    shows up regardless of which view mode it was saved from.
+
+    Tabs (HorillaTabView) and the List/Card/Kanban switch links also
+    propagate a "referrer" query param, meant to let a filter saved from one
+    tab/mode of a page show up on its sibling tabs/modes, which live at yet
+    other paths. An empty referrer isn't a real identifier though - most
+    saved filters are created with no referrer at all - so matching on ""
+    would pull in every such filter from every unrelated view a user
+    happens to visit. Only match a non-empty referrer, and additionally
+    require the saved filter's own path to share the current view's
+    top-level app segment, so two unrelated apps that happen to share an
+    entry point (e.g. both reached from the dashboard) can never leak into
+    each other.
+    """
+    path_query = models.Q(path=request.path)
+    nav_url = request.GET.get("nav_url")
+    if nav_url:
+        path_query |= models.Q(path=nav_url)
+
+    referrer = request.GET.get("referrer", "")
+    if referrer:
+        referrer = "/" + "/".join(referrer.split("/")[3:])
+    if referrer:
+        app_prefix = "/" + request.path.strip("/").split("/")[0] + "/"
+        path_query |= models.Q(referrer=referrer, path__startswith=app_prefix)
+
+    return path_query
+
+
 def get_short_uuid(length: int, prefix: str = "hlv"):
     """
     Short uuid generating method
@@ -312,12 +627,18 @@ def get_short_uuid(length: int, prefix: str = "hlv"):
     return prefix + str(uuid_str[:length]).replace("-", "")
 
 
+# Session-scoped cache entries. Written with no timeout they lived until Redis
+# evicted them, so every visitor's view state accumulated forever; the natural
+# lifetime is the session that keyed them.
+SESSION_CACHE_TIMEOUT = getattr(settings, "SESSION_COOKIE_AGE", 1209600)
+
+
 def update_initial_cache(request: object, cache: dict, view: object):
 
     if cache.get(request.session.session_key + "cbv"):
         cache.get(request.session.session_key + "cbv").update({view: {}})
         return
-    cache.set(request.session.session_key + "cbv", {view: {}})
+    cache.set(request.session.session_key + "cbv", {view: {}}, SESSION_CACHE_TIMEOUT)
     return
 
 
@@ -381,10 +702,19 @@ def sortby(
         result = getattribute(object, attr=sort_key)
         if result is None:
             none_ids.append(object.pk)
+        elif isinstance(result, models.Model):
+            result = str(result)
+        if isinstance(result, str):
+            result = result.lower()
         return result
 
     order = not reverse
-    current_page = query_dict.get(page)
+    page_params = [query_dict.get(page)] + [
+        f"{key}={query_dict.get(key)}"
+        for key in sorted(query_dict)
+        if key.startswith("dynamic_page")
+    ]
+    current_page = "|".join(filter(None, page_params)) or None
     if current_page or is_first_sort:
         order = not order
         if reverse_object.page == current_page and not is_first_sort:
@@ -409,43 +739,81 @@ def sortby(
     return queryset
 
 
+# GET params that vary between the write (a request explicitly submitting a
+# search/filter) and a later bare reload of the same embedded list, so they
+# must be left out of saved_filter_cache_key's identity - see its docstring.
+SAVED_FILTER_CACHE_VOLATILE_PARAMS = {
+    "filter_applied",
+    "search",
+    "referrer",
+    "nav_url",
+    "page",
+    "view_id",
+}
+
+
+def saved_filter_cache_key(request):
+    """
+    Cache key for a request's "last search/filter" on a HorillaListView /
+    HorillaCardView page.
+
+    Keying on request.path alone collides whenever the same URL embeds more
+    than one independent list in a single session - e.g. every pipeline
+    stage's candidate list shares one path
+    (candidate-lists-cbv/, get-offboarding-employees-cbv/, ...) and is only
+    told apart by its own GET params (onboarding_stage_id, recruitment_id,
+    stage_id, ...). Without those in the key, stage A's cached filter (or
+    stage B's, whichever wrote last) got served back to every other stage's
+    plain reload on the same path - each stage's own identifying params
+    got silently swapped for a sibling stage's, filtering its queryset by
+    the wrong stage and rendering "No records found" despite the tab's own
+    badge count being correct.
+
+    Folding in this request's GET params - minus the volatile ones that
+    only ever appear on the "search submitted" request
+    (filter_applied/search themselves, plus referrer/nav_url/page/view_id
+    that ride along with it) - keeps the key symmetric between that write
+    and a later plain-reload read of the same identity: both carry the same
+    identifying params (onboarding_stage_id and friends), so they resolve
+    to the same key, while two different stages' requests - which never
+    share those identifying params - no longer collide.
+    """
+    identity_params = sorted(
+        (key, value)
+        for key, value in request.GET.items()
+        if key not in SAVED_FILTER_CACHE_VOLATILE_PARAMS
+    )
+    return (
+        request.session.session_key + request.path + urlencode(identity_params) + "cbv"
+    )
+
+
 def update_saved_filter_cache(request, cache):
     """
     Method to save filter on cache
     """
-    if cache.get(request.session.session_key + request.path + "cbv"):
-        cache.get(request.session.session_key + request.path + "cbv").update(
+    key = saved_filter_cache_key(request)
+    existing = cache.get(key)
+    if existing:
+        existing.update(
             {
                 "path": request.path,
                 "query_dict": request.GET,
                 # "request": request,
             }
         )
+        cache.set(key, existing, SESSION_CACHE_TIMEOUT)
         return cache
     cache.set(
-        request.session.session_key + request.path + "cbv",
+        key,
         {
             "path": request.path,
             "query_dict": request.GET,
             # "request": request,
         },
+        SESSION_CACHE_TIMEOUT,
     )
     return cache
-
-
-def get_nested_field(model_class: models.Model, field_name: str) -> object:
-    """
-    Recursion function to execute nested field logic
-    """
-    if "__" in field_name:
-        splits = field_name.split("__", 1)
-        related_model_class = getmodelattribute(
-            model_class,
-            splits[0],
-        ).related.related_model
-        return get_nested_field(related_model_class, splits[1])
-    field = getattribute(model_class, field_name)
-    return field
 
 
 def get_field_class_map(model_class: models.Model, bulk_update_fields: list) -> dict:
@@ -456,7 +824,7 @@ def get_field_class_map(model_class: models.Model, bulk_update_fields: list) -> 
     field_class_map = {}
     for field_name in bulk_update_fields:
         field = get_nested_field(model_class, field_name)
-        field_class_map[field_name] = field.field
+        field_class_map[field_name] = field
     return field_class_map
 
 
@@ -543,17 +911,21 @@ def flatten_dict(d, parent_key=""):
     return dict(items)
 
 
-def export_xlsx(json_data, columns, file_name="quick_export"):
+def export_xlsx(json_data, columns, file_name="quick_export", extra_info=None):
     """
-    Quick export method
+    Quick export method with company info, logo, and date range header
     """
-    top_fields = [col[0] for col in columns if len(col) == 2]
+    company_name = extra_info.get("company_name", "") if extra_info else ""
+    date_range = extra_info.get("date_range", "") if extra_info else ""
+    report_title = extra_info.get("report_title", "Export") if extra_info else "Export"
+    logo_path = extra_info.get("logo_path", "") if extra_info else ""  # 👈 company logo
 
+    top_fields = [col[0] for col in columns if len(col) == 2]
     nested_fields = [
         col for col in columns if len(col) == 3 and isinstance(col[2], dict)
     ]
 
-    # Discover dynamic keys for each nested column
+    # --- Discover dynamic keys ---
     dynamic_columns = {}
     for title, key, mappings in nested_fields:
         dyn_keys = set()
@@ -561,8 +933,7 @@ def export_xlsx(json_data, columns, file_name="quick_export"):
             try:
                 nested_data = json.loads(entry.get(key, "[]").replace("'", '"'))
                 for item in nested_data:
-                    flat = flatten_dict(item)
-                    dyn_keys.update(flat.keys())
+                    dyn_keys.update(item.keys())
             except Exception:
                 continue
         dynamic_columns[key] = {
@@ -571,20 +942,61 @@ def export_xlsx(json_data, columns, file_name="quick_export"):
             "display_names": mappings,
         }
 
-    # Create workbook
+    # --- Workbook setup ---
     wb = Workbook()
     ws = wb.active
     ws.title = "Quick Export"
 
-    # Header row
+    total_columns = len(top_fields)
+    for nested_info in dynamic_columns.values():
+        total_columns += len(nested_info["keys"])
+
+    # --- Styles ---
+    header_font_big = Font(size=14, bold=True)
+    title_font = Font(size=14, bold=True, color="FF0000")
+    center_align = Alignment(horizontal="center", vertical="center")
+
+    # --- 1️⃣ Company Name Row ---
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_columns)
+    company_cell = ws.cell(row=1, column=1)
+    company_cell.value = company_name
+    company_cell.font = header_font_big
+    company_cell.alignment = center_align
+
+    # --- 2️⃣ Logo ---
+    if logo_path:
+        try:
+            logo = Image(logo_path)
+            logo.width = 120
+            logo.height = 60
+            ws.add_image(logo, "A1")  # top-left corner
+        except Exception as e:
+            print(f"Logo load failed: {e}")
+
+    # --- 3️⃣ Report Title (merged & centered) ---
+    ws.merge_cells(start_row=2, start_column=1, end_row=3, end_column=total_columns)
+    title_cell = ws.cell(row=2, column=1)
+    title_cell.value = report_title
+    title_cell.font = title_font
+    title_cell.alignment = center_align
+
+    ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=total_columns)
+    date_cell = ws.cell(row=4, column=1)
+    date_cell.value = date_range
+    date_cell.alignment = center_align
+
+    start_data_row = 6
+
     header = top_fields[:]
     for nested_info in dynamic_columns.values():
         for dyn_key in nested_info["keys"]:
             display_name = nested_info["display_names"].get(dyn_key, dyn_key)
             header.append(display_name)
-    ws.append(list(str(title) for title in header))
 
-    # Style definitions
+    ws.append([])
+    ws.append([str(title) for title in header])
+    header_row_index = start_data_row
+
     header_fill = PatternFill(
         start_color="FFD700", end_color="FFD700", fill_type="solid"
     )
@@ -596,16 +1008,14 @@ def export_xlsx(json_data, columns, file_name="quick_export"):
         bottom=Side(style="thin"),
     )
 
-    # Apply styles to header
     for col_idx, title in enumerate(header, 1):
-        cell = ws.cell(row=1, column=col_idx)
+        cell = ws.cell(row=header_row_index, column=col_idx)
         cell.font = bold_font
         cell.fill = header_fill
         cell.border = thin_border
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = center_align
 
-    row_index = 2
-
+    row_index = header_row_index + 1
     for entry in json_data:
         all_nested_records = []
         max_nested_rows = 1
@@ -622,28 +1032,22 @@ def export_xlsx(json_data, columns, file_name="quick_export"):
 
         for i in range(max_nested_rows):
             row = []
-
-            # Top fields
             for tf in top_fields:
                 row.append(entry.get(tf, "") if i == 0 else "")
-
-            # Nested fields
             for idx, (key, nested_info) in enumerate(dynamic_columns.items()):
                 nested_data = all_nested_records[idx]
-                flat_ans = flatten_dict(nested_data[i]) if i < len(nested_data) else {}
+                nested_item = nested_data[i] if i < len(nested_data) else {}
                 for dyn_key in nested_info["keys"]:
-                    row.append(flat_ans.get(dyn_key, ""))
+                    row.append(nested_item.get(dyn_key, ""))
+            # Text carried through from user-entered data can execute when
+            # the workbook is opened; guard it on the way in.
+            ws.append([safe_cell(value) for value in row])
 
-            ws.append(row)
-
-            # Apply border to row
             for col_idx in range(1, len(row) + 1):
-                cell = ws.cell(row=row_index, column=col_idx)
-                cell.border = thin_border
-
+                ws.cell(row=row_index, column=col_idx).border = thin_border
             row_index += 1
 
-        # Merge top fields if needed
+        # Merge top-level fields when multiple nested rows exist
         if max_nested_rows > 1:
             for col_idx in range(1, len(top_fields) + 1):
                 ws.merge_cells(
@@ -652,40 +1056,24 @@ def export_xlsx(json_data, columns, file_name="quick_export"):
                     end_row=row_index - 1,
                     end_column=col_idx,
                 )
-                top_cell = ws.cell(row=row_index - max_nested_rows, column=col_idx)
-                top_cell.alignment = Alignment(vertical="center")
-                top_cell.border = thin_border  # Re-apply border
+                ws.cell(row=row_index - max_nested_rows, column=col_idx).alignment = (
+                    Alignment(vertical="center")
+                )
 
-    # Auto-fit column widths
     for col in ws.columns:
         max_len = max(len(str(cell.value or "")) for cell in col)
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
 
-    # Output file
     output = BytesIO()
     wb.save(output)
     output.seek(0)
-
     response = HttpResponse(
         output.read(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{file_name}.xlsx"'
     return response
-
-
-from django.apps import apps
-from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Model
-from django.db.models.fields.related import (
-    ForeignKey,
-    ManyToManyRel,
-    ManyToOneRel,
-    OneToOneField,
-    OneToOneRel,
-)
-from openpyxl import Workbook
 
 
 def get_verbose_name_from_field_path(model, field_path, import_mapping):
@@ -751,7 +1139,7 @@ def generate_import_excel(
     ws.append(headers)
 
     # Apply styles to header row
-    for col_num, _ in enumerate(headers, 1):
+    for col_num, _unused in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_num)
         cell.font = bold_font
         cell.fill = header_fill
@@ -766,7 +1154,7 @@ def generate_import_excel(
             str(getattribute(obj, import_mapping.get(field, field)))
             for field in import_fields
         ]
-        ws.append(row)
+        ws.append([safe_cell(value) for value in row])
     ws.freeze_panes = "A2"
     ws.freeze_panes = "B2"
     return wb
@@ -914,3 +1302,40 @@ def assign_related(
                 instance = instances[0]
                 reverse_obj_dict.update({reverse_field: instance})
     return reverse_obj_dict
+
+
+def get_nested_field(model, lookup):
+    """
+    Get field from model by lookup
+    """
+
+    field = None
+    attrs = lookup.split("__")
+    try:
+        for attr in attrs:
+            field = model._meta.get_field(attr)
+
+            if isinstance(field, (OneToOneRel, ManyToOneRel, ManyToManyRel)):
+                model = field.related_model
+            elif hasattr(field, "related_model"):
+                model = field.related_model
+            else:
+                break
+
+    except Exception as e:
+        field = None
+
+    return field
+
+
+def set_nested_attr(obj, attr_path, value):
+    """
+    Set attribute on nested related model using __ lookup notation.
+    """
+
+    parts = attr_path.split("__")
+    for part in parts[:-1]:
+        obj = getattr(obj, part)
+
+    setattr(obj, parts[-1], value)
+    obj.save()

@@ -1,0 +1,86 @@
+{% extends 'index.html' %}
+{% load i18n %}
+{% block content %}
+    <style>
+        .exp-wrap { max-width: 640px; margin: 0 auto; padding: 16px 0 40px; }
+        .exp-card { background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; }
+        .exp-card.exp-error { border-color: #d93025; }
+        .exp-label { display: block; font-size: 15px; font-weight: 500; color: #202124; margin-bottom: 4px; }
+        .exp-label .exp-req { color: #d93025; }
+        .exp-help { font-size: 13px; color: #444; margin: 6px 0 10px; line-height: 1.5; }
+        .exp-small { font-size: 12px; color: #70757a; margin: 4px 0 10px; }
+        .exp-input { width: 100%; max-width: 100%; height: 38px; padding: 0 2px; border: 0; border-bottom: 1px solid #c8c8c8; background: transparent; font-size: 14px; color: #202124; outline: none; }
+        .exp-input:focus { border-bottom: 2px solid #e54f38; }
+        .exp-input.exp-short { max-width: 300px; }
+        .exp-msg { color: #d93025; font-size: 12px; margin-top: 6px; }
+        .exp-file-btn { display: inline-block; padding: 8px 16px; border: 1px solid #dadce0; border-radius: 5px; color: #1a73e8; font-size: 14px; cursor: pointer; background: #fff; }
+        .exp-files { margin-top: 8px; font-size: 13px; color: #333; }
+        .exp-submit { height: 38px; padding: 0 22px; border: 0; border-radius: 5px; background: #e54f38; color: #fff; font-size: 14px; cursor: pointer; }
+    </style>
+    <div class="oh-wrapper">
+        <div class="exp-wrap">
+            <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 14px">{% trans "Expense Submission" %}</h2>
+            <form method="post" enctype="multipart/form-data" hx-boost="false" action="{% url 'expense-submit' %}">
+                {% csrf_token %}
+                {% if errors.general %}<div class="exp-card exp-error"><div class="exp-msg">{{ errors.general }}</div></div>{% endif %}
+
+                <div class="exp-card{% if errors.expense_date %} exp-error{% endif %}">
+                    <label class="exp-label" for="exp-date">{% trans "Expense Date" %} <span class="exp-req">*</span></label>
+                    <div class="exp-small">{% trans "Date" %}</div>
+                    <input class="exp-input exp-short" type="date" id="exp-date" name="expense_date" value="{{ values.expense_date|default:today }}" required />
+                    {% if errors.expense_date %}<div class="exp-msg">{{ errors.expense_date }}</div>{% endif %}
+                </div>
+
+                <div class="exp-card{% if errors.vendor %} exp-error{% endif %}">
+                    <label class="exp-label" for="exp-vendor">{% trans "Vendor / Company" %} <span class="exp-req">*</span></label>
+                    <input class="exp-input exp-short" type="text" id="exp-vendor" name="vendor" maxlength="150" placeholder="{% trans 'Your answer' %}" value="{{ values.vendor }}" required />
+                    {% if errors.vendor %}<div class="exp-msg">{{ errors.vendor }}</div>{% endif %}
+                </div>
+
+                <div class="exp-card{% if errors.description %} exp-error{% endif %}">
+                    <label class="exp-label" for="exp-desc">{% trans "Description of Expense" %} <span class="exp-req">*</span></label>
+                    <input class="exp-input" type="text" id="exp-desc" name="description" maxlength="500" placeholder="{% trans 'Your answer' %}" value="{{ values.description }}" required />
+                    {% if errors.description %}<div class="exp-msg">{{ errors.description }}</div>{% endif %}
+                </div>
+
+                <div class="exp-card{% if errors.amount %} exp-error{% endif %}">
+                    <label class="exp-label" for="exp-amount">{% trans "Expense Amount (In Local Currency, not in CAD)" %} <span class="exp-req">*</span></label>
+                    <div class="exp-help">{% trans "Only enter a number value," %} <strong>{% trans "DO NOT" %}</strong> {% trans "enter decimal numbers (round up to nearest whole number)" %}</div>
+                    <input class="exp-input exp-short" type="number" id="exp-amount" name="amount" min="1" step="1" inputmode="numeric" placeholder="{% trans 'Your answer' %}" value="{{ values.amount }}" required />
+                    {% if errors.amount %}<div class="exp-msg">{{ errors.amount }}</div>{% endif %}
+                </div>
+
+                <div class="exp-card{% if errors.proofs %} exp-error{% endif %}">
+                    <label class="exp-label">{% trans "Proof of Purchase" %} <span class="exp-req">*</span></label>
+                    <div class="exp-help">{% trans "Upload a file that shows proof of the expense (screenshot, picture etc)" %}</div>
+                    <div class="exp-small">{% trans "Upload up to 10 supported files: PDF, document, image, or spreadsheet. Max 10 MB per file." %}</div>
+                    <label class="exp-file-btn" for="exp-proofs"><i class="fa-solid fa-arrow-up-from-bracket"></i> {% trans "Add file" %}</label>
+                    <input type="file" id="exp-proofs" name="proofs" multiple style="display: none" accept=".pdf,.doc,.docx,.txt,.rtf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.xls,.xlsx,.csv,.ods" />
+                    <div class="exp-files" id="exp-files"></div>
+                    {% if errors.proofs %}<div class="exp-msg">{{ errors.proofs }}</div>{% endif %}
+                </div>
+
+                <div style="display: flex; gap: 10px; align-items: center">
+                    <button type="submit" class="exp-submit">{% trans "Submit" %}</button>
+                    <a href="{% url 'expense-log' %}" style="font-size: 13px; color: #666">{% trans "View Expense Log" %}</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+        (function () {
+            var input = document.getElementById("exp-proofs");
+            var box = document.getElementById("exp-files");
+            if (!input || !box) return;
+            input.addEventListener("change", function () {
+                var names = [];
+                var tooMany = input.files.length > 10;
+                for (var i = 0; i < input.files.length; i++) {
+                    var mb = (input.files[i].size / 1048576).toFixed(1);
+                    names.push(input.files[i].name + " (" + mb + " MB)");
+                }
+                box.textContent = tooMany ? "Maximum 10 files allowed." : names.join(", ");
+            });
+        })();
+    </script>
+{% endblock %}

@@ -2,7 +2,7 @@
 Smart Workspace attendance services.
 
 Every entry point here is used by both the web card and the desktop API, so the
-two can never behave differently. Rules implemented:
+two can never behave differently. Rules implemented (see WORKSPACE_IMPLEMENTATION_PLAN.md):
 
 D2  Workspace sign-outs and self-corrections count for payroll immediately
     (only the Attendance rows Workspace touches; HR overtime approval unchanged).
@@ -54,8 +54,7 @@ def _lock_employee(employee):
     The lock only needs the employee's own row.
     """
     list(
-        type(employee)
-        ._base_manager.select_for_update(of=("self",))
+        type(employee)._base_manager.select_for_update(of=("self",))
         .filter(pk=employee.pk)
         .values_list("pk", flat=True)
     )
@@ -66,9 +65,7 @@ def _check_source(source):
         raise WorkspaceError(_("Unknown source."), code="bad_source")
 
 
-def _record_event(
-    employee, action, work_date, reported_time, source, key="", attendance=None
-):
+def _record_event(employee, action, work_date, reported_time, source, key="", attendance=None):
     return WorkspaceAttendanceEvent.objects.create(
         employee=employee,
         attendance=attendance,
@@ -111,70 +108,46 @@ def serialize_state(state):
     return data
 
 
-def _replay(existing, action):
-    """The stored answer for a repeated key, or a conflict if it was used for another action."""
-    if existing.action != action:
-        raise WorkspaceError(
-            _("This Idempotency-Key was already used for a different action."),
-            code="idempotency_conflict",
-            status=409,
-        )
-    response = dict(existing.response)
-    response["replayed"] = True
-    return existing.status_code, response
-
-
 def run_idempotent(employee, key, action, func):
     """
     Run func() once per (employee, key). A repeated key returns the stored answer.
     func must return (status_code, response_dict) or raise WorkspaceError.
     Without a key the action simply runs (the web card relies on state checks).
-
-    The employee row is locked before the key is looked up, in the same
-    transaction as func(), so a retry that arrives while the first request is
-    still running waits for it and then replays its answer instead of running
-    the action again on the new state. Answers older than
-    WORKSPACE_IDEMPOTENCY_DAYS are removed on each keyed request of the employee,
-    so they are not replayed and the key can be used again.
     """
     if not key:
         return func()
     if not IDEMPOTENCY_KEY_RE.match(key):
         raise WorkspaceError(_("Invalid Idempotency-Key."), code="bad_idempotency_key")
+    existing = WorkspaceIdempotencyKey.objects.filter(employee=employee, key=key).first()
+    if existing is not None:
+        if existing.action != action:
+            raise WorkspaceError(
+                _("This Idempotency-Key was already used for a different action."),
+                code="idempotency_conflict",
+                status=409,
+            )
+        response = dict(existing.response)
+        response["replayed"] = True
+        return existing.status_code, response
     try:
         with transaction.atomic():
-            _lock_employee(employee)
-            # drop this employee's expired answers (the retention window)
-            WorkspaceIdempotencyKey.objects.filter(
-                employee=employee, created_at__lt=_idempotency_limit()
-            ).delete()
-            existing = WorkspaceIdempotencyKey.objects.filter(
-                employee=employee, key=key
-            ).first()
-            if existing is not None:
-                return _replay(existing, action)
             status, response = func()
             WorkspaceIdempotencyKey.objects.create(
-                employee=employee,
-                key=key,
-                action=action,
-                status_code=status,
-                response=response,
+                employee=employee, key=key, action=action, status_code=status, response=response
             )
     except IntegrityError:
-        # Only reachable without row locks (e.g. SQLite): a parallel request with
-        # the same key won the race, so return its answer.
-        existing = WorkspaceIdempotencyKey.objects.filter(
-            employee=employee, key=key
-        ).first()
-        if existing is None:
-            raise
-        return _replay(existing, action)
+        # a parallel request with the same key won the race; return its answer
+        existing = WorkspaceIdempotencyKey.objects.get(employee=employee, key=key)
+        response = dict(existing.response)
+        response["replayed"] = True
+        return existing.status_code, response
     return status, response
 
 
-def _idempotency_limit():
-    return timezone.now() - timedelta(days=conf.get("WORKSPACE_IDEMPOTENCY_DAYS"))
+def cleanup_idempotency_keys():
+    """Delete stored keys older than WORKSPACE_IDEMPOTENCY_DAYS (scheduled daily)."""
+    limit = timezone.now() - timedelta(days=conf.get("WORKSPACE_IDEMPOTENCY_DAYS"))
+    return WorkspaceIdempotencyKey.objects.filter(created_at__lt=limit).delete()[0]
 
 
 # --------------------------------------------------------------------------- state
@@ -201,28 +174,17 @@ def sign_in(employee, source, client_ip=None, coords=None, key=""):
             try:
                 adapter.check_allowed(employee, client_ip=client_ip, coords=coords)
             except AttendanceActionError as error:
-                raise WorkspaceError(
-                    error.args[0], code=error.code, status=403
-                ) from error
+                raise WorkspaceError(error.args[0], code=error.code, status=403) from error
             now = timezone.localtime()
             attendance = adapter.sign_in(employee, now)
             adapter.clear_away(employee)
-            _record_event(
-                employee,
-                "sign_in",
-                attendance.attendance_date,
-                now,
-                source,
-                key,
-                attendance,
-            )
+            _record_event(employee, "sign_in", attendance.attendance_date, now, source, key, attendance)
             _touch_meta(attendance, source)
             state = adapter.get_state(employee)
             return 200, {
                 "ok": True,
                 "changed": True,
-                "message": _("Signed in at %(time)s.")
-                % {"time": now.strftime("%H:%M")},
+                "message": _("Signed in at %(time)s.") % {"time": now.strftime("%H:%M")},
                 "state": serialize_state(state),
             }
 
@@ -247,41 +209,24 @@ def sign_out(employee, source, client_ip=None, coords=None, key=""):
             try:
                 adapter.check_allowed(employee, client_ip=client_ip, coords=coords)
             except AttendanceActionError as error:
-                raise WorkspaceError(
-                    error.args[0], code=error.code, status=403
-                ) from error
+                raise WorkspaceError(error.args[0], code=error.code, status=403) from error
             now = timezone.localtime()
             if state["status"] == "on_break":
                 adapter.end_break(employee, now)
-                _record_event(
-                    employee, "break_end", state["work_date"], now, source, key
-                )
+                _record_event(employee, "break_end", state["work_date"], now, source, key)
             attendance = adapter.sign_out(employee, now)
             if attendance is None:
-                raise WorkspaceError(
-                    _("No open sign in was found to close."),
-                    code="nothing_open",
-                    status=409,
-                )
+                raise WorkspaceError(_("No open sign in was found to close."), code="nothing_open", status=409)
             adapter.clear_away(employee)
             if conf.get("WORKSPACE_AUTO_VALIDATE"):
                 adapter.mark_valid_for_payroll(attendance)
-            _record_event(
-                employee,
-                "sign_out",
-                attendance.attendance_date,
-                now,
-                source,
-                key,
-                attendance,
-            )
+            _record_event(employee, "sign_out", attendance.attendance_date, now, source, key, attendance)
             _touch_meta(attendance, source)
             state = adapter.get_state(employee)
             return 200, {
                 "ok": True,
                 "changed": True,
-                "message": _("Signed out at %(time)s.")
-                % {"time": now.strftime("%H:%M")},
+                "message": _("Signed out at %(time)s.") % {"time": now.strftime("%H:%M")},
                 "state": serialize_state(state),
             }
 
@@ -299,19 +244,13 @@ def start_break(employee, reason, note, source, key=""):
             try:
                 brk, created = adapter.start_break(employee, reason, note, now)
             except AttendanceActionError as error:
-                raise WorkspaceError(
-                    error.args[0], code=error.code, status=409
-                ) from error
+                raise WorkspaceError(error.args[0], code=error.code, status=409) from error
             if created:
-                _record_event(
-                    employee, "break_start", brk.attendance_date, now, source, key
-                )
+                _record_event(employee, "break_start", brk.attendance_date, now, source, key)
             return 200, {
                 "ok": True,
                 "changed": created,
-                "message": (
-                    _("Break started.") if created else _("You are already on a break.")
-                ),
+                "message": _("Break started.") if created else _("You are already on a break."),
                 "state": serialize_state(adapter.get_state(employee)),
             }
 
@@ -328,17 +267,11 @@ def end_break(employee, source, key=""):
             now = timezone.localtime()
             brk = adapter.end_break(employee, now)
             if brk is not None:
-                _record_event(
-                    employee, "break_end", brk.attendance_date, now, source, key
-                )
+                _record_event(employee, "break_end", brk.attendance_date, now, source, key)
             return 200, {
                 "ok": True,
                 "changed": brk is not None,
-                "message": (
-                    _("Welcome back. Break ended.")
-                    if brk
-                    else _("You are not on a break.")
-                ),
+                "message": _("Welcome back. Break ended.") if brk else _("You are not on a break."),
                 "state": serialize_state(adapter.get_state(employee)),
             }
 
@@ -358,9 +291,7 @@ def set_away(employee, away, source, key=""):
                 try:
                     adapter.set_away(employee, now)
                 except AttendanceActionError as error:
-                    raise WorkspaceError(
-                        error.args[0], code=error.code, status=409
-                    ) from error
+                    raise WorkspaceError(error.args[0], code=error.code, status=409) from error
                 _record_event(employee, "away", state["work_date"], now, source, key)
             else:
                 adapter.clear_away(employee)
@@ -375,50 +306,35 @@ def set_away(employee, away, source, key=""):
     return run_idempotent(employee, key, "away" if away else "back", do)
 
 
-def correct_times(
-    employee, work_date, sign_in_time, sign_out_time, actor, source, key=""
-):
+def correct_times(employee, work_date, sign_in_time, sign_out_time, actor, source, key=""):
     """
     Fix My Times. sign_in_time / sign_out_time are datetime.time or None.
     Effective immediately; no approval. Every change is logged permanently.
     """
     _check_source(source)
     adapter = get_adapter()
-    if sign_in_time is None and sign_out_time is None:
+    today = timezone.localdate()
+    window = conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS")
+    if work_date > today:
+        raise WorkspaceError(_("You cannot fix times for a future day."), code="future")
+    if work_date < today - timedelta(days=window):
         raise WorkspaceError(
-            _("Enter a sign in or sign out time."), code="nothing_to_change"
+            _("You can fix your own times for the last %(days)s days only. For older days, contact HR.")
+            % {"days": window},
+            code="outside_window",
         )
+    if sign_in_time is None and sign_out_time is None:
+        raise WorkspaceError(_("Enter a sign in or sign out time."), code="nothing_to_change")
 
     def do():
-        # date checks run for new corrections only, so a retry after midnight
-        # still replays a correction that was saved before midnight
-        today = timezone.localdate()
-        window = conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS")
-        if work_date > today:
-            raise WorkspaceError(
-                _("You cannot fix times for a future day."), code="future"
-            )
-        if work_date < today - timedelta(days=window):
-            raise WorkspaceError(
-                _(
-                    "You can fix your own times for the last %(days)s days only. For older days, contact HR."
-                )
-                % {"days": window},
-                code="outside_window",
-            )
         with transaction.atomic():
             _lock_employee(employee)
             now = timezone.localtime()
             try:
-                attendance, changes = adapter.correct_times(
-                    employee, work_date, sign_in_time, sign_out_time, now
-                )
+                attendance, changes = adapter.correct_times(employee, work_date, sign_in_time, sign_out_time, now)
             except AttendanceActionError as error:
                 raise WorkspaceError(error.args[0], code=error.code) from error
-            if (
-                conf.get("WORKSPACE_AUTO_VALIDATE")
-                and attendance.attendance_clock_out is not None
-            ):
+            if conf.get("WORKSPACE_AUTO_VALIDATE") and attendance.attendance_clock_out is not None:
                 adapter.mark_valid_for_payroll(attendance)
             for field, old, new in changes:
                 AttendanceCorrectionLog.objects.create(
@@ -432,19 +348,12 @@ def correct_times(
                     actor=actor,
                     idempotency_key=key or "",
                 )
-            # the corrected time on its real calendar date (an overnight sign
-            # out is stored on the next day; work_date stays the shift date)
-            if sign_out_time is not None:
-                reported_date = attendance.attendance_clock_out_date or work_date
-                reported = sign_out_time
-            else:
-                reported_date = attendance.attendance_clock_in_date or work_date
-                reported = sign_in_time
+            reported = sign_out_time or sign_in_time
             _record_event(
                 employee,
                 "correction",
                 work_date,
-                timezone.make_aware(datetime.combine(reported_date, reported)),
+                timezone.make_aware(datetime.combine(work_date, reported)),
                 source,
                 key,
                 attendance,
@@ -453,12 +362,9 @@ def correct_times(
             return 200, {
                 "ok": True,
                 "changed": bool(changes),
-                "message": (
-                    _("Times saved for %(day)s.")
-                    % {"day": work_date.strftime("%d %b %Y")}
-                    if changes
-                    else _("Nothing changed.")
-                ),
+                "message": _("Times saved for %(day)s.") % {"day": work_date.strftime("%d %b %Y")}
+                if changes
+                else _("Nothing changed."),
                 "changes": [{"field": f, "old": o, "new": n} for f, o, n in changes],
                 "state": serialize_state(adapter.get_state(employee)),
             }
@@ -470,9 +376,7 @@ def recent_days(employee, days=None):
     """Attendance of the last N days for the Fix My Times list (newest first)."""
     days = days or conf.get("WORKSPACE_CORRECTION_WINDOW_DAYS")
     today = timezone.localdate()
-    rows = get_adapter().attendance_by_day(
-        employee, today - timedelta(days=days), today
-    )
+    rows = get_adapter().attendance_by_day(employee, today - timedelta(days=days), today)
     result = []
     for offset in range(days + 1):
         day = today - timedelta(days=offset)
@@ -483,9 +387,7 @@ def recent_days(employee, days=None):
                 "sign_in": row.get("sign_in"),
                 "sign_out": row.get("sign_out"),
                 "worked": row.get("worked"),
-                "missing_sign_out": bool(
-                    row.get("sign_in") and not row.get("sign_out") and day < today
-                ),
+                "missing_sign_out": bool(row.get("sign_in") and not row.get("sign_out") and day < today),
             }
         )
     return result

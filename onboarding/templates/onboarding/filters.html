@@ -13,11 +13,7 @@
             {{ rec_filter_obj.form.recruitment_managers }}
           </div>
           <div class="oh-input-group">
-            <label class="oh-label">{% trans 'Start Date' %}</label>
-            {{ rec_filter_obj.form.start_date }}
-          </div>
-          <div class="oh-input-group">
-            <label class="oh-label">{% trans 'Is Published' %}</label>
+            <label class="oh-label">{% trans 'Published' %}</label>
             {{ rec_filter_obj.form.is_published }}
           </div>
         </div>
@@ -28,11 +24,7 @@
             {{ rec_filter_obj.form.company_id }}
           </div>
           <div class="oh-input-group">
-            <label class="oh-label">{% trans 'End Date' %}</label>
-            {{ rec_filter_obj.form.end_date }}
-          </div>
-          <div class="oh-input-group">
-            <label class="oh-label">{% trans 'Is closed' %}</label>
+            <label class="oh-label">{% trans 'Closed' %}</label>
             {{ rec_filter_obj.form.closed }}
           </div>
         </div>
@@ -63,5 +55,5 @@
   </div>
 </div>
 <div class="oh-dropdown__filter-footer">
-  <button class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton" id="">{% trans 'Filter' %}</button>
+  <button class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton" id="">{% trans 'Apply' %}</button>
 </div>

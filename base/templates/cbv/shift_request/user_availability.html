@@ -1,0 +1,16 @@
+{% load basefilters %}
+{% load i18n %}
+
+    {% if instance.reallocate_approved == True %}
+      <div class="d-flex align-items-center justify-content-start text-start">
+        <span class=" link-success ">{% trans "Available" %}</span>
+      </div>
+    {% elif instance.reallocate_canceled == True %}
+      <div class="d-flex align-items-center justify-content-start text-start">
+        <span class=" link-danger ">{% trans "Not Available" %}</span>
+      </div>
+    {% else %}
+      <div class="d-flex align-items-center justify-content-start text-start">
+        <span class=" link-secondary ">{% trans "Not Marked" %}</span>
+      </div>
+    {% endif %}

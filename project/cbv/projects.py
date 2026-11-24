@@ -13,10 +13,10 @@ from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import ListView
 
+from base.methods import has_export_access
+from base.models import Company
 from employee.models import Employee
-from horilla.horilla_middlewares import _thread_locals
-from horilla.http import HorillaRedirect
-from horilla_views.cbv_methods import login_required, permission_required
+from horilla_views.cbv_methods import login_required
 from horilla_views.generic.cbv.views import (
     HorillaCardView,
     HorillaFormView,
@@ -27,7 +27,7 @@ from horilla_views.generic.cbv.views import (
 from project.cbv.cbv_decorators import is_projectmanager_or_member_or_perms
 from project.filters import ProjectFilter
 from project.forms import ProjectForm
-from project.methods import any_project_manager, any_project_member
+from project.methods import any_project_manager
 from project.models import Project
 
 
@@ -58,6 +58,21 @@ class ProjectsNavView(HorillaNavView):
     group_by_fields = ["status", "is_active"]
     template_name = "cbv/projects/project_nav.html"
     filter_body_template = "cbv/projects/filter.html"
+    # Modern slide-over filter panel (generic/horilla_nav.html's own
+    # {% if modern_filter %} branch) -- same treatment as every other
+    # panel this session. ProjectFilter.ajax_fields carries the
+    # AJAX-loaded managers combobox this needs.
+    modern_filter = True
+
+    # Mirrors ProjectsList.nested_group_by_fields
+    nested_group_by_fields = [
+        "title",
+        "status",
+        "is_active",
+        "start_date",
+        "end_date",
+        ("company_id", _("Company")),
+    ]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -70,19 +85,15 @@ class ProjectsNavView(HorillaNavView):
             self.actions = [
                 {
                     "action": _("Import"),
-                    "attrs": """
+                    "attrs": f"""
                         id="importProject"
+                        href="#"
                         data-toggle="oh-modal-toggle"
-                        data-target="#projectImport"
+                        data-target="#objectCreateModal"
+                        hx-get="{reverse('project-import')}"
+                        hx-target="#objectCreateModalTarget"
                         style="cursor: pointer;"
-                        """,
-                },
-                {
-                    "action": _("Export"),
-                    "attrs": """
-                        id="exportProject"
-                        style="cursor: pointer;"
-                        """,
+                    """,
                 },
                 {
                     "action": _("Archive"),
@@ -91,7 +102,7 @@ class ProjectsNavView(HorillaNavView):
                         style="cursor: pointer;"
                         onclick="validateProjectIds(event);"
                         data-action="archive"
-                        """,
+                    """,
                 },
                 {
                     "action": _("Un-archive"),
@@ -100,7 +111,7 @@ class ProjectsNavView(HorillaNavView):
                         style="cursor: pointer;"
                         onclick="validateProjectIds(event);"
                         data-action="unarchive"
-                        """,
+                    """,
                 },
                 {
                     "action": _("Delete"),
@@ -110,35 +121,46 @@ class ProjectsNavView(HorillaNavView):
                         id="deleteProject"
                         onclick="validateProjectIds(event);"
                         style="cursor: pointer; color:red !important"
-                        """,
+                    """,
                 },
             ]
+            if has_export_access(self.request, Project):
+                self.actions.insert(
+                    1,
+                    {
+                        "action": _("Export"),
+                        "attrs": """
+                            id="exportProject"
+                            style="cursor: pointer;"
+                        """,
+                    },
+                )
         self.view_types = [
             {
                 "type": "list",
                 "icon": "list-outline",
                 "url": reverse("project-list-view"),
-                "attrs": """
-                        title ='List'
-                        """,
+                "attrs": f"""
+                    title ='{_("List")}'
+                """,
             },
             {
                 "type": "card",
                 "icon": "grid-outline",
                 "url": reverse("project-card-view"),
-                "attrs": """
-                          title ='Card'
-                          """,
+                "attrs": f"""
+                    title ='{_("Card")}'
+                """,
             },
         ]
         if self.request.user.has_perm("project.add_project"):
             self.create_attrs = f"""
-                                onclick = "event.stopPropagation();"
-                                data-toggle="oh-modal-toggle"
-                                data-target="#genericModal"
-                                hx-target="#genericModalBody"
-                                hx-get="{reverse('create-project')}"
-                                """
+                onclick = "event.stopPropagation();"
+                data-toggle="oh-modal-toggle"
+                data-target="#genericModal"
+                hx-target="#genericModalBody"
+                hx-get="{reverse('create-project')}"
+            """
 
 
 @method_decorator(login_required, name="dispatch")
@@ -152,15 +174,23 @@ class ProjectsList(HorillaListView):
 
     model = Project
     filter_class = ProjectFilter
+    quick_export = False
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        active = (
+            True
+            if self.request.GET.get("is_active", True)
+            in ["unknown", "True", "true", True]
+            else False
+        )
+        queryset = queryset.filter(is_active=active)
         if not self.request.user.has_perm("project.view_project"):
             employee = self.request.user.employee_get
             task_filter = queryset.filter(
                 Q(task__task_members=employee) | Q(task__task_managers=employee)
             )
-            project_filter = queryset.filter(Q(managers=employee) | Q(members=employee))
+            project_filter = queryset.filter(Q(managers=employee))
             queryset = task_filter | project_filter
         return queryset.distinct()
 
@@ -170,19 +200,27 @@ class ProjectsList(HorillaListView):
         if self.request.user.is_superuser:
             self.action_method = "actions"
 
+    header_attrs = {
+        "action": """style="width:150px !important;" """,
+    }
+
     @cached_property
     def columns(self):
         get_field = self.model()._meta.get_field
-        return [
+        columns = [
             (get_field("title").verbose_name, "title"),
             (get_field("managers").verbose_name, "get_managers"),
-            (get_field("members").verbose_name, "get_members"),
             (get_field("status").verbose_name, "get_status_display"),
             (get_field("start_date").verbose_name, "start_date"),
             (get_field("end_date").verbose_name, "end_date"),
             (get_field("document").verbose_name, "get_document_html"),
             (get_field("description").verbose_name, "get_description"),
         ]
+        # A single company is implied when one is selected, so the column is
+        # only useful when projects of every company are listed together.
+        if self.request.session.get("selected_company") == "all":
+            columns.append((_("Company"), "get_company_name"))
+        return columns
 
     @cached_property
     def sortby_mapping(self):
@@ -211,7 +249,6 @@ class ProjectsList(HorillaListView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('in_progress');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -222,7 +259,6 @@ class ProjectsList(HorillaListView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('completed');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -233,18 +269,16 @@ class ProjectsList(HorillaListView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('on_hold');
                 $('#applyFilter').click();
-
             "
             """,
         ),
         (
             "cancelled--dot",
-            _("Completed"),
+            _("Cancelled"),
             """
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('cancelled');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -255,7 +289,6 @@ class ProjectsList(HorillaListView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('expired');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -263,9 +296,23 @@ class ProjectsList(HorillaListView):
 
     row_status_class = "status-{status}"
 
-    row_attrs = """
-                {redirect}
-                """
+    row_attrs = """ {redirect} """
+
+    # Mirrors ProjectsNavView.nested_group_by_fields below -- List and
+    # Nav are separate classes/templates (see employee/cbv/employees.py's
+    # EmployeesList/EmployeeNav for the same split). "Project Managers"
+    # (managers) is deliberately left out: it's a ManyToManyField, and
+    # the nested engine's `values(*fields).annotate(Count("pk"))`
+    # aggregate would fan out one row per related manager, double-
+    # counting projects with more than one manager assigned.
+    nested_group_by_fields = [
+        "title",
+        "status",
+        "is_active",
+        "start_date",
+        "end_date",
+        ("company_id", _("Company")),
+    ]
 
 
 @method_decorator(login_required, name="dispatch")
@@ -277,6 +324,7 @@ class ProjectFormView(HorillaFormView):
 
     model = Project
     form_class = ProjectForm
+    template_name = "cbv/projects/project_form.html"
     new_display_title = _("Create") + " " + model._meta.verbose_name
 
     def __init__(self, **kwargs):
@@ -292,6 +340,16 @@ class ProjectFormView(HorillaFormView):
             self.form_class.verbose_name = (
                 _("Update") + " " + self.model._meta.verbose_name
             )
+
+        dynamic_company_id = self.request.GET.get("dynamic_company")
+        if dynamic_company_id and not self.form.instance.pk:
+            company = Company.objects.filter(id=dynamic_company_id).first()
+            self.form.fields["company_id"].initial = company
+            self.form.fields["managers"].queryset = (
+                Employee.objects.filter(employee_work_info__company_id=company)
+                if company
+                else Employee.objects.none()
+            )
         return context
 
     def form_valid(self, form: ProjectForm) -> HttpResponse:
@@ -302,8 +360,9 @@ class ProjectFormView(HorillaFormView):
                 if HTTP_REFERER and "task-view/" in HTTP_REFERER:
                     form.save()
                     messages.success(self.request, message)
-                    return HorillaRedirect(self.request)
-
+                    return self.HttpResponse(
+                        "<script>window.location.reload()</script>"
+                    )
             else:
                 message = _("New project created")
             form.save()
@@ -331,63 +390,79 @@ class ProjectCardView(HorillaCardView):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        active = (
+            True
+            if self.request.GET.get("is_active", True)
+            in ["unknown", "True", "true", True]
+            else False
+        )
+        queryset = queryset.filter(is_active=active)
         if not self.request.user.has_perm("project.view_project"):
             employee = self.request.user.employee_get
             task_filter = queryset.filter(
                 Q(task__task_members=employee) | Q(task__task_managers=employee)
             )
-            project_filter = queryset.filter(Q(managers=employee) | Q(members=employee))
+            project_filter = queryset.filter(Q(managers=employee))
             queryset = task_filter | project_filter
         return queryset.distinct()
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.search_url = reverse("project-card-view")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
         if (
             self.request.user.has_perm("project.change_project")
             or self.request.user.has_perm("project.delete_project")
             or any_project_manager(self.request.user)
-            or any_project_member(self.request.user)
         ):
             self.actions = [
                 {
-                    "action": "Edit",
+                    "action": _("Edit"),
                     "accessibility": "project.cbv.accessibility.project_manager_accessibility",
                     "attrs": """
-                            hx-get='{get_update_url}'
-                            hx-target='#genericModalBody'
-                            data-toggle="oh-modal-toggle"
-                            data-target="#genericModal"
-                            class="oh-dropdown__link"
-                            """,
+                        hx-get='{get_update_url}'
+                        hx-target='#genericModalBody'
+                        data-toggle="oh-modal-toggle"
+                        data-target="#genericModal"
+                        class="oh-dropdown__link"
+                    """,
                 },
                 {
                     "action": "archive_status",
                     "accessibility": "project.cbv.accessibility.project_manager_accessibility",
                     "attrs": """
-                    href="{get_archive_url}"
-                    onclick="return confirm('Do you want to {archive_status} this project?')"
-                    class="oh-dropdown__link"
+                        hx-get="{get_archive_url}"
+                        hx-target="#listContainer"
+                        hx-swap="innerHTML"
+                        hx-confirm="Do you want to {archive_status} this project?"
+                        onclick="event.stopPropagation()"
+                        class="oh-dropdown__link"
                     """,
                 },
                 {
-                    "action": "Delete",
+                    "action": _("Delete"),
                     "accessibility": "project.cbv.accessibility.project_manager_accessibility",
                     "attrs": """
-                    onclick="
-                                event.stopPropagation()
-                                deleteItem({get_delete_url});
-                                "
-                    class="oh-dropdown__link oh-dropdown__link--danger"
+                        hx-get="{get_delete_url}?view=card"
+                        hx-target="#listContainer"
+                        hx-swap="innerHTML"
+                        hx-confirm="Do you want to delete this project?"
+                        onclick="event.stopPropagation()"
+                        class="oh-dropdown__link oh-dropdown__link--danger"
                     """,
                 },
             ]
+        context["actions"] = self.actions
+        return context
 
     details = {
         "image_src": "get_avatar",
         "title": "{get_task_badge_html}",
-        "subtitle": "Status : {get_status_display} <br> Start date : {start_date} <br>End date : {end_date}",
+        "subtitle": "{get_card_view_subtitle}",
     }
+
     card_status_class = "status-{status}"
 
     card_status_indications = [
@@ -408,7 +483,6 @@ class ProjectCardView(HorillaCardView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('in_progress');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -419,7 +493,6 @@ class ProjectCardView(HorillaCardView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('completed');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -430,18 +503,16 @@ class ProjectCardView(HorillaCardView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('on_hold');
                 $('#applyFilter').click();
-
             "
             """,
         ),
         (
             "cancelled--dot",
-            _("Completed"),
+            _("Cancelled"),
             """
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('cancelled');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -452,7 +523,6 @@ class ProjectCardView(HorillaCardView):
             onclick="
                 $('#applyFilter').closest('form').find('[name=status]').val('expired');
                 $('#applyFilter').click();
-
             "
             """,
         ),
@@ -486,6 +556,7 @@ class ProjectCardView(HorillaCardView):
 #     )
 
 
+@method_decorator(login_required, name="dispatch")
 class ProjectsTabView(ListView):
     model = Project
     template_name = "cbv/projects/project_tab.html"
@@ -494,10 +565,7 @@ class ProjectsTabView(ListView):
     def get_queryset(self):
         pk = self.kwargs.get("pk")
         queryset = Project.objects.filter(
-            Q(manager=pk)
-            | Q(members=pk)
-            | Q(task__task_members=pk)
-            | Q(task__task_manager=pk)
+            Q(managers=pk) | Q(task__task_members=pk) | Q(task__task_managers=pk)
         )
         return queryset.distinct()
 
@@ -511,15 +579,15 @@ class ProjectsTabView(ListView):
         return context
 
 
-# Remove the command lines after horilla converted into CBV
-# from employee.cbv.employee_profile import EmployeeProfileView
-# EmployeeProfileView.add_tab(
-#     tabs=[
-#         {
-#             "title": "Projects",
-#             # "view": projects_tab,
-#             "view": ProjectsTabView.as_view(),
-#             "accessibility": "employee.cbv.accessibility.workshift_accessibility",
-#         },
-#     ]
-# )
+from employee.cbv.employee_profile import EmployeeProfileView
+
+EmployeeProfileView.add_tab(
+    tabs=[
+        {
+            "title": _("Projects"),
+            # "view": projects_tab,
+            "view": ProjectsTabView.as_view(),
+            "accessibility": "employee.cbv.accessibility.project_accessibility",
+        },
+    ]
+)

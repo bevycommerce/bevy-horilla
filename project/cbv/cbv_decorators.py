@@ -1,11 +1,17 @@
+from django.contrib import messages
+from django.utils.translation import gettext as _
+
 from horilla.horilla_middlewares import _thread_locals
-from horilla.methods import handle_no_permission
+from horilla.http import HorillaRedirect
 from project.methods import (
     any_project_manager,
-    any_project_member,
     any_task_manager,
     any_task_member,
+    has_subordinates,
 )
+
+# from project.sidebar import has_subordinates
+
 
 decorator_with_arguments = (
     lambda decorator: lambda *args, **kwargs: lambda func: decorator(
@@ -27,11 +33,11 @@ def is_projectmanager_or_member_or_perms(function, perm):
         if (
             user.has_perm(perm)
             or any_project_manager(user)
-            or any_project_member(user)
             or any_task_manager(user)
             or any_task_member(user)
         ):
             return function(self, *args, **kwargs)
-        return handle_no_permission(request)
+        messages.info(request, _("You don't have permission."))
+        return HorillaRedirect(request)
 
     return _function

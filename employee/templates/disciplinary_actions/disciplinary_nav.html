@@ -15,7 +15,7 @@
                 <div class="oh-main__titlebar-button-container">
                     <div class="oh-input-group oh-input__search-group mr-4">
                         <ion-icon name="search-outline" class="oh-input-group__icon oh-input-group__icon--left md hydrated"
-                            role="img" aria-label="search outline"></ion-icon>
+                            role="img" aria-label="{% trans 'search outline' %}"></ion-icon>
                         <input name="search" type="text" placeholder="Search" style="margin-right:10px"
                             class="oh-input oh-input__icon mr-3" autocomplete="false" aria-label="Search Input"
                             onkeyup="$('.filterButton')[0].click()" />
@@ -89,7 +89,7 @@
                             </div>
                             <div class="oh-dropdown__filter-footer">
                                 <button class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton">
-                                    {% trans "Filter" %}
+                                    {% trans "Apply" %}
                                 </button>
                             </div>
                         </div>
@@ -133,7 +133,7 @@
     function actionTypeChange(selectElement) {
         var selectedActiontype = selectElement.val();
         var parentForm = selectElement.parents().closest("form");
-        if (selectedActiontype !== "create" && selectedActiontype) {
+        if (selectedActiontype !== "dynamic_create" && selectedActiontype) {
             $.ajax({
                 type: "post",
                 url: "{% url 'action-type-details' %}",
@@ -149,10 +149,12 @@
                             parentForm.find("[id=id_days]").parent().show();
                             parentForm.find("[id=id_hours]").parent().hide();
                             parentForm.find("[name=days]").prop("required", true);
+                            parentForm.find("[name=hours]").prop("required", false);
                         } else {
                             parentForm.find("[id=id_hours]").parent().show();
                             parentForm.find("[id=id_days]").parent().hide();
                             parentForm.find("[name=days]").prop("required", false);
+                            parentForm.find("[name=hours]").prop("required", true);
                         }
                     });
                     if (response.action_type === "suspension") {
@@ -167,6 +169,7 @@
                         parentForm.find("[id=id_unit_in]").parent().hide();
                         parentForm.find("[id=id_hours]").parent().hide();
                         parentForm.find("[name=days]").prop("required", false);
+                        parentForm.find("[name=hours]").prop("required", false);
                     }
                 },
             });

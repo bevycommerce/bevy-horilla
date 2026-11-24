@@ -1,0 +1,70 @@
+{% extends "index.html" %}
+{% load i18n static %}
+
+{% block content %}
+    <style>
+        .validated--dot {
+            background-color: yellowgreen;
+        }
+        .not-validated--dot {
+            background-color: red;
+        }
+        .requested--dot {
+            background-color: orange;
+        }
+        .approved-request--dot {
+            background-color: blue;
+        }
+        .validated-True {
+            border-left: 3.4px solid yellowgreen !important;
+            border-radius: 4px 0 0 4px;
+        }
+        .validated-False {
+            border-left: 3.4px solid red !important;
+            border-radius: 4px 0 0 4px;
+        }
+        .requested-True {
+            border-left: 3.4px solid orange !important;
+            border-radius: 4px 0 0 4px;
+        }
+        .approved-request-True {
+            border-left: 3.4px solid blue !important;
+            border-radius: 4px 0 0 4px;
+        }
+    </style>
+
+    <div hx-get="{% url 'my-attendance-nav' %}?{{ request.GET.urlencode }}" hx-trigger="load"></div>
+
+    {% include "generic/components.html" %}
+
+    <div
+        class="oh-checkpoint-badge mb-2"
+        id="selectedInstances"
+        data-ids="[]"
+        data-clicked=""
+        style="display: none"
+    >
+    </div>
+
+    <div class="oh-wrapper" id="listContainer"></div>
+
+    <div class="oh-activity-sidebar" id="activitySidebar" style="z-index: 1000">
+        <div class="oh-activity-sidebar__body" id="commentContainer"></div>
+    </div>
+
+    <div class="oh-modal" id="penaltyViewModal" role="dialog" aria-hidden="true">
+        <div class="oh-modal__dialog" style="max-width: 1050px">
+            <div class="oh-modal__dialog-header">
+                <button
+                    type="button"
+                    class="oh-modal__close--custom"
+                    aria-label="{% trans 'Close' %}"
+                    onclick="$('#penaltyViewModal').removeClass('oh-modal--show')"
+                >
+                    <ion-icon name="close-outline"></ion-icon>
+                </button>
+            </div>
+            <div class="oh-modal__dialog-body" id="penaltyViewModalBody"></div>
+        </div>
+    </div>
+{% endblock content %}

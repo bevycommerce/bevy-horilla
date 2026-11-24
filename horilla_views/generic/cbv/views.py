@@ -2,56 +2,117 @@
 horilla/generic/views.py
 """
 
-import io
 import json
 import logging
+import re
 import traceback
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 import pandas as pd
-from bs4 import BeautifulSoup
+from auditlog.registry import auditlog
 from django import forms
 from django.contrib import messages
 from django.core.cache import cache as CACHE
 from django.core.exceptions import FieldDoesNotExist
-from django.core.paginator import Page
 from django.db import transaction
-from django.db.models import CharField, F
+from django.db.models import Case, CharField, F, When
 from django.db.models.functions import Cast
-from django.http import HttpRequest, HttpResponse, JsonResponse, QueryDict
-from django.shortcuts import render
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse, QueryDict
+from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
 from django.urls import resolve, reverse
+from django.utils import translation
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import DetailView, FormView, ListView, TemplateView
-from xhtml2pdf import pisa
 
-from base.methods import closest_numbers, eval_validate, get_key_instances
+from base.methods import (
+    closest_numbers,
+    eval_validate,
+    get_key_instances,
+    get_pagination,
+    has_export_access,
+    humanize_filter_tags,
+)
+
+# from horilla.http import HorillaRedirect
 from horilla.filters import FilterSet
 from horilla.group_by import group_by_queryset
-from horilla.horilla_middlewares import _thread_locals
+from horilla.horilla_middlewares import _thread_locals, get_selected_company
 from horilla.http.response import HorillaRedirect
+from horilla.models import HorillaModel
+from horilla.nested_group_by import nested_group_by_queryset
 from horilla.signals import post_generic_import, pre_generic_import
 from horilla_views import models
 from horilla_views.cbv_methods import (  # update_initial_cache,
+    WEEK,
     assign_related,
+    dedupe_single_value_params,
     export_xlsx,
     generate_import_excel,
+    get_quick_date_filters,
     get_short_uuid,
     get_verbose_name_from_field_path,
     hx_request_required,
+    login_required,
     paginator_qry,
+    saved_filter_cache_key,
+    saved_filter_path_query,
     sortby,
     split_by_import_reference,
     structured,
+    unauthenticated_response,
     update_saved_filter_cache,
 )
 from horilla_views.forms import DynamicBulkUpdateForm, ToggleColumnForm
+from horilla_views.related_link_registry import RELATED_VIEW_PARAM, register_detail_view
 from horilla_views.templatetags.generic_template_filters import getattribute
 
 logger = logging.getLogger(__name__)
+
+_dynamic_url_routes_registered: set = set()
+
+
+def model_has_audit_tracking(model) -> bool:
+    """
+    Return whether `model` has real history tracking,
+    not just the field every HorillaModel subclass inherits.
+    """
+    return (
+        hasattr(model, "history_set")
+        or hasattr(model, "history")
+        or auditlog.contains(model)
+    )
+
+
+def register_dynamic_url(route: str, view, name: str = None) -> None:
+    """
+    Register a dynamic URL route once,
+    skipping duplicates since re-adding them would grow the resolver unbounded.
+    """
+    if route in _dynamic_url_routes_registered:
+        return
+    _dynamic_url_routes_registered.add(route)
+    from horilla.urls import path, urlpatterns
+
+    if name:
+        urlpatterns.append(path(route, view, name=name))
+    else:
+        urlpatterns.append(path(route, view))
+
+
+# Quick Date menu of list and card views. "This Week" and "Last Week" are
+# calendar weeks (cbv_methods.week_start); the 7-day ranges include today.
+QUICK_DATE_RANGES = [
+    (_("Yesterday"), -1, None),
+    (_("Today"), 0, None),
+    (_("Tomorrow"), 1, None),
+    (_("This Week"), WEEK, 0),
+    (_("Last Week"), WEEK, -1),
+    (_("Last 7 Days"), -6, 0),
+    (_("Next 7 Days"), 0, 6),
+]
 
 
 @method_decorator(hx_request_required, name="dispatch")
@@ -63,38 +124,24 @@ class HorillaListView(ListView):
     filter_class: FilterSet = None
 
     view_id: str = """"""
-
-    export_file_name: str = "quick_export"
-    export_formats: list = [
-        ("xlsx", "Excel"),
-        ("json", "Json"),
-        ("csv", "CSV"),
-        ("pdf", "PDF"),
-    ]
-
     template_name: str = "generic/horilla_list_table.html"
     context_object_name = "queryset"
+    verbose_name: str = ""
+
+    # --- Columns & row rendering ---
     # column = [("Verbose Name","field_name","avatar_mapping")], opt: avatar_mapping
     columns: list = []
+    export_columns = []
     default_columns: list = []
-    search_url: str = ""
-    bulk_select_option: bool = True
-    filter_selected: bool = True
-    quick_export: bool = True
-    bulk_update: bool = True
-    import_fields: list = []
-    import_file_name: str = "Quick Import"
-    update_reference: str = "pk"
-    import_related_model_column_mapping: dict = {}
-    primary_key_mapping: dict = {}
-    import_related_column_export_mapping: dict = {}
-    reverse_model_relation_to_base_model: dict = {}
-    fk_mapping: dict = {}
-    import_help: dict = {}
-    fk_o2o_field_in_base_model: list = []
-    individual_update: bool = False
-    o2o_related_name_mapping: dict = {}
-
+    # Optional {column_key: label} override for the columns show/hide panel,
+    toggle_labels: dict = {}
+    show_toggle_form: bool = True
+    header_attrs: dict = {}
+    # Model method name returning {column attribute: extra CSS classes} to shade individual row cells.
+    cell_class_method: str = ""
+    row_attrs: str = """"""
+    row_status_class: str = """"""
+    row_status_indications: list = []
     custom_empty_template: str = ""
 
     action_method: str = """"""
@@ -116,35 +163,71 @@ class HorillaListView(ListView):
     ]
     """
     actions: list = []
-
     option_method: str = ""
     options: list = []
-    row_attrs: str = """"""
-    row_status_class: str = """"""
-    row_status_indications: list = []
+    accordian_action: str = ""
 
+    # --- Sorting & grouping ---
     sortby_key: str = "sortby"
     sortby_mapping: list = []
+    nested_group_by_fields: list = []
+    group_by_template_name: str = ""
 
-    selected_instances_key_id: str = "selectedInstances"
-
+    # --- Filtering & search ---
+    search_url: str = ""
+    filter_selected: bool = True
     show_filter_tags: bool = True
-    show_toggle_form: bool = True
+    show_saved_filters: bool = True
+    show_quick_date_filters: bool = False
+    quick_date_ranges: list = QUICK_DATE_RANGES
+    quick_date_fields: tuple = ("", "", "")
     filter_keys_to_remove: list = []
+    # {field: value} pairs not shown as filter tags (still applied), e.g. a default
+    hidden_filter_tag_values: dict = {}
 
-    records_per_page: int = 50
-    export_fields: list = []
-    verbose_name: str = ""
-    bulk_update_fields: list = []
-    bulk_template: str = "generic/bulk_form.html"
+    # --- Pagination ---
+    records_per_page: int = 0
     records_count_in_tab: bool = True
 
-    header_attrs: dict = {}
+    # --- Selection & bulk actions ---
+    bulk_select_option: bool = True
+    selected_instances_key_id: str = "selectedInstances"
+    individual_update: bool = False
+    bulk_update: bool = True
+    bulk_update_fields: list = []
+    bulk_update_required_fields: list = []
+    bulk_template: str = "generic/bulk_form.html"
+
+    # --- Import ---
+    import_fields: list = []
+    import_file_name: str = "Quick Import"
+    update_reference: str = "pk"
+    import_related_model_column_mapping: dict = {}
+    primary_key_mapping: dict = {}
+    import_related_column_export_mapping: dict = {}
+    reverse_model_relation_to_base_model: dict = {}
+    fk_mapping: dict = {}
+    import_help: dict = {}
+    fk_o2o_field_in_base_model: list = []
+    o2o_related_name_mapping: dict = {}
+
+    # --- Export ---
+    quick_export: bool = True
+    export_file_name: str = "quick_export"
+    export_formats: list = [
+        ("xlsx", "Excel"),
+        ("csv", "CSV"),
+        ("pdf", "PDF"),
+    ]
+    export_fields: list = []
+
+    # --- Misc ---
+    show_header: bool = True
+    history_tracking: bool = True
 
     @classmethod
     def as_view(cls, **initkwargs):
         def view(request, *args, **kwargs):
-            # Inject URL params into initkwargs
             initkwargs_with_url = {**initkwargs, **kwargs}
             self = cls(**initkwargs_with_url)
             self.request = request
@@ -154,37 +237,217 @@ class HorillaListView(ListView):
 
         return view
 
-    def post(self, *args, **kwargs):
-        """
-        POST method to handle post submissions
-        """
-        return self.get(self, *args, **kwargs)
-
     def __init__(self, **kwargs: Any) -> None:
         if not self.view_id:
-            self.view_id = get_short_uuid(4)
+            # Nested group-by pagination matches hx-select against a stable view_id; a fresh random id here would break that match, so reuse the incoming one if present.
+            request = getattr(_thread_locals, "request", None)
+            incoming_view_id = request.GET.get("view_id") if request else None
+            self.view_id = incoming_view_id or get_short_uuid(4)
         super().__init__(**kwargs)
 
         self.ordered_ids_key = f"ordered_ids_{self.model.__name__.lower()}"
         request = getattr(_thread_locals, "request", None)
         self.request = request
 
+    def post(self, *args, **kwargs):
+        """
+        POST method to handle post submissions
+        """
+        return self.get(self, *args, **kwargs)
+
+    def dispatch(self, request, *args, **kwargs):
+        """
+        Answer the Select button's `?select_all=true` with the filtered ids as JSON.
+        """
+        if request.method == "GET" and request.GET.get("select_all") == "true":
+            return HttpResponse(self.select_all(), content_type="application/json")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self, queryset=None, filtered=False, *args, **kwargs):
+        if self.queryset is None:
+            self.queryset = super().get_queryset() if queryset is None else queryset
+            self._saved_filters = QueryDict("", mutable=True)
+            if self.filter_class:
+                query_dict = self.request.GET
+                selected_ids = eval_validate(
+                    self.request.POST.get("selected_ids", "[]")
+                )
+
+                if (
+                    self.request.session.get("prev_path")
+                    and self.request.session.get("prev_path") != self.request.path
+                ):
+                    selected_ids = []
+                    self.request.session["hlv_selected_ids"] = selected_ids
+                    self.request.session["prev_path"] = self.request.path
+
+                if selected_ids and selected_ids != self.request.session.get(
+                    "hlv_selected_ids", []
+                ):
+                    self.request.session["hlv_selected_ids"] = selected_ids
+                    self.request.session["prev_path"] = self.request.path
+
+                cached_filter = CACHE.get(saved_filter_cache_key(self.request))
+                if "filter_applied" in query_dict.keys() or "search" in query_dict:
+                    update_saved_filter_cache(self.request, CACHE)
+                elif cached_filter:
+                    query_dict = cached_filter["query_dict"]
+
+                if not bool(query_dict):
+                    default_filter = models.SavedFilter.objects.filter(
+                        saved_filter_path_query(self.request),
+                        created_by=self.request.user,
+                        is_default=True,
+                    ).first()
+                    if default_filter:
+                        data = eval_validate(default_filter.filter)
+                        query_dict = QueryDict("", mutable=True)
+                        for key, value in data.items():
+                            query_dict[key] = value
+
+                        query_dict._mutable = False
+                self._saved_filters = query_dict
+                self.request.exclude_filter_form = True
+                if not filtered:
+                    self.queryset = self.filter_class(
+                        data=query_dict, queryset=self.queryset, request=self.request
+                    ).qs
+                else:
+                    self.queryset = queryset
+                if self.request.GET.get(
+                    "show_all"
+                ) == "true" and self.request.session.get("hlv_selected_ids"):
+                    del self.request.session["hlv_selected_ids"]
+                if self.request.session.get("hlv_selected_ids"):
+                    self.request.actual_ids = list(
+                        self.queryset.values_list("id", flat=True)
+                    )
+                    self.queryset = self.queryset.filter(
+                        id__in=self.request.session["hlv_selected_ids"]
+                    )
+        return self.queryset
+
+    def get_context_data(self, **kwargs: Any):
+        context = super().get_context_data(**kwargs)
+        if not self.search_url:
+            self.search_url = self.request.path
+        context["view_id"] = self.view_id
+        context["search_url"] = self.search_url
+
+        context["action_method"] = self.action_method
+        context["actions"] = self.actions
+        context["accordian_action"] = self.accordian_action
+
+        context["option_method"] = self.option_method
+        context["options"] = self.options
+        context["row_attrs"] = self.row_attrs
+
+        context["header_attrs"] = self.header_attrs
+
+        context["show_filter_tags"] = self.show_filter_tags
+        context["show_quick_date_filters"] = self.show_quick_date_filters
+        if self.show_quick_date_filters:
+            context["quick_date_filters"] = get_quick_date_filters(
+                self.quick_date_ranges, self.quick_date_fields
+            )
+        context["bulk_select_option"] = self.bulk_select_option
+        context["show_header"] = self.show_header
+        context["row_status_class"] = self.row_status_class
+        context["sortby_key"] = self.sortby_key
+        context["sortby_mapping"] = self.sortby_mapping
+        context["selected_instances_key_id"] = self.selected_instances_key_id
+        context["row_status_indications"] = self.row_status_indications
+        context["saved_filters"] = dedupe_single_value_params(self._saved_filters)
+        context["quick_export"] = self.quick_export and has_export_access(
+            self.request, self.model
+        )
+        context["filter_selected"] = self.filter_selected
+        context["bulk_update"] = self.bulk_update
+        context["model_name"] = self.verbose_name
+        context["export_fields"] = self.export_fields
+        context["custom_empty_template"] = self.custom_empty_template
+        context["records_count_in_tab"] = self.records_count_in_tab
+        context["cell_class_method"] = self.cell_class_method
+        if not self.verbose_name:
+            self.verbose_name = self.model.__class__
+        context["stored_filters"] = models.SavedFilter.objects.filter(
+            saved_filter_path_query(self.request), created_by=self.request.user
+        ).distinct()
+        if not self.show_saved_filters:
+            context["stored_filters"] = models.SavedFilter.objects.none()
+
+        # Set default pagination if not set
+        if not self.records_per_page:
+            self.records_per_page = get_pagination()
+
+        # Updating the column_order
+        col_order = None
+        if self.request:
+            col_order = models.ColumnOrder.objects.filter(
+                employee=self.request.user.employee_get, path=self.request.path_info
+            ).first()
+            if col_order:
+                order = col_order.column_order
+                order_set = set(order)
+
+                col_dict = {col[1]: col for col in self.columns}
+
+                self.columns = [
+                    col_dict[name] for name in order if name in col_dict
+                ] + [col for col in self.columns if col[1] not in order_set]
+
+        # Add verbose names to fields if possible
+        updated_column = []
+        get_field = self.model._meta.get_field
+        for col in self.columns:
+            if isinstance(col, str):
+                try:
+                    updated_column.append((get_field(col).verbose_name, col))
+                except FieldDoesNotExist:
+                    updated_column.append(col)
+            else:
+                updated_column.append(col)
+
+        self.columns = updated_column
+
+        if (
+            self.history_tracking
+            and issubclass(self.model, HorillaModel)
+            and model_has_audit_tracking(self.model)
+        ):
+            self.columns += [(_("History"), "get_model_history")]
         self.visible_column = list(self.columns)
 
         hidden_fields = []
         existing_instance = None
-        if request:
+        if self.request and self.show_toggle_form:
             existing_instance = models.ToggleColumn.objects.filter(
-                user_id=request.user, path=request.path_info
+                user_id=self.request.user, path=self.request.path_info
             ).first()
             if existing_instance:
-                hidden_fields = existing_instance.excluded_columns
+                hidden_fields = list(existing_instance.excluded_columns or [])
+
+        # Primary (first) column must always remain visible.
+        if self.columns:
+            primary_name = (
+                self.columns[0][1]
+                if isinstance(self.columns[0], tuple)
+                else self.columns[0]
+            )
+            hidden_fields = [f for f in hidden_fields if f != primary_name]
 
         if not self.default_columns:
-            self.default_columns = self.columns
+            self.default_columns = [
+                col
+                for col in self.columns
+                if (col[1] if isinstance(col, tuple) else col) != "get_model_history"
+            ]
+
+        if existing_instance:
+            self.default_columns = []
 
         self.toggle_form = ToggleColumnForm(
-            self.columns, self.default_columns, hidden_fields
+            self.columns, self.default_columns, hidden_fields, self.toggle_labels
         )
 
         # Remove hidden columns from visible_column
@@ -203,19 +466,203 @@ class HorillaListView(ListView):
             if (col[1] if isinstance(col, tuple) else col) not in hidden_field_names
         ]
 
-        # Add verbose names to fields if possible
-        updated_column = []
-        get_field = self.model()._meta.get_field
-        for col in self.visible_column:
-            if isinstance(col, str):
-                try:
-                    updated_column.append((get_field(col).verbose_name, col))
-                except FieldDoesNotExist:
-                    updated_column.append(col)
-            else:
-                updated_column.append(col)
+        context["columns"] = self.visible_column
+        context["export_columns"] = (
+            self.visible_column if not self.export_columns else self.export_columns
+        )
+        context["hidden_columns"] = list(set(self.columns) - set(self.visible_column))
+        context["toggle_form"] = self.toggle_form
+        context["show_toggle_form"] = self.show_toggle_form
 
-        self.visible_column = updated_column
+        context["model_label"] = self.model._meta.label_lower if self.model else ""
+        if self._saved_filters.get("field"):
+            active_group = models.ActiveGroup.objects.filter(
+                created_by=self.request.user,
+                path=self.request.path,
+                group_by_field=self._saved_filters["field"],
+            ).first()
+            if active_group:
+                context["active_target"] = active_group.group_target
+
+        queryset = self.get_queryset()
+
+        if self.show_filter_tags:
+            data_dict = parse_qs(self._saved_filters.urlencode())
+            data_dict = {
+                key: list(dict.fromkeys(values)) for key, values in data_dict.items()
+            }
+            data_dict = get_key_instances(
+                self.model, data_dict, filter_class=self.filter_class
+            )
+            remove_keys = set(
+                # nested_fields gets its own "Grouped by: X > Y" line instead of the generic filter-tag rendering.
+                # open_tab only controls which tab opens on load; it's not a real filter.
+                ["filter_applied", "nav_url", "referrer", "nested_fields", "open_tab"]
+                + self.filter_keys_to_remove
+            )
+
+            keys_to_remove = [key for key in data_dict if key in remove_keys]
+
+            for key in remove_keys:
+                data_dict.pop(key, None)
+
+            for key, hidden in self.hidden_filter_tag_values.items():
+                if data_dict.get(key) == [str(hidden)]:
+                    data_dict.pop(key)
+
+            data_dict, tag_labels, tag_extras = humanize_filter_tags(data_dict)
+            context["filter_dict"] = data_dict
+            context["filter_tag_labels"] = tag_labels
+            context["filter_tag_extras"] = tag_extras
+            context["keys_to_remove"] = keys_to_remove
+
+        request = self.request
+        is_first_sort = False
+        query_dict = self.request.GET
+        if (
+            not request.GET.get(self.sortby_key)
+            and not self._saved_filters.get(self.sortby_key)
+        ) or (
+            not request.GET.get(self.sortby_key)
+            and self._saved_filters.get(self.sortby_key)
+        ):
+            is_first_sort = True
+            query_dict = self._saved_filters
+
+        if query_dict.get(self.sortby_key):
+            queryset = sortby(
+                query_dict, queryset, self.sortby_key, is_first_sort=is_first_sort
+            )
+
+        nested_fields = list(
+            dict.fromkeys(f for f in self._saved_filters.getlist("nested_fields") if f)
+        )
+        group_field = self._saved_filters.get("field")
+        if isinstance(queryset, list) and (nested_fields or group_field):
+            # sortby() returns a plain sorted list, but group-by needs a real QuerySet; rebuild one preserving this row order via Case/When.
+            pk_order = [obj.pk for obj in queryset]
+            if pk_order:
+                preserve_order = Case(
+                    *[When(pk=pk, then=pos) for pos, pk in enumerate(pk_order)]
+                )
+                queryset = self.model.objects.filter(pk__in=pk_order).order_by(
+                    preserve_order
+                )
+            else:
+                queryset = self.model.objects.none()
+
+        if request and len(nested_fields) >= 1:
+            self.template_name = "generic/nested_group_by_table.html"
+            # Skip flat list pagination; the nested engine paginates top-level groupers itself.
+            # The toolbar's "Select (N)" still counts every record the filter matches.
+            context["grouped_select_total"] = queryset.count()
+            context["queryset"] = queryset[:1]
+            try:
+                context["nested_groups"] = nested_group_by_queryset(
+                    queryset,
+                    nested_fields,
+                    self._saved_filters.get("page"),
+                    "page",
+                    records_per_page=10,
+                )
+                context["nested_fields_active"] = HorillaNavView._resolve_field_labels(
+                    nested_fields, self.model, self.model._meta.get_field
+                )
+                context["nested_group_by_fields"] = (
+                    HorillaNavView._resolve_field_labels(
+                        self.nested_group_by_fields,
+                        self.model,
+                        self.model._meta.get_field,
+                    )
+                )
+            except Exception:
+                self.template_name = "generic/horilla_list_table.html"
+                context["queryset"] = paginator_qry(
+                    queryset, self._saved_filters.get("page"), self.records_per_page
+                )
+        elif request and group_field:
+            field = group_field
+            self.template_name = (
+                self.group_by_template_name or "generic/group_by_table.html"
+            )
+            # group_by paginates groupers itself; keep a tiny queryset so bulk-select chrome (`queryset|length`) still works.
+            context["grouped_select_total"] = queryset.count()
+            context["queryset"] = queryset[:1]
+            try:
+                context["groups"] = group_by_queryset(
+                    queryset,
+                    field,
+                    self._saved_filters.get("page"),
+                    "page",
+                    records_per_page=10,
+                )
+            except Exception:
+                self.template_name = "generic/horilla_list_table.html"
+                context["queryset"] = paginator_qry(
+                    queryset, self._saved_filters.get("page"), self.records_per_page
+                )
+        else:
+            context["queryset"] = paginator_qry(
+                queryset, self._saved_filters.get("page"), self.records_per_page
+            )
+
+        page_object_list = getattr(
+            context["queryset"], "object_list", context["queryset"]
+        )
+        ordered_ids = []
+        try:
+            if hasattr(page_object_list, "values_list"):
+                ordered_ids = [
+                    str(pk) for pk in page_object_list.values_list("pk", flat=True)
+                ]
+            else:
+                ordered_ids = [str(instance.pk) for instance in page_object_list]
+        except Exception:
+            pass
+
+        # Only write to the session when changed, to avoid concurrent polls hitting SQLite "database is locked".
+        session_key = self.ordered_ids_key
+        if self.request.session.get(session_key) != ordered_ids:
+            self.request.session[session_key] = ordered_ids
+
+        # CACHE.get(self.request.session.session_key + "cbv")[HorillaListView] = context
+        self.export_path = (
+            reverse("export-list", kwargs={"short_id": self.view_id})
+            + f"?model={self.model.__module__}.{self.model.__name__}"
+        )
+        context["export_path"] = self.export_path
+
+        if self.import_fields:
+            get_import_sheet_path = (
+                f"get-import-sheet-{self.view_id}-{self.request.session.session_key}/"
+            )
+            post_import_sheet_path = (
+                f"post-import-sheet-{self.view_id}-{self.request.session.session_key}/"
+            )
+            register_dynamic_url(get_import_sheet_path, self.serve_import_sheet)
+            register_dynamic_url(post_import_sheet_path, self.import_records)
+
+            session_key = self.request.session.session_key
+
+            context["get_import_sheet_path"] = get_import_sheet_path
+            context["post_import_sheet_path"] = post_import_sheet_path
+        context["import_fields"] = self.import_fields
+        if self.bulk_update_fields and self.bulk_update_accessibility():
+            get_bulk_path = (
+                f"get-bulk-update-{self.view_id}-{self.request.session.session_key}/"
+            )
+            post_bulk_path = (
+                f"post-bulk-update-{self.view_id}-{self.request.session.session_key}/"
+            )
+            self.post_bulk_path = post_bulk_path
+            register_dynamic_url(get_bulk_path, self.serve_bulk_form)
+            register_dynamic_url(post_bulk_path, self.handle_bulk_submission)
+            context["bulk_update_fields"] = self.bulk_update_fields
+            context["bulk_path"] = get_bulk_path
+        context["export_formats"] = self.export_formats
+        context["import_help"] = self.import_help
+        context["import_accessibility"] = self.import_accessibility()
+        return context
 
     def bulk_update_accessibility(self) -> bool:
         """
@@ -239,7 +686,7 @@ class HorillaListView(ListView):
         """
 
         if not self.bulk_update_accessibility():
-            return HttpResponse("You dont have permission")
+            return HttpResponse("You don't have permission")
         ids = eval_validate(request.POST.get("instance_ids", "[]"))
         form = self.get_bulk_form()
         form.verbose_name = form.verbose_name + f" ({len((ids))} {_('Records')})"
@@ -254,16 +701,18 @@ class HorillaListView(ListView):
         This method to handle bulk update form submission
         """
         if not self.bulk_update_accessibility():
-            return HttpResponse("You dont have permission")
+            return HttpResponse("You don't have permission")
 
         instance_ids = request.POST.get("instance_ids", "[]")
         instance_ids = eval_validate(instance_ids)
+        reload_state = self.bulk_reload_state(instance_ids)
         form = DynamicBulkUpdateForm(
             request.POST,
             request.FILES,
             root_model=self.model,
             bulk_update_fields=self.bulk_update_fields,
             ids=instance_ids,
+            required_fields=self.bulk_update_required_fields,
         )
         if instance_ids and form.is_valid():
             form.save()
@@ -275,18 +724,45 @@ class HorillaListView(ListView):
                 <script id="{script_id}">
                     $("#{script_id}").closest(".oh-modal--show").removeClass("oh-modal--show");
                     $("#{self.selected_instances_key_id}").attr("data-ids", "[]");
-                    $(".reload-record").click()
+                    if (typeof clearSelectionsOnTabSwitch === "function") {{
+                        // Reset the checkboxes and Unselect/Update/Select buttons
+                        // now; the reload below only lands once the lists re-render.
+                        clearSelectionsOnTabSwitch("{self.view_id}");
+                    }}
+                    {self.bulk_reload_script(request, instance_ids, reload_state)}
                     $("#reloadMessagesButton").click()
                 </script>
                 """
             )
         if not instance_ids:
             messages.info(request, _("No records selected"))
+        # Same title as the form first opened with, and keep the selection.
+        form.verbose_name = form.verbose_name + f" ({len(instance_ids)} {_('Records')})"
         return render(
             request,
             self.bulk_template,
-            {"form": form, "post_bulk_path": self.post_bulk_path},
+            {
+                "form": form,
+                "post_bulk_path": self.post_bulk_path,
+                "instance_ids": instance_ids,
+            },
         )
+
+    def bulk_reload_state(self, instance_ids):
+        """
+        Snapshot taken before a bulk update is applied, handed to
+        bulk_reload_script afterwards. Override when the script needs to know
+        what the records looked like before they were changed.
+        """
+        return None
+
+    def bulk_reload_script(self, request, instance_ids, reload_state) -> str:
+        """
+        JS run once a bulk update is saved, to refresh what is on screen.
+        Reloads every list on the page by default; override to reload only
+        the lists the update touched when reloading them all is costly.
+        """
+        return '$(".reload-record").click()'
 
     def get_bulk_form(self):
         """
@@ -294,7 +770,9 @@ class HorillaListView(ListView):
         """
         # Bulk update feature
         return DynamicBulkUpdateForm(
-            root_model=self.model, bulk_update_fields=self.bulk_update_fields
+            root_model=self.model,
+            bulk_update_fields=self.bulk_update_fields,
+            required_fields=self.bulk_update_required_fields,
         )
 
     def serve_import_sheet(self, request, *args, **kwargs):
@@ -302,7 +780,7 @@ class HorillaListView(ListView):
         Method to serve bulk import sheet
         """
         if not self.import_accessibility():
-            messages.info(request, "You dont have permission")
+            messages.info(request, _("You don't have permission"))
             return HorillaFormView.HttpResponse()
         ids = eval_validate(request.POST["selected_ids"])
 
@@ -314,7 +792,6 @@ class HorillaListView(ListView):
             queryset=self.model.objects.filter(id__in=ids),
         )
 
-        # Create response
         response = HttpResponse(
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -329,7 +806,7 @@ class HorillaListView(ListView):
         """
         try:
             if not self.import_accessibility():
-                messages.info(request, "You dont have permission")
+                messages.info(request, _("You don't have permission"))
             field_column_mapping = {
                 field: get_verbose_name_from_field_path(
                     self.model, field, self.import_related_model_column_mapping
@@ -350,7 +827,7 @@ class HorillaListView(ListView):
 
             serialized = []
             field_column_mapping_values = {}
-            for _, row in df.iterrows():
+            for _index, row in df.iterrows():
                 record = {}
                 for model_field, excel_col in field_column_mapping.items():
                     if excel_col in row:
@@ -973,442 +1450,11 @@ class HorillaListView(ListView):
             },
         )
 
-    def get_queryset(self, queryset=None, filtered=False, *args, **kwargs):
-        if not self.queryset:
-            self.queryset = super().get_queryset() if not queryset else queryset
-            self._saved_filters = QueryDict("", mutable=True)
-            if self.filter_class:
-                query_dict = self.request.GET
-                selected_ids = eval_validate(
-                    self.request.POST.get("selected_ids", "[]")
-                )
-
-                if (
-                    self.request.session.get("prev_path")
-                    and self.request.session.get("prev_path") != self.request.path
-                ):
-                    selected_ids = []
-                    self.request.session["hlv_selected_ids"] = selected_ids
-                    self.request.session["prev_path"] = self.request.path
-
-                if selected_ids and selected_ids != self.request.session.get(
-                    "hlv_selected_ids", []
-                ):
-                    self.request.session["hlv_selected_ids"] = selected_ids
-                    self.request.session["prev_path"] = self.request.path
-
-                if "filter_applied" in query_dict.keys():
-                    update_saved_filter_cache(self.request, CACHE)
-                elif CACHE.get(
-                    str(self.request.session.session_key) + self.request.path + "cbv"
-                ):
-                    query_dict = CACHE.get(
-                        str(self.request.session.session_key)
-                        + self.request.path
-                        + "cbv"
-                    )["query_dict"]
-
-                default_filter = models.SavedFilter.objects.filter(
-                    path=self.request.path,
-                    created_by=self.request.user,
-                    is_default=True,
-                ).first()
-                if not bool(query_dict) and default_filter:
-                    data = eval_validate(default_filter.filter)
-                    query_dict = QueryDict("", mutable=True)
-                    for key, value in data.items():
-                        query_dict[key] = value
-
-                    query_dict._mutable = False
-                self._saved_filters = query_dict
-                self.request.exclude_filter_form = True
-                if not filtered:
-                    self.queryset = self.filter_class(
-                        data=query_dict, queryset=self.queryset, request=self.request
-                    ).qs
-                else:
-                    self.queryset = queryset
-                if self.request.GET.get(
-                    "show_all"
-                ) == "true" and self.request.session.get("hlv_selected_ids"):
-                    del self.request.session["hlv_selected_ids"]
-                if self.request.session.get("hlv_selected_ids"):
-                    self.request.actual_ids = list(
-                        self.queryset.values_list("id", flat=True)
-                    )
-                    self.queryset = self.queryset.filter(
-                        id__in=self.request.session["hlv_selected_ids"]
-                    )
-        return self.queryset
-
-    def get_context_data(self, **kwargs: Any):
-        context = super().get_context_data(**kwargs)
-        if not self.search_url:
-            self.search_url = self.request.path
-        context["view_id"] = self.view_id
-        context["columns"] = self.visible_column
-        context["hidden_columns"] = list(set(self.columns) - set(self.visible_column))
-        context["toggle_form"] = self.toggle_form
-        context["show_toggle_form"] = self.show_toggle_form
-        context["search_url"] = self.search_url
-
-        context["action_method"] = self.action_method
-        context["actions"] = self.actions
-
-        context["option_method"] = self.option_method
-        context["options"] = self.options
-        context["row_attrs"] = self.row_attrs
-
-        context["header_attrs"] = self.header_attrs
-
-        context["show_filter_tags"] = self.show_filter_tags
-        context["bulk_select_option"] = self.bulk_select_option
-        context["row_status_class"] = self.row_status_class
-        context["sortby_key"] = self.sortby_key
-        context["sortby_mapping"] = self.sortby_mapping
-        context["selected_instances_key_id"] = self.selected_instances_key_id
-        context["row_status_indications"] = self.row_status_indications
-        context["saved_filters"] = self._saved_filters
-        context["quick_export"] = self.quick_export
-        context["filter_selected"] = self.filter_selected
-        context["bulk_update"] = self.bulk_update
-        if not self.verbose_name:
-            self.verbose_name = self.model.__class__
-        context["model_name"] = self.verbose_name
-        context["export_fields"] = self.export_fields
-        context["custom_empty_template"] = self.custom_empty_template
-        context["records_count_in_tab"] = self.records_count_in_tab
-        referrer = self.request.GET.get("referrer", "")
-        if referrer:
-            # Remove the protocol and domain part
-            referrer = "/" + "/".join(referrer.split("/")[3:])
-        context["stored_filters"] = (
-            models.SavedFilter.objects.filter(
-                path=self.request.path, created_by=self.request.user
-            )
-            | models.SavedFilter.objects.filter(
-                referrer=referrer, created_by=self.request.user
-            )
-        ).distinct()
-
-        context["select_all_ids"] = self.select_all
-        if self._saved_filters.get("field"):
-            active_group = models.ActiveGroup.objects.filter(
-                created_by=self.request.user,
-                path=self.request.path,
-                group_by_field=self._saved_filters["field"],
-            ).first()
-            if active_group:
-                context["active_target"] = active_group.group_target
-
-        queryset = self.get_queryset()
-
-        if self.show_filter_tags:
-            data_dict = parse_qs(self._saved_filters.urlencode())
-            data_dict = get_key_instances(self.model, data_dict)
-            keys_to_remove = [
-                key
-                for key, value in data_dict.items()
-                if key in ["filter_applied", "nav_url"] + self.filter_keys_to_remove
-            ]
-
-            for key in (
-                keys_to_remove + ["referrer", "nav_url"] + self.filter_keys_to_remove
-            ):
-                if key in data_dict.keys():
-                    data_dict.pop(key)
-            context["filter_dict"] = data_dict
-            context["keys_to_remove"] = keys_to_remove
-
-        request = self.request
-        is_first_sort = False
-        query_dict = self.request.GET
-        if (
-            not request.GET.get(self.sortby_key)
-            and not self._saved_filters.get(self.sortby_key)
-        ) or (
-            not request.GET.get(self.sortby_key)
-            and self._saved_filters.get(self.sortby_key)
-        ):
-            is_first_sort = True
-            query_dict = self._saved_filters
-
-        if query_dict.get(self.sortby_key):
-            queryset = sortby(
-                query_dict, queryset, self.sortby_key, is_first_sort=is_first_sort
-            )
-
-        ordered_ids = []
-        if not self._saved_filters.get("field"):
-            for instance in queryset:
-                ordered_ids.append(instance.pk)
-        self.request.session[self.ordered_ids_key] = ordered_ids
-        context["queryset"] = paginator_qry(
-            queryset, self._saved_filters.get("page"), self.records_per_page
-        )
-
-        if request and self._saved_filters.get("field"):
-            field = self._saved_filters.get("field")
-            self.template_name = "generic/group_by_table.html"
-            if isinstance(queryset, Page):
-                queryset = self.filter_class(
-                    request.GET, queryset=queryset.object_list.model.objects.all()
-                ).qs
-            groups = group_by_queryset(
-                queryset, field, self._saved_filters.get("page"), "page"
-            )
-            context["groups"] = paginator_qry(
-                groups, self._saved_filters.get("page"), 10
-            )
-
-            # for group in context["groups"]:
-            #     for instance in group["list"]:
-            #         instance.ordered_ids = ordered_ids
-            #         ordered_ids.append(instance.pk)
-
-        # CACHE.get(self.request.session.session_key + "cbv")[HorillaListView] = context
-        from horilla.urls import path, urlpatterns
-
-        self.export_path = f"export-list-view-{get_short_uuid(4)}/"
-
-        urlpatterns.append(path(self.export_path, self.export_data))
-        context["export_path"] = self.export_path
-
-        if self.import_fields:
-            get_import_sheet_path = (
-                f"get-import-sheet-{self.view_id}-{self.request.session.session_key}/"
-            )
-            post_import_sheet_path = (
-                f"post-import-sheet-{self.view_id}-{self.request.session.session_key}/"
-            )
-            urlpatterns.append(
-                path(
-                    get_import_sheet_path,
-                    self.serve_import_sheet,
-                )
-            )
-            urlpatterns.append(
-                path(
-                    post_import_sheet_path,
-                    self.import_records,
-                )
-            )
-            context["get_import_sheet_path"] = get_import_sheet_path
-            context["post_import_sheet_path"] = post_import_sheet_path
-        context["import_fields"] = self.import_fields
-        if self.bulk_update_fields and self.bulk_update_accessibility():
-            get_bulk_path = (
-                f"get-bulk-update-{self.view_id}-{self.request.session.session_key}/"
-            )
-            post_bulk_path = (
-                f"post-bulk-update-{self.view_id}-{self.request.session.session_key}/"
-            )
-            self.post_bulk_path = post_bulk_path
-            urlpatterns.append(
-                path(
-                    get_bulk_path,
-                    self.serve_bulk_form,
-                )
-            )
-            urlpatterns.append(
-                path(
-                    post_bulk_path,
-                    self.handle_bulk_submission,
-                )
-            )
-            context["bulk_update_fields"] = self.bulk_update_fields
-            context["bulk_path"] = get_bulk_path
-        context["export_formats"] = self.export_formats
-        context["import_help"] = self.import_help
-        context["import_accessibility"] = self.import_accessibility()
-        return context
-
     def select_all(self, *args, **kwargs):
         """
         Select all method
         """
         return json.dumps(list(self.get_queryset().values_list("id", flat=True)))
-
-    def export_data(self, *args, **kwargs):
-        """
-        Export list view visible columns
-        """
-        from import_export import fields, resources
-
-        request = getattr(_thread_locals, "request", None)
-        ids = eval_validate(request.POST["ids"])
-        _columns = eval_validate(request.POST["columns"])
-        export_format = request.POST.get("format", "xlsx")
-        queryset = self.model.objects.filter(id__in=ids)
-
-        _model = self.model
-
-        class HorillaListViewResorce(resources.ModelResource):
-            """
-            Instant Resource class
-            """
-
-            id = fields.Field(column_name="ID")
-
-            class Meta:
-                """
-                Meta class for additional option
-                """
-
-                model = _model
-                fields = [field[1] for field in _columns]  # 773
-
-            def dehydrate_id(self, instance):
-                """
-                Dehydrate method for id field
-                """
-                return instance.pk
-
-            for field_tuple in _columns:
-                dynamic_fn_str = f"def dehydrate_{field_tuple[1]}(self, instance):return self.remove_extra_spaces(getattribute(instance, '{field_tuple[1]}'),{field_tuple})"
-                exec(dynamic_fn_str)
-                dynamic_fn = locals()[f"dehydrate_{field_tuple[1]}"]
-                locals()[field_tuple[1]] = fields.Field(column_name=field_tuple[0])
-
-            def remove_extra_spaces(self, text, field_tuple):
-                """
-                Clean the text:
-                - If it's a <select> element, extract the selected option's value.
-                - If it's an <input> or <textarea>, extract its 'value'.
-                - Otherwise, remove blank spaces, keep line breaks, and handle <li> tags.
-                """
-                soup = BeautifulSoup(str(text), "html.parser")
-
-                # Handle <select> tag
-                select_tag = soup.find("select")
-                if select_tag:
-                    selected_option = select_tag.find("option", selected=True)
-                    if selected_option:
-                        return selected_option["value"]
-                    else:
-                        first_option = select_tag.find("option")
-                        return first_option["value"] if first_option else ""
-
-                # Handle <input> tag
-                input_tag = soup.find("input")
-                if input_tag:
-                    return input_tag.get("value", "")
-
-                # Handle <textarea> tag
-                textarea_tag = soup.find("textarea")
-                if textarea_tag:
-                    return textarea_tag.text.strip()
-
-                # Default: clean normal text and <li> handling
-                for li in soup.find_all("li"):
-                    li.insert_before("\n")
-                    li.unwrap()
-
-                text = soup.get_text()
-                lines = text.splitlines()
-                non_blank_lines = [line.strip() for line in lines if line.strip()]
-                cleaned_text = "\n".join(non_blank_lines)
-                return cleaned_text
-
-        book_resource = HorillaListViewResorce()
-
-        # Export the data using the resource
-        dataset = book_resource.export(queryset)
-
-        # excel_data = dataset.export("xls")
-
-        # Set the response headers
-        # file_name = self.export_file_name
-        # if not file_name:
-        #     file_name = "quick_export"
-        # response = HttpResponse(excel_data, content_type="application/vnd.ms-excel")
-        # response["Content-Disposition"] = f'attachment; filename="{file_name}.xls"'
-        # return response
-        json_data = json.loads(dataset.export("json"))
-        merged = []
-
-        for item in _columns:
-            # Check if item has exactly 2 elements
-            if len(item) == 2:
-                # Check if there's a matching (type, key) in export_fields (t, k, _)
-                match_found = any(
-                    export_item[0] == item[0] and export_item[1] == item[1]
-                    for export_item in self.export_fields
-                )
-
-                if match_found:
-                    # Find the first matching metadata or use {} as fallback
-                    try:
-                        metadata = next(
-                            (
-                                export_item[2]
-                                for export_item in self.export_fields
-                                if export_item[0] == item[0]
-                                and export_item[1] == item[1]
-                            ),
-                            {},
-                        )
-                    except Exception as e:
-                        merged.append(item)
-                        continue
-
-                    merged.append([*item, metadata])
-                else:
-                    merged.append(item)
-            else:
-                merged.append(item)
-        columns = []
-        for column in merged:
-            if len(column) >= 3 and isinstance(column[2], dict):
-                column = (column[0], column[0], column[2])
-            elif len(column) >= 3:
-                column = (column[0], column[1])
-            columns.append(column)
-
-        if export_format == "json":
-            response = HttpResponse(
-                json.dumps(json_data, indent=4), content_type="application/json"
-            )
-            response["Content-Disposition"] = (
-                f'attachment; filename="{self.export_file_name}.json"'
-            )
-            return response
-        # CSV
-        elif export_format == "csv":
-            csv_data = dataset.export("csv")
-            response = HttpResponse(csv_data, content_type="text/csv")
-            response["Content-Disposition"] = (
-                f'attachment; filename="{self.export_file_name}.csv"'
-            )
-            return response
-        elif export_format == "pdf":
-
-            headers = dataset.headers
-            rows = dataset.dict
-
-            # Render to HTML using a template
-            html_string = render_to_string(
-                "generic/export_pdf.html",
-                {
-                    "headers": headers,
-                    "rows": rows,
-                },
-            )
-
-            # Convert HTML to PDF using xhtml2pdf
-            result = io.BytesIO()
-            pisa_status = pisa.CreatePDF(html_string, dest=result)
-
-            if pisa_status.err:
-                return HttpResponse("PDF generation failed", status=500)
-
-            # Return response
-            response = HttpResponse(result.getvalue(), content_type="application/pdf")
-            response["Content-Disposition"] = (
-                f'attachment; filename="{self.export_file_name}.pdf"'
-            )
-            return response
-        return export_xlsx(json_data, columns, file_name=self.export_file_name)
 
 
 class HorillaSectionView(TemplateView):
@@ -1462,7 +1508,7 @@ class HorillaDetailedView(DetailView):
     HorillDetailedView
     """
 
-    title = "Detailed View"
+    title = _("Detailed View")
     template_name = "generic/horilla_detailed_view.html"
     header: dict = {
         "title": "Horilla",
@@ -1476,6 +1522,33 @@ class HorillaDetailedView(DetailView):
     cols: dict = {}
     instance = None
     empty_template = None
+    detail_note_method: str = ""
+
+    # Opt-in: pin the title row and the action row, and give the body between
+    # them a bounded height instead of letting the whole dialog scroll. Off by
+    # default so every existing Detail View keeps the whole dialog as one
+    # scroller; a view whose body is long or interactive (a table plus a form,
+    # say) turns it on so its actions stay reachable and the title stays in
+    # view.
+    #
+    # A view that sets this is expected to have ONE body block, and that block
+    # scrolls itself -- the body area is deliberately not a scroller, so the
+    # scrollbar sits beside the content that actually moves rather than running
+    # a full-height track past whatever the block pins at its own top.
+    sticky_chrome: bool = False
+
+    # Set on a subclass to self-register as the related-object-link target for `model` (see related_link_registry.py).
+    detail_view_url_name = None
+    detail_view_permission = None
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if getattr(cls, "model", None) and cls.detail_view_url_name:
+            register_detail_view(
+                cls.model,
+                url_name=cls.detail_view_url_name,
+                permission=cls.detail_view_permission,
+            )
 
     ids_key: str = "instance_ids"
 
@@ -1491,8 +1564,8 @@ class HorillaDetailedView(DetailView):
         if not self.instance and self.empty_template:
             return render(request, self.empty_template, context=self.get_context_data())
         elif not self.instance:
-            messages.info(request, "No record found...")
-            return HorillaRedirect(self.request)
+            messages.info(request, _("No record found..."))
+            return HorillaRedirect(request)
         return response
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1502,6 +1575,20 @@ class HorillaDetailedView(DetailView):
         self.request = request
         # update_initial_cache(request, CACHE, HorillaDetailedView)
 
+        # Add verbose names to fields if possible
+        updated_body = []
+        get_field = self.model()._meta.get_field
+        for body in self.body:
+            if isinstance(body, str):
+                try:
+                    updated_body.append((get_field(body).verbose_name, body))
+                except FieldDoesNotExist:
+                    updated_body.append(body)
+            else:
+                updated_body.append(body)
+
+        self.body = updated_body
+
     def get_context_data(self, **kwargs: Any):
         context = super().get_context_data(**kwargs)
         obj = context.get("object")
@@ -1510,7 +1597,10 @@ class HorillaDetailedView(DetailView):
             return context
 
         pk = obj.pk
-        instance_ids = self.request.session.get(self.ordered_ids_key, [])
+        instance_ids = []
+        if self.request.GET.get(RELATED_VIEW_PARAM) != "1":
+            # Skip list-driven Previous/Next when opened via a related-object link (related_link_registry.py).
+            instance_ids = self.request.session.get(self.ordered_ids_key, [])
         url_info = resolve(self.request.path)
         url_name = url_info.url_name
         key = next(iter(url_info.kwargs), "pk")
@@ -1522,6 +1612,8 @@ class HorillaDetailedView(DetailView):
         context["actions"] = self.actions
         context["action_method"] = self.action_method
         context["cols"] = self.cols
+        context["sticky_chrome"] = self.sticky_chrome
+        context["detail_note_method"] = self.detail_note_method
 
         if instance_ids:
             prev_id, next_id = closest_numbers(instance_ids, pk)
@@ -1550,9 +1642,15 @@ class HorillaTabView(TemplateView):
     HorillaTabView
     """
 
-    view_id: str = get_short_uuid(3, "htv")
+    view_id: str = ""
     template_name = "generic/horilla_tabs.html"
     show_filter_tags = False
+    # Tabs pass the page they were opened from on as "referrer", which lets a
+    # saved filter (and a default one) made in one tab show up in its sibling
+    # tabs (see saved_filter_path_query). Right for tabs that are views of the
+    # same records; wrong for tabs over different models (e.g. Asset Request
+    # and Service Request), whose filters must stay in their own tab.
+    share_saved_filters_across_tabs: bool = True
 
     tabs: list = []
 
@@ -1574,6 +1672,8 @@ class HorillaTabView(TemplateView):
         request = getattr(_thread_locals, "request", None)
         self.request = request
         self.query_params = {}
+        if not self.view_id:
+            self.view_id = get_short_uuid(3, "htv")
         # update_initial_cache(request, CACHE, HorillaTabView)
 
     def get_context_data(self, **kwargs):
@@ -1585,18 +1685,60 @@ class HorillaTabView(TemplateView):
             if active_tab:
                 context["active_target"] = active_tab.tab_target
 
-        for tab in self.tabs:
-            base_url = tab.get("url")
-            query_params = {**self.request.GET.dict()}
-            query_params.update(self.query_params)
+        # ?open_tab=<1-based index> forces a tab open on first load, overriding the last-active tab.
+        # No tag name in the selector: the tab is a <li> in horilla_tabs.html but a <button> in the theme override.
+        open_tab = self.request.GET.get("open_tab")
+        if open_tab and open_tab.isdigit():
+            context["active_target"] = f'[data-target="#{self.view_id}{open_tab}"]'
 
-            tab["url"] = f"{base_url}?{urlencode(query_params)}"
+        # Must be a QueryDict, not a plain dict, or multi-valued params (e.g. nested_fields) collapse to their last value.
+        extra_params = self.request.GET.copy()
+        # open_tab only controls which tab opens; don't forward it as a filter.
+        extra_params.pop("open_tab", None)
+        if self.share_saved_filters_across_tabs:
+            extra_params["referrer"] = self.request.META.get("HTTP_REFERER", "")
+        else:
+            extra_params.pop("referrer", None)
+
+        for tab in self.tabs:
+            # A tab that already carries exactly the query it should get (e.g.
+            # only the filters its own list understands) is left as it is.
+            if tab.get("query_scoped"):
+                continue
+            parsed = urlparse(tab.get("url", ""))
+            combined_query = QueryDict(parsed.query, mutable=True)
+            for key in extra_params:
+                combined_query.setlist(key, extra_params.getlist(key))
+
+            tab["url"] = urlunparse(parsed._replace(query=combined_query.urlencode()))
 
         context["tabs"] = self.tabs
         context["view_id"] = self.view_id
 
         # CACHE.get(self.request.session.session_key + "cbv")[HorillaTabView] = context
 
+        return context
+
+
+@method_decorator(login_required, name="dispatch")
+@method_decorator(hx_request_required, name="dispatch")
+class HorillaTabContentShell(TemplateView):
+    """
+    Per-tab shell: each tab gets its own Nav plus list container.
+    """
+
+    template_name = "generic/horilla_tab_content_shell.html"
+    nav_url_name = ""
+    container_id = ""
+    tabs_root_id = ""
+    selected_instances_key_id = "selectedInstances"
+
+    def get_context_data(self, **kwargs: Any):
+        context = super().get_context_data(**kwargs)
+        context["nav_url_name"] = self.nav_url_name
+        context["container_id"] = self.container_id
+        context["tabs_root_id"] = self.tabs_root_id
+        context["selected_instances_key_id"] = self.selected_instances_key_id
         return context
 
 
@@ -1608,7 +1750,7 @@ class HorillaCardView(ListView):
 
     filter_class: FilterSet = None
 
-    view_id: str = get_short_uuid(4, prefix="hcv")
+    view_id: str = None
 
     template_name = "generic/horilla_card.html"
     context_object_name = "queryset"
@@ -1638,11 +1780,20 @@ class HorillaCardView(ListView):
     card_attrs: str = """"""
 
     show_filter_tags: bool = True
+    show_quick_date_filters: bool = False
+    quick_date_ranges: list = QUICK_DATE_RANGES
+    quick_date_fields: tuple = ("", "", "")
     filter_keys_to_remove: list = []
+    # {field: value} pairs not shown as filter tags (still applied), e.g. a default
+    hidden_filter_tag_values: dict = {}
 
-    records_per_page: int = 50
+    records_per_page: int = 0
     card_status_class: str = """"""
     card_status_indications: list = []
+    custom_body_template: str = ""
+    custom_empty_template: str = ""
+    # True on card views that don't support the grouped-accordion layout; the shared nav's group-by param is then ignored.
+    disable_group_by: bool = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1652,29 +1803,28 @@ class HorillaCardView(ListView):
         self._saved_filters = QueryDict()
         self.ordered_ids_key = f"ordered_ids_{self.model.__name__.lower()}"
 
+        if not self.view_id:
+            self.view_id = get_short_uuid(4, prefix="hcv")
+
     def get_queryset(self):
         if not self.queryset:
-            queryset = super().get_queryset()
+            self.queryset = super().get_queryset()
             if self.filter_class:
                 query_dict = self.request.GET
-                if "filter_applied" in query_dict.keys():
+                if "filter_applied" in query_dict.keys() or "search" in query_dict:
                     update_saved_filter_cache(self.request, CACHE)
-                elif CACHE.get(
-                    str(self.request.session.session_key) + self.request.path + "cbv"
-                ):
-                    query_dict = CACHE.get(
-                        str(self.request.session.session_key)
-                        + self.request.path
-                        + "cbv"
-                    )["query_dict"]
+                elif CACHE.get(saved_filter_cache_key(self.request)):
+                    query_dict = CACHE.get(saved_filter_cache_key(self.request))[
+                        "query_dict"
+                    ]
 
                 self._saved_filters = query_dict
                 self.request.exclude_filter_form = True
                 self.queryset = self.filter_class(
-                    query_dict, queryset, request=self.request
+                    query_dict, queryset=self.queryset, request=self.request
                 ).qs
                 default_filter = models.SavedFilter.objects.filter(
-                    path=self.request.path,
+                    saved_filter_path_query(self.request),
                     created_by=self.request.user,
                     is_default=True,
                 ).first()
@@ -1699,49 +1849,86 @@ class HorillaCardView(ListView):
         context["actions"] = self.actions
         context["details"] = self.details
         context["show_filter_tags"] = self.show_filter_tags
+        context["show_quick_date_filters"] = self.show_quick_date_filters
+        if self.show_quick_date_filters:
+            context["quick_date_filters"] = get_quick_date_filters(
+                self.quick_date_ranges, self.quick_date_fields
+            )
         context["card_status_class"] = self.card_status_class
         context["card_status_indications"] = self.card_status_indications
+        context["custom_body_template"] = self.custom_body_template
+        context["custom_empty_template"] = self.custom_empty_template
+        context["saved_filters"] = dedupe_single_value_params(self._saved_filters)
 
         if self.show_filter_tags:
             data_dict = parse_qs(self._saved_filters.urlencode())
-            data_dict = get_key_instances(self.model, data_dict)
-            keys_to_remove = [
-                key
-                for key, value in data_dict.items()
-                if value[0] in ["unknown", "on"] + self.filter_keys_to_remove
-            ]
+            data_dict = {
+                key: list(dict.fromkeys(values)) for key, values in data_dict.items()
+            }
+            data_dict = get_key_instances(
+                self.model, data_dict, filter_class=self.filter_class
+            )
+            remove_keys = set(
+                # nested_fields gets its own "Grouped by: X > Y" line instead of the generic filter-tag rendering.
+                # open_tab only controls which tab opens on load; it's not a real filter.
+                ["filter_applied", "nav_url", "referrer", "nested_fields", "open_tab"]
+                + self.filter_keys_to_remove
+            )
 
-            for key in (
-                keys_to_remove + ["referrer", "nav_url"] + self.filter_keys_to_remove
-            ):
-                if key in data_dict.keys():
+            keys_to_remove = [key for key in data_dict if key in remove_keys]
+
+            for key in remove_keys:
+                data_dict.pop(key, None)
+
+            for key, hidden in self.hidden_filter_tag_values.items():
+                if data_dict.get(key) == [str(hidden)]:
                     data_dict.pop(key)
 
+            data_dict, tag_labels, tag_extras = humanize_filter_tags(data_dict)
             context["filter_dict"] = data_dict
+            context["filter_tag_labels"] = tag_labels
+            context["filter_tag_extras"] = tag_extras
+            context["keys_to_remove"] = keys_to_remove
 
         ordered_ids = list(queryset.values_list("id", flat=True))
         ordered_ids = []
-        if not self._saved_filters.get("field"):
+        if self.disable_group_by or not self._saved_filters.get("field"):
             for instance in queryset:
-                ordered_ids.append(instance.pk)
+                ordered_ids.append(str(instance.pk))
         self.request.session[self.ordered_ids_key] = ordered_ids
 
         # CACHE.get(self.request.session.session_key + "cbv")[HorillaCardView] = context
-        referrer = self.request.GET.get("referrer", "")
-        if referrer:
-            # Remove the protocol and domain part
-            referrer = "/" + "/".join(referrer.split("/")[3:])
-        context["stored_filters"] = (
-            models.SavedFilter.objects.filter(
-                path=self.request.path, created_by=self.request.user
-            )
-            | models.SavedFilter.objects.filter(
-                referrer=referrer, created_by=self.request.user
-            )
+        context["stored_filters"] = models.SavedFilter.objects.filter(
+            saved_filter_path_query(self.request), created_by=self.request.user
         ).distinct()
-        context["queryset"] = paginator_qry(
-            queryset, self.request.GET.get("page"), self.records_per_page
-        )
+
+        # Set default pagination if not set
+        if not self.records_per_page:
+            self.records_per_page = get_pagination(default=50)
+
+        # Group-by accordion support: when a `field` filter is active, build groups
+        if not self.disable_group_by and self._saved_filters.get("field"):
+            field = self._saved_filters.get("field")
+            try:
+                context["groups"] = group_by_queryset(
+                    queryset,
+                    field,
+                    self._saved_filters.get("page"),
+                    "page",
+                    records_per_page=self.records_per_page,
+                )
+                context["queryset"] = queryset[:0]  # empty — groups has the data
+                context["saved_filters"] = dedupe_single_value_params(
+                    self._saved_filters
+                )
+            except Exception:
+                context["queryset"] = paginator_qry(
+                    queryset, self.request.GET.get("page"), self.records_per_page
+                )
+        else:
+            context["queryset"] = paginator_qry(
+                queryset, self.request.GET.get("page"), self.records_per_page
+            )
         return context
 
     @classmethod
@@ -1758,6 +1945,7 @@ class HorillaCardView(ListView):
         return view
 
 
+@method_decorator(login_required, name="dispatch")
 @method_decorator(hx_request_required, name="dispatch")
 class ReloadMessages(TemplateView):
     """
@@ -1813,12 +2001,37 @@ class HorillaFormView(FormView):
             targets_to_reload = list(set(targets_to_reload))
             targets_to_reload.append("#reloadMessagesButton")
             script_id = get_short_uuid(4)
+            request = getattr(_thread_locals, "request", None)
+            save_and_add_another = (
+                request
+                and request.method == "POST"
+                and request.POST.get("save_and_add_another") == "true"
+            )
+            if save_and_add_another:
+                query_string = request.META.get("QUERY_STRING", "")
+                reopen_url = request.path
+                if query_string:
+                    reopen_url = f"{reopen_url}?{query_string}"
+                reopen_url = json.dumps(reopen_url)
+                target_id = request.META.get("HTTP_HX_TARGET", "genericModalBody")
+                target_selector = json.dumps(f"#{target_id}")
+                script += (
+                    f"setTimeout(function(){{"
+                    f"var targetSelector = {target_selector};"
+                    f"if (window.htmx) {{"
+                    f"htmx.ajax('GET', {reopen_url}, {{target: targetSelector, swap: 'innerHTML'}});"
+                    f"}}"
+                    f"}}, 50);"
+                )
+            close_modal_script = ""
+            if not save_and_add_another:
+                close_modal_script = f"$('#scriptTarget{script_id}').closest('.oh-modal--show').first().removeClass('oh-modal--show');"
             script = (
                 f"<script id='scriptTarget{script_id}'>"
                 + "{}".format(
                     "".join([f"$(`{target}`).click();" for target in targets_to_reload])
                 )
-                + f"$('#scriptTarget{script_id}').closest('.oh-modal--show').first().removeClass('oh-modal--show');"
+                + close_modal_script
                 + "$('.reload-record').click();"
                 + "$('.reload-field').click();"
                 + script
@@ -1843,10 +2056,11 @@ class HorillaFormView(FormView):
     close_button_attrs: str = """"""
     submit_button_attrs: str = """"""
 
-    # NOTE: Dynamic create view's forms save method will be overwritten
+    restrict_company_field: bool = True
+
+    # NOTE: dynamic create views overwrite the form's save method.
     is_dynamic_create_view: bool = False
-    # [(field_name,DynamicFormView,[other_field1,...])] # other_fields
-    # can be mentioned like this to pass the field selected
+    # [(field_name, DynamicFormView, [other_field1, ...])] - other_fields are passed the selected field's value.
     dynamic_create_fields: list = []
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1865,6 +2079,10 @@ class HorillaFormView(FormView):
         self, request: HttpRequest, *args: str, pk=None, **kwargs: Any
     ) -> HttpResponse:
         _pk = pk
+        # form.instance is never falsy (Django always creates a blank one), so check pk existence against the resolved queryset instead.
+        if pk and not self.get_queryset():
+            messages.error(request, _("Matching query does not exists."))
+            return HorillaRedirect(request)
         response = super().get(request, *args, **kwargs)
         return response
 
@@ -1872,7 +2090,9 @@ class HorillaFormView(FormView):
         self, request: HttpRequest, *args: str, pk=None, **kwargs: Any
     ) -> HttpResponse:
         _pk = pk
-        self.get_form()
+        if pk and not self.get_queryset():
+            messages.error(request, _("Matching query does not exists."))
+            return HorillaRedirect(request)
         response = super().post(request, *args, **kwargs)
         return response
 
@@ -1899,9 +2119,10 @@ class HorillaFormView(FormView):
         context["hx_confirm"] = self.hx_confirm
         context["hx_target"] = self.request.META.get("HTTP_HX_TARGET", "this")
         pk = None
-        if self.form.instance:
-            pk = self.form.instance.pk
-        # next/previous option in the forms
+        # Some custom form views may set `self.form` to a form class, not instance; guard against crashing on `.instance`.
+        form_instance = getattr(self.form, "instance", None)
+        if form_instance:
+            pk = form_instance.pk
         if pk and self.request.GET.get(self.ids_key):
             instance_ids = self.request.session.get(self.ordered_ids_key, [])
             url = resolve(self.request.path)
@@ -1930,7 +2151,9 @@ class HorillaFormView(FormView):
     def get_form(self, form_class=None):
 
         pk = self.kwargs.get("pk")
-        if not hasattr(self, "form"):
+        # `form` in kwargs may be a class, not an initialized instance.
+        existing_form = getattr(self, "form", None)
+        if not isinstance(existing_form, forms.BaseForm):
             instance = self.get_queryset()
             data = None
             files = None
@@ -1953,26 +2176,54 @@ class HorillaFormView(FormView):
                 ]
                 for dynamic_tuple in self.dynamic_create_fields:
                     view = dynamic_tuple[1]
-                    view.display_title = "Dynamic create"
                     field = dynamic_tuple[0]
                     additional_data_fields = []
                     if len(dynamic_tuple) == 3:
                         additional_data_fields = dynamic_tuple[2]
                     key = self.request.session.session_key + "cbv" + field
-                    field_instance = form.instance._meta.get_field(field)
                     value = form.initial.get(field, [])
-
-                    form_field = forms.ChoiceField
-                    if isinstance(field_instance, models.models.ManyToManyField):
-                        form_field = forms.MultipleChoiceField
-                        if form.instance.pk is not None:
-                            value = list(
-                                getattr(form.instance, field).values_list(
-                                    "id", flat=True
-                                )
+                    try:
+                        # Normal case: `field` is a real field on the
+                        # form's model (FK or M2M).
+                        field_instance = form.instance._meta.get_field(field)
+                        if isinstance(field_instance, models.models.ManyToManyRel):
+                            field_label = form.fields[field].label
+                            is_multi = isinstance(
+                                form.fields[field], forms.ModelMultipleChoiceField
                             )
-                    else:
-                        value = getattr(getattribute(form.instance, field), "pk", value)
+                            if is_multi and form.instance.pk is not None:
+                                value = list(
+                                    getattr(form.instance, field).values_list(
+                                        "id", flat=True
+                                    )
+                                )
+                        else:
+                            field_label = (
+                                form.fields[field].label or field_instance.verbose_name
+                            )
+                            is_multi = isinstance(
+                                field_instance, models.models.ManyToManyField
+                            )
+                            if is_multi and form.instance.pk is not None:
+                                value = list(
+                                    getattr(form.instance, field).values_list(
+                                        "id", flat=True
+                                    )
+                                )
+                            elif not is_multi:
+                                value = getattr(
+                                    getattribute(form.instance, field), "pk", value
+                                )
+                    except FieldDoesNotExist:
+                        field_label = form.fields[field].label
+                        is_multi = isinstance(
+                            form.fields[field], forms.ModelMultipleChoiceField
+                        )
+
+                    view.display_title = _("Create %(label)s") % {"label": field_label}
+                    form_field = (
+                        forms.MultipleChoiceField if is_multi else forms.ChoiceField
+                    )
                     CACHE.set(
                         key,
                         {
@@ -1982,21 +2233,23 @@ class HorillaFormView(FormView):
                         },
                     )
 
-                    from django.urls import path
-
-                    from horilla.urls import urlpatterns
-
-                    urlpatterns.append(
-                        path(
-                            f"dynamic-path-{field}-{self.request.session.session_key}",
-                            view.as_view(),
-                            name=f"dynamic-path-{field}-{self.request.session.session_key}",
-                        )
+                    dynamic_path_route = (
+                        f"dynamic-path-{field}-{self.request.session.session_key}"
+                    )
+                    register_dynamic_url(
+                        dynamic_path_route,
+                        view.as_view(),
+                        name=dynamic_path_route,
                     )
                     queryset = form.fields[field].queryset
                     choices = [(instance.id, instance) for instance in queryset]
                     choices.insert(0, ("", "Select option"))
-                    choices.append(("dynamic_create", "Dynamic create"))
+                    choices.append(
+                        (
+                            "dynamic_create",
+                            _("Create %(label)s") % {"label": field_label},
+                        )
+                    )
                     attrs = form.fields[field].widget.attrs
                     for data_field in additional_data_fields:
 
@@ -2047,6 +2300,25 @@ class HorillaFormView(FormView):
                 self.form_class.verbose_name = self.new_display_title
             form.close_button_attrs = self.close_button_attrs
             form.submit_button_attrs = self.submit_button_attrs
+            company_field = form.fields.get("company_id")
+            selected_company = get_selected_company()
+            # user = getattr(self.request, "user", None)
+            # can_manage_company = user and (
+            #     user.has_perm("base.add_company") or user.has_perm("base.change_company")
+            # )
+            if (
+                self.restrict_company_field
+                and company_field
+                and selected_company
+                and selected_company != "all"
+                # and not can_manage_company
+            ):
+                if isinstance(company_field, forms.ModelMultipleChoiceField):
+                    company_field.widget = forms.MultipleHiddenInput()
+                    form.initial["company_id"] = [selected_company]
+                else:
+                    company_field.widget = forms.HiddenInput()
+                    form.initial["company_id"] = selected_company
             # CACHE.get(self.request.session.session_key + "cbv")[HorillaFormView] = form
             self.form = form
         return self.form
@@ -2082,14 +2354,24 @@ class HorillaNavView(TemplateView):
     search_in: list = []
     actions: list = []
     group_by_fields: list = []
-    filter_form_context_name: str = ""
+    nested_group_by_fields: list = []
+    filter_form_context_name: str = "form"
     filter_instance: FilterSet = None
     filter_instance_context_name: str = ""
     filter_body_template: str = ""
     empty_inputs: list = []
     view_types: list = []
     create_attrs: str = """"""
+    create_label: str = ""
+    # An ion-icon name shown on the create button in place of the "+" glyph.
+    create_icon: str = ""
+    # Hide the search box in generic/inline_nav.html; the form (which also
+    # auto-loads the list) is still rendered.
+    hide_search: bool = False
     apply_first_filter = True
+    default_group_by: str = ""
+    # Opt-in redesign of the Filter dropdown's accordion sections (see horilla_nav.html's .oh-filter-modern styles).
+    modern_filter: bool = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -2099,10 +2381,7 @@ class HorillaNavView(TemplateView):
         # update_initial_cache(request, CACHE, HorillaNavView)
 
     def _initialize_model_and_group_fields(self) -> None:
-        """
-        Initialize model_class and reinitialize filter_instance if model exists
-        for updating group_by_fields with verbose names.
-        """
+        """Resolve group_by_fields/nested_group_by_fields to (field, verbose_name) tuples once filter_instance's model is known."""
         if not self.filter_instance:
             return
 
@@ -2117,14 +2396,23 @@ class HorillaNavView(TemplateView):
         except:
             pass
 
-        if not self.group_by_fields:
-            return
-
         get_field = model_instance._meta.get_field
+        if self.group_by_fields:
+            self.group_by_fields = self._resolve_field_labels(
+                self.group_by_fields, model_class_ref, get_field
+            )
+        if self.nested_group_by_fields:
+            self.nested_group_by_fields = self._resolve_field_labels(
+                self.nested_group_by_fields, model_class_ref, get_field
+            )
+
+    @staticmethod
+    def _resolve_field_labels(fields, model_class_ref, get_field) -> list:
+        """Convert plain field names into (field, verbose_name) tuples."""
         updated_fields = []
         append = updated_fields.append
 
-        for field in self.group_by_fields:
+        for field in fields:
             if isinstance(field, str):
                 try:
                     verbose_name = get_field(field).verbose_name
@@ -2142,11 +2430,62 @@ class HorillaNavView(TemplateView):
                             continue
                         except Exception as e:
                             pass
+                    # Fallback: walk each dotted segment's related_model, matching horilla/group_by.py's resolution.
+                    if "__" in field:
+                        try:
+                            current_model = model_class_ref
+                            field_obj = None
+                            segments = field.split("__")
+                            for i, segment in enumerate(segments):
+                                field_obj = current_model._meta.get_field(segment)
+                                if i < len(segments) - 1:
+                                    current_model = field_obj.related_model
+                            append((field, field_obj.verbose_name))
+                            continue
+                        except Exception:
+                            pass
                     append(field)
             else:
                 append(field)
 
-        self.group_by_fields = updated_fields
+        return updated_fields
+
+    @staticmethod
+    def _get_applied_filter_count(filterset):
+        """Count genuinely-applied filter fields (plus custom_filter_rows) for the Filter trigger's badge."""
+        count = 0
+        if filterset.is_bound:
+            for name, field in filterset.form.fields.items():
+                # Use raw value(), not cleaned_data: one stale field failing validation shouldn't zero out the whole count.
+                value = filterset.form[name].value()
+                if value is None or value == "":
+                    continue
+                if hasattr(value, "__len__") and len(value) == 0:
+                    continue
+                if not isinstance(value, (list, tuple)):
+                    # A field's "unfiltered" state may not be "" - compare against its own neutral first choice too (e.g. NullBooleanSelect's "unknown").
+                    choices = list(getattr(field.widget, "choices", []) or [])
+                    if choices and str(value) == str(choices[0][0]):
+                        continue
+                count += 1
+        count += len(getattr(filterset, "custom_filter_rows", []))
+        return count
+
+    def _effective_get_params(self) -> QueryDict:
+        """Get params for this nav's filter, falling back to HX-Current-Url's query string."""
+        params = QueryDict(mutable=True)
+        hx_current_url = (
+            self.request.META.get("HTTP_HX_CURRENT_URL") if self.request else None
+        )
+        if hx_current_url:
+            query = urlparse(hx_current_url).query
+            if query:
+                for key, values in QueryDict(query).lists():
+                    params.setlist(key, values)
+        if self.request:
+            for key, values in self.request.GET.lists():
+                params.setlist(key, values)
+        return params
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -2155,12 +2494,28 @@ class HorillaNavView(TemplateView):
         context["search_swap_target"] = self.search_swap_target
         context["search_input_attrs"] = self.search_input_attrs
         context["group_by_fields"] = self.group_by_fields
+        context["nested_group_by_fields"] = self.nested_group_by_fields
+        get_params = self._effective_get_params()
+        nested_selected = get_params.getlist("nested_fields")
+        if not nested_selected:
+            nested_selected = [self.default_group_by] if self.default_group_by else [""]
+        context["nested_fields_selected"] = nested_selected
         context["actions"] = self.actions
         context["filter_body_template"] = self.filter_body_template
-        context["view_types"] = self.view_types
+        context["modern_filter"] = self.modern_filter
+        # Any FilterSet can opt into the "+ Add filter" custom-lookup builder via its own custom_filter_fields list.
+        context["custom_filter_fields"] = getattr(
+            self.filter_instance, "custom_filter_fields", []
+        )
+        # Filled in below once the request-bound filterset exists; which rows are applied depends on this request's GET data.
+        context["custom_filter_rows"] = []
         context["create_attrs"] = self.create_attrs
+        context["create_label"] = self.create_label
+        context["create_icon"] = self.create_icon
+        context["hide_search"] = self.hide_search
         context["search_in"] = self.search_in
         context["apply_first_filter"] = self.apply_first_filter
+        context["default_group_by"] = self.default_group_by
         context["filter_instance_context_name"] = self.filter_instance
         last_filter = CACHE.get(
             self.request.session.session_key
@@ -2170,11 +2525,56 @@ class HorillaNavView(TemplateView):
         )
         context["empty_inputs"] = self.empty_inputs + ["nav_url"]
         context["last_filter"] = dict(last_filter)
+        context["applied_filter_count"] = 0
         if self.filter_instance:
-            context[self.filter_form_context_name] = self.filter_instance.form
-        context["active_view"] = models.ActiveView.objects.filter(
-            path=self.request.path
-        ).first()
+            FilterClass = self.filter_instance.__class__
+            filterset = FilterClass(get_params or None)
+            context[self.filter_form_context_name] = filterset.form
+            context[self.filter_instance_context_name] = filterset
+            context["custom_filter_rows"] = getattr(filterset, "custom_filter_rows", [])
+            context["applied_filter_count"] = self._get_applied_filter_count(filterset)
+
+        active_view = models.ActiveView.objects.filter(path=self.request.path).first()
+        # An explicit ?view= outranks the persisted one for this render, so the toggle and rendered content agree; persisting happens elsewhere.
+        requested_view = self.request.GET.get("view")
+        if requested_view and (not active_view or active_view.type != requested_view):
+            active_view = models.ActiveView(path=self.request.path, type=requested_view)
+        context["active_view"] = active_view
+
+        extra_params = {}
+
+        for key in self.request.GET:
+            extra_params[key] = self.request.GET.getlist(key)
+
+        extra_params["referrer"] = urlparse(
+            self.request.META.get("HTTP_REFERER", "")
+        ).path
+
+        # Update each view's URL with query parameters
+        for view in self.view_types:
+            parsed = urlparse(view.get("url", ""))
+
+            combined_query = dict(parse_qsl(parsed.query))
+            # combined_query.update(self.request.GET)
+            combined_query.update(extra_params)
+
+            view["url"] = urlunparse(
+                parsed._replace(query=urlencode(combined_query, doseq=True))
+            )
+
+        context["view_types"] = self.view_types
+
+        if self.search_url:
+            # Update search URL with query parameters
+            parsed_search = urlparse(str(self.search_url))
+            parsed_search_url = dict(parse_qsl(parsed_search.query))
+            # parsed_search_url.update(self.request.GET)
+            parsed_search_url.update(extra_params)
+
+            context["search_url"] = urlunparse(
+                parsed_search._replace(query=urlencode(parsed_search_url, doseq=True))
+            )
+
         # CACHE.get(self.request.session.session_key + "cbv")[HorillaNavView] = context
         return context
 
@@ -2212,6 +2612,23 @@ class HorillaProfileView(DetailView):
 
     tabs: list = []
 
+    # Shared across all subclasses; keys are "{subclass-name-lower}-{tab title}", consumed by the static "hzp-tab/..." route (see dispatch_profile_tab below).
+    _tab_view_registry: dict = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._register_tabs()
+
+    @classmethod
+    def _register_tabs(cls) -> None:
+        """Register this class's tabs without a url yet into the shared dispatch registry, computing each tab's url."""
+        prefix = cls.__name__.lower()
+        for tab in cls.tabs:
+            if not tab.get("url"):
+                key = f"{prefix}-{tab['title']}"
+                HorillaProfileView._tab_view_registry[key] = tab["view"]
+                tab["url"] = f"/hzp-tab/{key}/" + "{pk}/"
+
     def __init__(self, **kwargs: Any) -> None:
         self.url_prefix = str(self.__class__.__name__.lower())
         if not self.view_id:
@@ -2223,42 +2640,8 @@ class HorillaProfileView(DetailView):
         self.ordered_ids_key = f"ordered_ids_{self.model.__name__.lower()}"
         # update_initial_cache(request, CACHE, HorillaProfileView)
 
-        from horilla.urls import path, urlpatterns
-
-        for tab in self.tabs:
-            if not tab.get("url"):
-                url = f"{self.url_prefix}-{tab['title']}"
-                urlpatterns.append(
-                    path(
-                        url + "/<int:pk>/",
-                        tab["view"],
-                    )
-                )
-                tab["url"] = "/" + url + "/{pk}/"
-
-        # hidden columns configuration
-
-        existing_instance = models.ToggleColumn.objects.filter(
-            user_id=request.user, path=request.path_info
-        ).first()
-
-        self.visible_tabs = self.tabs.copy()
-
-        self.tabs_list = [(tab["title"], tab["title"]) for tab in self.visible_tabs]
-
-        hidden_tabs = (
-            [] if not existing_instance else existing_instance.excluded_columns
-        )
-        self.toggle_form = ToggleColumnForm(
-            self.tabs_list,
-            hidden_tabs,
-            hidden_fields=[],
-        )
-        for column in self.tabs_list:
-            if column[1] in hidden_tabs:
-                for tab in self.visible_tabs:
-                    if tab["title"] == column[1]:
-                        self.visible_tabs.remove(tab)
+        # Safety net for tabs added some other way __init_subclass__/add_tab() didn't already cover.
+        self._register_tabs()
 
     @classmethod
     def add_tab(cls, tab: dict = None, index: int = None, tabs: list = None) -> None:
@@ -2280,8 +2663,9 @@ class HorillaProfileView(DetailView):
         if tab:
             if index is None:
                 cls.tabs.append(tab)
-                return
-            cls.tabs.index(index, tab)
+            else:
+                cls.tabs.index(index, tab)
+        cls._register_tabs()
 
     @classmethod
     def as_view(cls, **initkwargs):
@@ -2296,18 +2680,37 @@ class HorillaProfileView(DetailView):
 
         return view
 
+    def get_status_ribbon(self, instance):
+        """
+        Override to show a corner ribbon, e.g. {"label": _("Rejected"), "variant": "danger"}.
+        """
+        return None
+
     def get_context_data(self, **kwargs: Any) -> dict:
         context = super().get_context_data(**kwargs)
         context["instance"] = context["object"]
+        context["status_ribbon"] = self.get_status_ribbon(context["instance"])
         context["tabs"] = self.tabs
-        context["visible_tabs"] = self.visible_tabs
-        context["toggle_form"] = self.toggle_form
         context["view_id"] = self.view_id
         active_tab = models.ActiveTab.objects.filter(
             created_by=self.request.user, path=self.request.path
         ).first()
         if active_tab:
             context["active_target"] = active_tab.tab_target
+
+        # ?open_tab=<tab title, in English> opens that tab on load, overriding the
+        # last-active tab (e.g. a dashboard row linking to a candidate's
+        # "Scheduled Interviews"). Matched against the untranslated titles so the
+        # link works in any language; the button itself carries the translated one.
+        open_tab = self.request.GET.get("open_tab")
+        if open_tab:
+            for tab in self.tabs:
+                with translation.override("en"):
+                    english_title = str(tab["title"])
+                local_title = str(tab["title"])
+                if english_title == open_tab and not re.search(r'["\`$]', local_title):
+                    context["active_target"] = f'[data-tab="{local_title}"]'
+                    break
 
         instance_ids = self.request.session.get(self.ordered_ids_key, [])
 
@@ -2334,6 +2737,37 @@ class HorillaProfileView(DetailView):
         url = resolve(self.request.path)
         key = list(url.kwargs.keys())[0]
 
+        existing_instance = models.ToggleColumn.objects.filter(
+            user_id=self.request.user, path=self.request.path_info
+        ).first()
+
+        from horilla_views.templatetags.generic_template_filters import (
+            accessibility as tab_accessibility,
+        )
+
+        self.visible_tabs = [
+            tab
+            for tab in self.tabs
+            if not tab.get("accessibility")
+            or tab_accessibility(tab["accessibility"], context["instance"])
+        ]
+
+        self.tabs_list = [(tab["title"], tab["title"]) for tab in self.visible_tabs]
+
+        hidden_tabs = (
+            [] if not existing_instance else existing_instance.excluded_columns
+        )
+        self.toggle_form = ToggleColumnForm(
+            self.tabs_list,
+            self.tabs_list,
+            hidden_tabs,
+        )
+        for column in self.tabs_list:
+            if column[1] in hidden_tabs:
+                for tab in self.visible_tabs:
+                    if tab["title"] == column[1]:
+                        self.visible_tabs.remove(tab)
+
         url_name = url.url_name
         next_url = reverse(url_name, kwargs={key: next_id})
         previous_url = reverse(url_name, kwargs={key: previous_id})
@@ -2345,10 +2779,13 @@ class HorillaProfileView(DetailView):
             context["previous_url"] = previous_url
             context["push_url_next"] = push_url_next
             context["push_url_prev"] = push_url_prev
+            context["push_url"] = self.push_url
 
         context["display_count"] = display_count
         context["actions"] = self.actions
         context["filter_class"] = self.filter_class
+        context["visible_tabs"] = self.visible_tabs
+        context["toggle_form"] = self.toggle_form
         cache = {
             "instances": context["instances"],
             "instance_ids": context["instance_ids"],
@@ -2358,3 +2795,13 @@ class HorillaProfileView(DetailView):
         }
         CACHE.set(f"{self.request.session.session_key}search_in_instance_ids", cache)
         return context
+
+
+def dispatch_profile_tab(request, tab_key: str, pk: int, *args, **kwargs):
+    """Resolve any HorillaProfileView tab through one static route, looking the view up in _tab_view_registry (avoids racy per-tab URL registration across worker processes)."""
+    if not request.user.is_authenticated:
+        return unauthenticated_response(request)
+    view_func = HorillaProfileView._tab_view_registry.get(tab_key)
+    if view_func is None:
+        raise Http404(f"No profile tab registered for '{tab_key}'")
+    return view_func(request, *args, pk=pk, **kwargs)

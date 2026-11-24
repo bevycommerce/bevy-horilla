@@ -1,14 +1,9 @@
 """
-The contract between the Workspace modules and the host HR system.
-
-WORKSPACE_ADAPTER replaces behaviour only. The Workspace tables and their
-migrations still point at Horilla's Employee and Attendance models (and the
-employee and attendance apps), so a port also needs compatible models and
-migration dependencies before the schema can be installed.
+The contract between the Smart Workspace modules and the host HR system.
 
 To move the Workspace into another Django HR portal, write a new class with
 these methods and point settings.WORKSPACE_ADAPTER at it. Nothing else in
-workspace_attendance or daily_updates imports HR models.
+workspace_attendance, daily_updates or workspace_reminders imports HR models.
 """
 
 
@@ -24,10 +19,6 @@ class BaseAdapter:
     # --- people -------------------------------------------------------
     def get_employee(self, user):
         """The employee linked to a user, or None."""
-        raise NotImplementedError
-
-    def is_visible_employee(self, employee_id):
-        """Whether the current viewer's company-wide views include this employee."""
         raise NotImplementedError
 
     def safe_employee_card(self, employee):
@@ -77,7 +68,15 @@ class BaseAdapter:
     def mark_valid_for_payroll(self, attendance):
         raise NotImplementedError
 
-    # --- schedule ---------------------------------------------------------
+    # --- schedule and notifications (used by reminders) ---------------
+    def is_day_off(self, employee, day):
+        """True on holidays, company leave days and approved leave."""
+        raise NotImplementedError
+
+    def notify(self, employee, message, url=None):
+        """Put a message in the portal notification centre."""
+        raise NotImplementedError
+
     def shift_window(self, employee, day):
         """(start_datetime, end_datetime) of the employee's shift on that day, or None when off."""
         raise NotImplementedError

@@ -26,6 +26,7 @@ from typing import Any
 
 from django import forms
 from django.template.loader import render_to_string
+from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 
 from base.forms import ModelForm
@@ -47,10 +48,45 @@ from horilla import horilla_middlewares
 
 class TicketTypeForm(ModelForm):
 
+    cols = {"title": 12, "type": 12, "prefix": 12}
+
     class Meta:
         model = TicketType
         fields = "__all__"
         exclude = ["is_active"]
+
+    def clean(self):
+        cleaned_data = super().clean()
+        title = cleaned_data.get("title")
+        prefix = cleaned_data.get("prefix")
+        instance = self.instance
+
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        from base.auth_backends import resolve_company_id_for_new_record
+
+        company_id = resolve_company_id_for_new_record(request)
+        if company_id:
+            from base.models import Company as CompanyModel
+
+            company = CompanyModel.find(company_id)
+            qs_title = TicketType.objects.filter(title=title, company_id=company)
+            qs_prefix = TicketType.objects.filter(prefix=prefix, company_id=company)
+        else:
+            qs_title = TicketType.objects.filter(title=title, company_id__isnull=True)
+            qs_prefix = TicketType.objects.filter(
+                prefix=prefix, company_id__isnull=True
+            )
+
+        if instance.pk:
+            qs_title = qs_title.exclude(pk=instance.pk)
+            qs_prefix = qs_prefix.exclude(pk=instance.pk)
+
+        if title and qs_title.exists():
+            self.add_error("title", _("Ticket type with this title already exists."))
+        if prefix and qs_prefix.exists():
+            self.add_error("prefix", _("Ticket type with this prefix already exists."))
+
+        return cleaned_data
 
     def as_p(self, *args, **kwargs):
         """
@@ -62,25 +98,36 @@ class TicketTypeForm(ModelForm):
 
 
 class FAQForm(ModelForm):
+
+    cols = {"question": 12, "answer": 12, "tags": 12}
+
     class Meta:
         model = FAQ
         fields = "__all__"
         exclude = ["is_active"]
         widgets = {
             "category": forms.HiddenInput(),
+            "tags": forms.SelectMultiple(
+                attrs={
+                    "class": "oh-select oh-select-2 select2-hidden-accessible",
+                    "onchange": "updateTag(this)",
+                }
+            ),
         }
 
     def __init__(self, *args, **kwargs):
-        """Initializes the FAQ form instance and adjusts the tags field."""
+        """
+        Initializes the Ticket tag form instance.
+        If an instance is provided, sets the initial value for the form's .
+        """
         super().__init__(*args, **kwargs)
-
-        if "tags" in self.fields:
-            self.fields["tags"].choices = list(self.fields["tags"].choices)
-            self.fields["tags"].widget.attrs.update({"onchange": "updateTag(this)"})
-            self.fields["tags"].choices.append(("create_new_tag", "Create new tag"))
+        self.fields["tags"].choices = list(self.fields["tags"].choices)
+        self.fields["tags"].choices.append(("create_new_tag", "Create new tag"))
 
 
 class TicketForm(ModelForm):
+
+    cols = {"description": 12, "tags": 12}
 
     class Meta:
         model = Ticket
@@ -98,6 +145,7 @@ class TicketForm(ModelForm):
             "tags",
         ]
         widgets = {
+            "deadline": forms.DateInput(attrs={"type": "date"}),
             "raised_on": forms.Select(
                 attrs={"class": "oh-select oh-select-2", "required": "true"}
             ),
@@ -126,6 +174,16 @@ class TicketForm(ModelForm):
                 label="Attachements", required=False
             )
         request = getattr(horilla_middlewares._thread_locals, "request", None)
+        if self.instance and self.instance.pk:
+            is_manager = self.instance.can_manage_priority()
+        else:
+            is_manager = request.user.has_perm("helpdesk.change_ticket") or (
+                is_reportingmanager(request)
+            )
+        if not is_manager:
+            self.fields.pop("deadline", None)
+            if self.instance and self.instance.pk:
+                self.fields.pop("priority", None)
         instance = kwargs.get("instance")
         if instance:
             employee = instance.employee_id
@@ -149,9 +207,9 @@ class TicketForm(ModelForm):
             self.fields["ticket_type"].choices = list(
                 self.fields["ticket_type"].choices
             )
-            self.fields["ticket_type"].choices.append(
-                ("create_new_ticket_type", "Create new ticket type")
-            )
+            # self.fields["ticket_type"].choices.append(
+            #     ("create_new_ticket_type", "Create new ticket type")
+            # )
         if is_reportingmanager(request) or request.user.has_perm("base.add_tags"):
             self.fields["tags"].choices = list(self.fields["tags"].choices)
             self.fields["tags"].choices.append(("create_new_tag", "Create new tag"))
@@ -187,6 +245,14 @@ class TicketTagForm(ModelForm):
         fields = [
             "tags",
         ]
+        widgets = {
+            "tags": forms.SelectMultiple(
+                attrs={
+                    "class": "oh-select oh-select-2 select2-hidden-accessible",
+                    "onchange": "updateTag()",
+                }
+            ),
+        }
 
     def __init__(self, *args, **kwargs):
         """
@@ -195,13 +261,7 @@ class TicketTagForm(ModelForm):
         """
         super().__init__(*args, **kwargs)
         request = getattr(horilla_middlewares._thread_locals, "request", None)
-
-        if (
-            request
-            and request.user.is_authenticated
-            and (is_reportingmanager(request) or request.user.has_perm("base.add_tags"))
-        ):
-            self.fields["tags"].widget.attrs.update({"onchange": "updateTag(this)"})
+        if is_reportingmanager(request) or request.user.has_perm("base.add_tags"):
             self.fields["tags"].choices = list(self.fields["tags"].choices)
             self.fields["tags"].choices.append(("create_new_tag", "Create new tag"))
 
@@ -226,6 +286,8 @@ class TicketAssigneesForm(ModelForm):
 
 
 class FAQCategoryForm(ModelForm):
+    cols = {"title": 12, "description": 12}
+
     class Meta:
         model = FAQCategory
         fields = "__all__"
@@ -262,24 +324,33 @@ class AttachmentForm(forms.ModelForm):
 
 
 class DepartmentManagerCreateForm(ModelForm):
+
+    cols = {"department": 12, "manager": 12}
+
     class Meta:
         model = DepartmentManager
         fields = ["department", "manager"]
         widgets = {
             "department": forms.Select(
                 attrs={
-                    "onchange": "getDepartmentEmployees($(this))",
+                    "hx-get": reverse_lazy("get-department-employee"),
+                    "hx-trigger": "change",
+                    "hx-target": "#id_manager",
+                    "hx-vals": 'js:{"dep_id": event.target.value}',
                 }
             ),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if "instance" in kwargs:
-            department = kwargs["instance"].department
-            # Get the employees related to this department
-            employees = department.employeeworkinformation_set.values_list(
-                "employee_id", flat=True
-            )
-            # Set the manager field queryset to be those employees
-            self.fields["manager"].queryset = Employee.objects.filter(id__in=employees)
+        if self.instance.pk:
+            if "instance" in kwargs:
+                department = kwargs["instance"].department
+                # Get the employees related to this department
+                employees = department.employeeworkinformation_set.values_list(
+                    "employee_id", flat=True
+                )
+                # Set the manager field queryset to be those employees
+                self.fields["manager"].queryset = Employee.objects.filter(
+                    id__in=employees
+                )

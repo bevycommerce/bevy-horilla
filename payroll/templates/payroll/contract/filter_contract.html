@@ -8,20 +8,6 @@
         <div class="row">
           <div class="col-sm-6">
             <div class="oh-input-group">
-              <label class="oh-label" for="{{f.form.contract_start_date.id_for_label}}">{% trans "Start Date" %}</label>
-              {{ f.form.contract_start_date }}
-            </div>
-          </div>
-          <div class="col-sm-6">
-            <div class="oh-input-group">
-              <label class="oh-label" for="{{f.form.contract_end_date.id_for_label}}">{% trans "End Date" %}</label>
-              {{ f.form.contract_end_date }}
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="col-sm-6">
-            <div class="oh-input-group">
               <label class="oh-label" for="{{f.form.wage_type.id_for_label}}">{% trans "Wage Type" %}</label>
               {{ f.form.wage_type }}
             </div>
@@ -131,7 +117,7 @@
           <div class="col-sm-6">
             <div class="oh-input-group">
               <label class="oh-label" for="{{f.form.basic_pay__lte.id_for_label}}"
-                >{% trans "Basic Salary Less Than or Equal" %}</label
+                >{% trans "Contract wage at most" %}</label
               >
               {{ f.form.basic_pay__lte }}
             </div>
@@ -139,7 +125,7 @@
           <div class="col-sm-6">
             <div class="oh-input-group">
               <label class="oh-label" for="{{f.form.basic_pay__gte.id_for_label}}"
-                >{% trans "Basic Salary Greater or Equal" %}</label
+                >{% trans "Contract wage at least" %}</label
               >
               {{ f.form.basic_pay__gte }}
             </div>
@@ -150,7 +136,7 @@
   </div>
   <div class="oh-dropdown__filter-footer">
     <button class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton" id="filterSubmit">
-      {% trans "Filter" %}
+      {% trans "Apply" %}
     </button>
   </div>
 

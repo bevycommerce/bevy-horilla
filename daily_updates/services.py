@@ -18,14 +18,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
-from daily_updates.models import (
-    COMBINED,
-    EOD,
-    MIDDAY,
-    DailyUpdate,
-    DailyUpdateRevision,
-    MiddaySkip,
-)
+from daily_updates.models import COMBINED, EOD, MIDDAY, DailyUpdate, DailyUpdateRevision, MiddaySkip
 from workspace_attendance.adapters import get_adapter
 from workspace_attendance.models import WorkspaceIdempotencyKey
 from workspace_attendance.services import (
@@ -55,28 +48,22 @@ def _clean_fields(fields):
         value = (fields.get(name) or "").strip()
         if len(value) > LIMITS[name]:
             raise WorkspaceError(
-                _("%(field)s is too long (maximum %(max)s characters).")
-                % {"field": name.title(), "max": LIMITS[name]},
+                _("%(field)s is too long (maximum %(max)s characters).") % {"field": name.title(), "max": LIMITS[name]},
                 code="too_long",
             )
         cleaned[name] = value
     if not cleaned["summary"]:
-        raise WorkspaceError(
-            _("Please write a short note about your work."), code="empty"
-        )
+        raise WorkspaceError(_("Please write a short note about your work."), code="empty")
     return cleaned
 
 
 def _check_work_date(work_date):
     today = timezone.localdate()
     if work_date > today:
-        raise WorkspaceError(
-            _("You cannot send an update for a future day."), code="future"
-        )
+        raise WorkspaceError(_("You cannot send an update for a future day."), code="future")
     if work_date < today - timedelta(days=backdate_days()):
         raise WorkspaceError(
-            _("Updates can be sent for the last %(days)s days only.")
-            % {"days": backdate_days()},
+            _("Updates can be sent for the last %(days)s days only.") % {"days": backdate_days()},
             code="outside_window",
         )
 
@@ -84,27 +71,20 @@ def _check_work_date(work_date):
 def _midday_deadline(employee, work_date):
     window = get_adapter().shift_window(employee, work_date)
     if window is None:
-        return timezone.make_aware(
-            timezone.datetime.combine(work_date, timezone.datetime.min.time())
-        ) + timedelta(hours=14)
+        return timezone.make_aware(timezone.datetime.combine(work_date, timezone.datetime.min.time())) + timedelta(hours=14)
     start, end = window
     return start + (end - start) / 2 + timedelta(minutes=midday_late_after_minutes())
 
 
 def _is_late(employee, work_date, update_type, now, skip):
     if update_type == MIDDAY:
-        return bool(skip and skip.choice == MiddaySkip.LATER) or now > _midday_deadline(
-            employee, work_date
-        )
+        return bool(skip and skip.choice == MiddaySkip.LATER) or now > _midday_deadline(employee, work_date)
     return now.date() > work_date
 
 
 def day_state(employee, work_date):
     """What exists for a day and what the employee can still send."""
-    updates = {
-        u.update_type: u
-        for u in DailyUpdate.objects.filter(employee=employee, work_date=work_date)
-    }
+    updates = {u.update_type: u for u in DailyUpdate.objects.filter(employee=employee, work_date=work_date)}
     skip = MiddaySkip.objects.filter(employee=employee, work_date=work_date).first()
     has_combined = COMBINED in updates
     return {
@@ -114,20 +94,11 @@ def day_state(employee, work_date):
         "combined": updates.get(COMBINED),
         "skip": skip,
         "can_submit_midday": not has_combined and MIDDAY not in updates,
-        "can_skip_midday": not has_combined
-        and MIDDAY not in updates
-        and EOD not in updates,
+        "can_skip_midday": not has_combined and MIDDAY not in updates and EOD not in updates,
         "can_submit_eod": not has_combined and EOD not in updates,
         "can_submit_combined": not updates,
-        "recommend_combined": bool(
-            skip and skip.choice == MiddaySkip.COMBINE and not updates
-        ),
-        "midday_pending_later": bool(
-            skip
-            and skip.choice == MiddaySkip.LATER
-            and MIDDAY not in updates
-            and not has_combined
-        ),
+        "recommend_combined": bool(skip and skip.choice == MiddaySkip.COMBINE and not updates),
+        "midday_pending_later": bool(skip and skip.choice == MiddaySkip.LATER and MIDDAY not in updates and not has_combined),
         "carry_forward": updates[MIDDAY].ongoing if MIDDAY in updates else "",
     }
 
@@ -143,11 +114,7 @@ def serialize_update(update):
         "ongoing": update.ongoing,
         "blockers": update.blockers,
         "submitted_at": timezone.localtime(update.submitted_at).isoformat(),
-        "last_edited_at": (
-            timezone.localtime(update.last_edited_at).isoformat()
-            if update.last_edited_at
-            else None
-        ),
+        "last_edited_at": timezone.localtime(update.last_edited_at).isoformat() if update.last_edited_at else None,
         "is_late": update.is_late,
         "is_backdated": update.is_backdated,
         "is_edited": update.is_edited,
@@ -162,18 +129,10 @@ def serialize_day(state):
         "eod": serialize_update(state["eod"]) if state["eod"] else None,
         "combined": serialize_update(state["combined"]) if state["combined"] else None,
         "skip": state["skip"].choice if state["skip"] else None,
-        **{
-            k: state[k]
-            for k in (
-                "can_submit_midday",
-                "can_skip_midday",
-                "can_submit_eod",
-                "can_submit_combined",
-                "recommend_combined",
-                "midday_pending_later",
-                "carry_forward",
-            )
-        },
+        **{k: state[k] for k in (
+            "can_submit_midday", "can_skip_midday", "can_submit_eod", "can_submit_combined",
+            "recommend_combined", "midday_pending_later", "carry_forward",
+        )},
     }
 
 
@@ -182,46 +141,32 @@ def submit_update(employee, work_date, update_type, fields, source, key=""):
     _check_source(source)
     if update_type not in TYPES:
         raise WorkspaceError(_("Unknown update type."), code="bad_type")
+    _check_work_date(work_date)
     cleaned = _clean_fields(fields)
 
     def do():
-        # checked inside the callback so a retry after midnight still replays
-        _check_work_date(work_date)
         with transaction.atomic():
             _lock_employee(employee)
             existing = set(
-                DailyUpdate.objects.filter(
-                    employee=employee, work_date=work_date
-                ).values_list("update_type", flat=True)
+                DailyUpdate.objects.filter(employee=employee, work_date=work_date).values_list("update_type", flat=True)
             )
             if update_type in existing:
                 raise WorkspaceError(
-                    _(
-                        "You already sent this update for this day. You can edit it instead."
-                    ),
-                    code="duplicate",
-                    status=409,
+                    _("You already sent this update for this day. You can edit it instead."),
+                    code="duplicate", status=409,
                 )
             if update_type in (MIDDAY, EOD) and COMBINED in existing:
                 raise WorkspaceError(
-                    _(
-                        "You already sent one combined update for this day. Edit that update instead."
-                    ),
-                    code="combined_exists",
-                    status=409,
+                    _("You already sent one combined update for this day. Edit that update instead."),
+                    code="combined_exists", status=409,
                 )
             if update_type == COMBINED and existing:
                 raise WorkspaceError(
-                    _(
-                        "You already sent a separate update for this day, so a combined update is not possible. Send the End-of-Day update instead."
-                    ),
-                    code="separate_exists",
-                    status=409,
+                    _("You already sent a separate update for this day, so a combined update is not possible. Send the End-of-Day update instead."),
+                    code="separate_exists", status=409,
                 )
             now = timezone.localtime()
-            skip = MiddaySkip.objects.filter(
-                employee=employee, work_date=work_date
-            ).first()
+            skip = MiddaySkip.objects.filter(employee=employee, work_date=work_date).first()
             update = DailyUpdate.objects.create(
                 employee=employee,
                 work_date=work_date,
@@ -241,36 +186,18 @@ def submit_update(employee, work_date, update_type, fields, source, key=""):
 
 
 def edit_update(employee, update_id, fields, source, actor, key=""):
-    """
-    Save new text for one of the employee's updates. A field missing from
-    ``fields`` keeps its current value (so an API PATCH may send only what
-    changed); a field sent as "" clears it.
-    """
     _check_source(source)
+    cleaned = _clean_fields(fields)
 
     def do():
         with transaction.atomic():
             _lock_employee(employee)
-            update = (
-                DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
-            )
+            update = DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
             if update is None or update.employee_id != employee.pk:
                 # same answer for "missing" and "someone else's": no information leak
-                raise WorkspaceError(
-                    _("Update not found."), code="not_found", status=404
-                )
-            cleaned = _clean_fields(
-                {
-                    f: fields[f] if f in fields else getattr(update, f)
-                    for f in TEXT_FIELDS
-                }
-            )
+                raise WorkspaceError(_("Update not found."), code="not_found", status=404)
             if all(getattr(update, f) == cleaned[f] for f in TEXT_FIELDS):
-                return 200, {
-                    "ok": True,
-                    "message": _("Nothing changed."),
-                    "update": serialize_update(update),
-                }
+                return 200, {"ok": True, "message": _("Nothing changed."), "update": serialize_update(update)}
             DailyUpdateRevision.objects.create(
                 update=update,
                 revision_number=update.revision_count + 1,
@@ -284,48 +211,34 @@ def edit_update(employee, update_id, fields, source, actor, key=""):
             update.revision_count += 1
             update.last_edited_at = timezone.now()
             update.save()
-            return 200, {
-                "ok": True,
-                "message": _("Update saved."),
-                "update": serialize_update(update),
-            }
+            return 200, {"ok": True, "message": _("Update saved."), "update": serialize_update(update)}
 
     return run_idempotent(employee, key, "update_edit", do)
 
 
 def delete_update(employee, update_id, source, key=""):
     """
-    The employee may delete their own update, and
-    nothing of it is kept anywhere: the update and its edit history (cascade)
-    are removed, and stored idempotent answers that contain its text are
-    replaced with a short "deleted" answer. The keys themselves stay, so an
-    old retry can never send the deleted text again; a new submission with a
-    new key can send that type again for the day.
+    Owner rule (2026-11-11): the employee may delete their own update, and
+    nothing of it is kept anywhere: the update, its edit history (cascade)
+    and any stored idempotent answers that contain its text are removed.
+    The type can then be sent again for that day.
     """
     _check_source(source)
 
     def do():
         with transaction.atomic():
             _lock_employee(employee)
-            update = (
-                DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
-            )
+            update = DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
             if update is None or update.employee_id != employee.pk:
-                raise WorkspaceError(
-                    _("Update not found."), code="not_found", status=404
-                )
+                raise WorkspaceError(_("Update not found."), code="not_found", status=404)
             work_date = update.work_date
             update.delete()  # revisions go with it (on_delete=CASCADE)
-            for stored in WorkspaceIdempotencyKey.objects.filter(
-                employee=employee
-            ).filter(
+            WorkspaceIdempotencyKey.objects.filter(employee=employee).filter(
                 Q(response__update__id=update_id)
                 | Q(response__day__midday__id=update_id)
                 | Q(response__day__eod__id=update_id)
                 | Q(response__day__combined__id=update_id)
-            ):
-                stored.response = _redact(stored.response, update_id)
-                stored.save(update_fields=["response"])
+            ).delete()
             return 200, {
                 "ok": True,
                 "message": _("Update deleted."),
@@ -336,77 +249,37 @@ def delete_update(employee, update_id, source, key=""):
     return run_idempotent(employee, key, "update_delete", do)
 
 
-def _redact(response, update_id):
-    """A stored answer with the deleted update's content taken out."""
-    response = dict(response)
-    if (response.get("update") or {}).get("id") == update_id:
-        response["update"] = None
-        response["deleted_id"] = update_id
-    day = response.get("day")
-    if isinstance(day, dict):
-        day = dict(day)
-        for part in (MIDDAY, EOD, COMBINED):
-            if (day.get(part) or {}).get("id") == update_id:
-                day[part] = None
-                if part == MIDDAY:
-                    # carry_forward is copied from the Midday "ongoing" text
-                    day["carry_forward"] = ""
-        response["day"] = day
-    return response
-
-
 def skip_midday(employee, work_date, choice, source, key=""):
     _check_source(source)
     if choice not in (MiddaySkip.LATER, MiddaySkip.COMBINE):
-        raise WorkspaceError(
-            _("Choose Write later or Combine with End of Day."), code="bad_choice"
-        )
+        raise WorkspaceError(_("Choose Write later or Combine with End of Day."), code="bad_choice")
+    _check_work_date(work_date)
 
     def do():
-        # checked inside the callback so a retry after midnight still replays
-        _check_work_date(work_date)
         with transaction.atomic():
             _lock_employee(employee)
             state = day_state(employee, work_date)
             if state["midday"] or state["combined"]:
-                raise WorkspaceError(
-                    _("Your Midday note for this day is already sent."),
-                    code="already_sent",
-                    status=409,
-                )
+                raise WorkspaceError(_("Your Midday note for this day is already sent."), code="already_sent", status=409)
             if choice == MiddaySkip.COMBINE and state["eod"]:
                 raise WorkspaceError(
-                    _(
-                        "Your End-of-Day update is already sent, so it cannot be combined. You can still write the Midday note later."
-                    ),
-                    code="eod_exists",
-                    status=409,
+                    _("Your End-of-Day update is already sent, so it cannot be combined. You can still write the Midday note later."),
+                    code="eod_exists", status=409,
                 )
             MiddaySkip.objects.update_or_create(
-                employee=employee,
-                work_date=work_date,
-                defaults={"choice": choice, "source": source},
+                employee=employee, work_date=work_date, defaults={"choice": choice, "source": source}
             )
             message = (
                 _("Midday skipped. You can write it any time from Daily Updates.")
                 if choice == MiddaySkip.LATER
-                else _(
-                    "Midday skipped. At the end of the day you will write one combined note."
-                )
+                else _("Midday skipped. At the end of the day you will write one combined note.")
             )
-            return 200, {
-                "ok": True,
-                "message": message,
-                "day": serialize_day(day_state(employee, work_date)),
-            }
+            return 200, {"ok": True, "message": message, "day": serialize_day(day_state(employee, work_date))}
 
     return run_idempotent(employee, key, f"skip_{choice}", do)
 
 
-def update_history(update, revisions=None):
-    """Earlier versions, newest first. Pass ``revisions`` to reuse an already loaded list."""
-    if revisions is None:
-        revisions = list(update.revisions.all())
+def update_history(update):
     return [
         {
             "revision": r.revision_number,
@@ -414,38 +287,26 @@ def update_history(update, revisions=None):
             "completed": r.completed,
             "ongoing": r.ongoing,
             "blockers": r.blockers,
-            "content_submitted_at": timezone.localtime(
-                r.content_submitted_at
-            ).isoformat(),
+            "content_submitted_at": timezone.localtime(r.content_submitted_at).isoformat(),
             "replaced_at": timezone.localtime(r.replaced_at).isoformat(),
         }
-        for r in revisions
+        for r in update.revisions.all()
     ]
 
 
 # ----------------------------------------------------------------- company-wide views
-def company_feed(
-    start, end, update_type=None, query=None, department_id=None, limit=300
-):
+def company_feed(start, end, update_type=None, query=None, department_id=None, limit=300):
     """
     Everyone's submitted updates (company-wide visibility is intentional).
     Each row holds only the safe employee card plus the update itself.
     """
     adapter = get_adapter()
-    employees = {
-        e.pk: e
-        for e in adapter.active_employees(query=query, department_id=department_id)
-    }
-    updates = DailyUpdate.objects.filter(
-        employee_id__in=list(employees), work_date__range=(start, end)
-    )
+    employees = {e.pk: e for e in adapter.active_employees(query=query, department_id=department_id)}
+    updates = DailyUpdate.objects.filter(employee_id__in=list(employees), work_date__range=(start, end))
     if update_type in TYPES:
         updates = updates.filter(update_type=update_type)
     return [
-        {
-            "employee": adapter.safe_employee_card(employees[u.employee_id]),
-            "update": serialize_update(u),
-        }
+        {"employee": adapter.safe_employee_card(employees[u.employee_id]), "update": serialize_update(u)}
         for u in updates.order_by("-work_date", "-submitted_at")[:limit]
     ]
 
@@ -456,24 +317,14 @@ def today_board(day, query=None, department_id=None):
     employees = adapter.active_employees(query=query, department_id=department_id)
     rows = adapter.attendance_overview(day, employees)
     updates = {}
-    for u in DailyUpdate.objects.filter(
-        employee_id__in=[e.pk for e in employees], work_date=day
-    ):
+    for u in DailyUpdate.objects.filter(employee_id__in=[e.pk for e in employees], work_date=day):
         updates.setdefault(u.employee_id, {})[u.update_type] = serialize_update(u)
     skips = dict(
-        MiddaySkip.objects.filter(
-            employee_id__in=[e.pk for e in employees], work_date=day
-        ).values_list("employee_id", "choice")
+        MiddaySkip.objects.filter(employee_id__in=[e.pk for e in employees], work_date=day).values_list(
+            "employee_id", "choice"
+        )
     )
-    totals = {
-        "working": 0,
-        "on_break": 0,
-        "signed_out": 0,
-        "not_signed_in": 0,
-        "late": 0,
-        "missing": 0,
-        "updates": 0,
-    }
+    totals = {"working": 0, "on_break": 0, "signed_out": 0, "not_signed_in": 0, "late": 0, "missing": 0, "updates": 0}
     for row in rows:
         emp_id = row["employee"]["id"]
         row["updates"] = updates.get(emp_id, {})
@@ -482,9 +333,4 @@ def today_board(day, query=None, department_id=None):
         totals["late"] += int(row["late"])
         totals["missing"] += int(bool(row["missing"]))
         totals["updates"] += len(row["updates"])
-    return {
-        "day": day.isoformat(),
-        "rows": rows,
-        "totals": totals,
-        "employee_count": len(rows),
-    }
+    return {"day": day.isoformat(), "rows": rows, "totals": totals, "employee_count": len(rows)}

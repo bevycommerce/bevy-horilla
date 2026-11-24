@@ -1,0 +1,84 @@
+
+{% load i18n %}
+{% if not is_chunk %}
+    <div class="oh-activity-sidebar__header sticky top-0 z-10 bg-white border-b border-secondary-200 !mb-2 pb-2">
+        <a style="cursor: pointer" onclick="$('.oh-activity-sidebar--show').removeClass('oh-activity-sidebar--show')">
+            <ion-icon
+                name="chevron-forward-outline"
+                class="oh-activity-sidebar__header-icon me-2 oh-activity-sidebar__close"
+                data-target="#genericSidebar"
+            ></ion-icon>
+        </a>
+        <span class="oh-activity-sidebar__title">{% trans "Answers" %} &middot; {{ feedback_id.review_cycle }}</span>
+    </div>
+
+    <ol class="oh-activity-sidebar__qa-list" role="list">
+        {% if not answers and not key_result_feedback %}
+            <li class="list-none">
+                <div class="flex flex-col items-center justify-center py-10">
+                    <img src="/static/horilla_theme/assets/img/no-records.svg" alt="" width="200" class="mb-4">
+                    <p class="text-[#666] mb-0">{% trans "No answers have been submitted yet" %}</p>
+                </div>
+            </li>
+        {% endif %}
+{% endif %}
+        {% for answer in answers %}
+            <li class="list-none mb-2">
+                <div class="bg-white border border-secondary-200 rounded-xl px-4 py-3">
+                    <p class="text-sm font-semibold text-dark-200 mb-2">{{ answer.question_id.question }}</p>
+
+                    {% if answer.question_id.question_type == '1' %}
+                        <p class="px-3 py-1.5 bg-secondary-50 border border-secondary-200 rounded-md text-sm text-dark-200 break-words">{{ answer.answer.answer }}</p>
+                    {% elif answer.question_id.question_type == '2' %}
+                        <div class="flex items-center gap-1.5 text-base">
+                            {% for i in "12345" %}
+                                <i class="fa-solid fa-star" style="color: {% if i <= answer.answer.answer %}#FFA800{% else %}#dfdfdf{% endif %}"></i>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="flex flex-wrap gap-2">
+                            {% for value, label in answer.choices %}
+                                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium {% if value|lower == answer.answer.answer|lower %}border-primary-600 bg-primary-300 text-dark-600{% else %}border-secondary-200 bg-white text-dark-100 opacity-60{% endif %}">
+                                    <span class="w-4 h-4 shrink-0 rounded-full border-2 {% if value|lower == answer.answer.answer|lower %}border-primary-600 bg-primary-600 ring-[3px] ring-inset ring-white{% else %}border-secondary-300{% endif %}"></span>
+                                    {{ label }}
+                                </span>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+            </li>
+        {% endfor %}
+        {% if page_obj.has_next %}
+            <li
+                class="list-none py-2 text-center text-xs text-dark-100"
+                hx-get="{% url 'feedback-answer-view' id=feedback_id.id %}?page={{ page_obj.next_page_number }}"
+                hx-trigger="intersect once"
+                hx-swap="outerHTML"
+                hx-select="unset"
+                hx-push-url="false"
+            >
+                <i class="fa-solid fa-spinner fa-spin me-1"></i>{% trans "Loading more answers..." %}
+            </li>
+        {% elif key_result_feedback %}
+            <li class="list-none">
+                <h3 class="text-base font-bold mt-4 mb-2">{% trans "Key Result" %}</h3>
+            </li>
+            {% for key_result in key_result_feedback %}
+                <li class="list-none mb-2">
+                    <div class="bg-white border border-secondary-200 rounded-xl px-4 py-3">
+                        <p class="text-sm font-semibold text-dark-200 mb-2">{{ key_result.key_result_id.key_result|default:key_result.key_result_id.key_result_id }}</p>
+                        <div class="flex flex-wrap gap-2">
+                            {% for value, label in key_result.choices %}
+                                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium {% if value|lower == key_result.answer.answer|lower %}border-primary-600 bg-primary-300 text-dark-600{% else %}border-secondary-200 bg-white text-dark-100 opacity-60{% endif %}">
+                                    <span class="w-4 h-4 shrink-0 rounded-full border-2 {% if value|lower == key_result.answer.answer|lower %}border-primary-600 bg-primary-600 ring-[3px] ring-inset ring-white{% else %}border-secondary-300{% endif %}"></span>
+                                    {{ label }}
+                                </span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </li>
+            {% endfor %}
+        {% endif %}
+{% if not is_chunk %}
+    </ol>
+{% endif %}

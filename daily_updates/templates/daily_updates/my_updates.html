@@ -1,7 +1,6 @@
 {% extends "index.html" %}
 {% load i18n %}
 {% block content %}
-<div class="oh-wrapper" style="padding-top: 16px">
     {% include "daily_updates/_styles.html" %}
     <div class="du-page">
         <h1>{% trans "My Daily Updates" %}</h1>
@@ -13,5 +12,4 @@
         {% endif %}
         <p><a href="{% url 'daily-updates-company' %}">{% trans "See Company Updates" %}</a></p>
     </div>
-</div>
 {% endblock %}

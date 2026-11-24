@@ -7,11 +7,14 @@ This module is used register endpoints to the check-in check-out functionalities
 import ipaddress
 import logging
 
+from django.shortcuts import render
+
+from horilla.http.response import HorillaRedirect
+
 logger = logging.getLogger(__name__)
 from datetime import date, datetime, timedelta
 
 from django.contrib import messages
-from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
@@ -21,6 +24,7 @@ from attendance.methods.utils import (
     activity_datetime,
     employee_exists,
     format_time,
+    geofence_denial_web,
     get_client_ip,
     overtime_calculation,
     shift_schedule_today,
@@ -41,7 +45,6 @@ from base.context_processors import (
 from base.models import AttendanceAllowedIP, Company, EmployeeShiftDay
 from horilla.decorators import hx_request_required, login_required
 from horilla.horilla_middlewares import _thread_locals
-from horilla.http import HorillaRedirect
 
 
 def late_come_create(attendance):
@@ -76,6 +79,8 @@ def late_come(attendance, start_time, end_time, shift):
         end_time : attendance day shift end time
 
     """
+    if not shift:
+        return
     if not enable_late_come_early_out_tracking(None).get("tracking"):
         return
     request = getattr(_thread_locals, "request", None)
@@ -196,24 +201,8 @@ def clock_in_attendance_and_activity(
     return attendance
 
 
-def _lock_employee_row(employee):
-    """
-    Lock the employee row for the rest of the transaction. The Workspace
-    sign-in, break and sign-out take the same lock, so Check-In / Check-Out
-    and those actions never interleave for one employee.
-    """
-    if employee is not None:
-        list(
-            type(employee)
-            ._base_manager.select_for_update(of=("self",))
-            .filter(pk=employee.pk)
-            .values_list("pk", flat=True)
-        )
-
-
 @login_required
 @hx_request_required
-@transaction.atomic
 def clock_in(request):
     """
     This method is used to mark the attendance once per a day and multiple attendance activities.
@@ -221,6 +210,7 @@ def clock_in(request):
     # check wether check in/check out feature is enabled
     selected_company = request.session.get("selected_company")
     if selected_company == "all":
+        company = None
         attendance_general_settings = AttendanceGeneralSetting.objects.filter(
             company_id=None
         ).first()
@@ -235,17 +225,24 @@ def clock_in(request):
         and attendance_general_settings.enable_check_in
         or request.__dict__.get("datetime")
     ):
-        allowed_attendance_ips = AttendanceAllowedIP.objects.first()
+        allowed_attendance_ips = AttendanceAllowedIP.objects.filter(
+            company_id=company
+        ).first()
 
         if (
             not request.__dict__.get("datetime")
             and allowed_attendance_ips
             and allowed_attendance_ips.is_enabled
         ):
-
+            # get_client_ip() only trusts X-Forwarded-For as far as the
+            # deployment's declared proxy count -- taking the client-supplied
+            # header at face value let anyone claim to be on the office
+            # network.
             ip = get_client_ip(request)
 
-            allowed_ips = allowed_attendance_ips.additional_data.get("allowed_ips", [])
+            allowed_ips = (allowed_attendance_ips.additional_data or {}).get(
+                "allowed_ips", []
+            )
             ip_allowed = False
             for allowed_ip in allowed_ips:
                 try:
@@ -258,13 +255,23 @@ def clock_in(request):
                     continue
 
             if not ip_allowed:
-                return HttpResponse(_("You cannot mark attendance from this network"))
+                messages.error(
+                    request,
+                    _("Check-In Restricted: Your current network is not authorized "),
+                )
+                return HorillaRedirect(request)
+
+        if not request.__dict__.get("datetime"):
+            # The mobile/API clock-in already enforces a configured
+            # geo-fence; this view didn't, so an employee outside the fence
+            # could still punch in from a browser.
+            geofence_error = geofence_denial_web(request, company)
+            if geofence_error:
+                messages.error(request, geofence_error)
+                return HorillaRedirect(request)
 
         employee, work_info = employee_exists(request)
-        # take the lock first, so the check-in time is read after any Workspace
-        # action that was holding it
-        _lock_employee_row(employee)
-        datetime_now = datetime.now()
+        datetime_now = timezone.localtime()
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime
         if employee and work_info is not None:
@@ -300,10 +307,6 @@ def clock_in(request):
                     )
                     attendance_date = date_yesterday
                     day = day_yesterday
-            from attendance.services import breaks as break_service
-
-            if break_service.open_break(employee) is not None:
-                return HttpResponse(_("You are on a break. End the break first."))
             attendance = clock_in_attendance_and_activity(
                 employee=employee,
                 date_today=date_today,
@@ -316,58 +319,25 @@ def clock_in(request):
                 end_time=end_time_sec,
                 in_datetime=datetime_now,
             )
-            script = ""
-            hidden_label = ""
-            time_runner_enabled = timerunner_enabled(request)["enabled_timerunner"]
-            mouse_in = ""
-            mouse_out = ""
-            if time_runner_enabled:
-                script = """
-                <script>
-                        $(".time-runner").removeClass("stop-runner");
-                        run = 1;
-                        at_work_seconds = {at_work_seconds_forecasted};
-                    </script>
-                    """.format(
-                    at_work_seconds_forecasted=employee.get_forecasted_at_work()[
-                        "forecasted_at_work_seconds"
-                    ]
-                )
-                hidden_label = """
-                style="display:none"
-                """
-                mouse_in = """ onmouseenter = "$(this).find('span').show();$(this).find('.time-runner').hide();" """
-                mouse_out = """ onmouseleave = "$(this).find('span').hide();$(this).find('.time-runner').show();" """
-
-            return HttpResponse(
-                """
-                <button class="oh-btn oh-btn--warning-outline check-in mr-2"
-                {mouse_in}
-                {mouse_out}
-                    hx-get="/attendance/clock-out"
-                        hx-target='#attendance-activity-container'
-                        hx-swap='innerHTML'><ion-icon class="oh-navbar__clock-icon mr-2
-                        text-warning"
-                            name="exit-outline"></ion-icon>
-                <span {hidden_label} class="hr-check-in-out-text">{check_out}</span>
-                    <div class="time-runner"></div>
-                </button>
-                {script}
-                """.format(
-                    check_out=_("Check-Out"),
-                    script=script,
-                    hidden_label=hidden_label,
-                    mouse_in=mouse_in,
-                    mouse_out=mouse_out,
-                )
+            # Refresh employee from DB so template re-evaluates is_clocked_in correctly
+            employee.refresh_from_db()
+            return render(
+                request, "attendance/components/in_out_component.html", {"run": 1}
             )
-        return HttpResponse(
+        messages.error(
+            request,
             _(
-                "You Don't have work information filled or your employee detail neither entered "
-            )
+                "Check-In Unavailable: Your employee profile or work information is incomplete."
+            ),
         )
+        return HorillaRedirect(request)
     else:
-        messages.error(request, _("Check in/Check out feature is not enabled."))
+        messages.error(
+            request,
+            _(
+                "The attendance check-in/check-out feature has not been enabled for your company."
+            ),
+        )
         return HorillaRedirect(request)
 
 
@@ -408,20 +378,10 @@ def clock_out_attendance_and_activity(employee, date_today, now, out_datetime=No
             total_seconds = days_second + seconds
             duration = duration + total_seconds
         duration = format_time(duration)
-        # update clock out of the attendance the closed activity belongs to
-        # (the latest row only when no row for that date exists)
-        attendance = (
-            Attendance.objects.filter(
-                employee_id=employee,
-                attendance_date=attendance_activity.attendance_date,
-            )
-            .order_by("-id")
-            .first()
-        ) or Attendance.objects.filter(employee_id=employee).order_by(
+        # update clock out of attendance
+        attendance = Attendance.objects.filter(employee_id=employee).order_by(
             "-attendance_date", "-id"
-        )[
-            0
-        ]
+        )[0]
         attendance.attendance_clock_out = now + ":00"
         attendance.attendance_clock_out_date = date_today
         attendance.attendance_worked_hour = duration
@@ -467,6 +427,8 @@ def early_out(attendance, start_time, end_time, shift):
         start_time : attendance day shift start time
         start_end : attendance day shift end time
     """
+    if not shift:
+        return
     if not enable_late_come_early_out_tracking(None).get("tracking"):
         return
 
@@ -509,7 +471,6 @@ def early_out(attendance, start_time, end_time, shift):
 
 @login_required
 @hx_request_required
-@transaction.atomic
 def clock_out(request):
     """
     This method is used to set the out date and time for attendance and attendance activity
@@ -517,6 +478,7 @@ def clock_out(request):
     # check wether check in/check out feature is enabled
     selected_company = request.session.get("selected_company")
     if selected_company == "all":
+        company = None
         attendance_general_settings = AttendanceGeneralSetting.objects.filter(
             company_id=None
         ).first()
@@ -530,44 +492,79 @@ def clock_out(request):
         and attendance_general_settings.enable_check_in
         or request.__dict__.get("datetime")
     ):
-        employee, work_info = employee_exists(request)
-        # Hold the employee lock from ending a break through the check-out, so a
-        # Workspace break cannot start in between; read the time after the lock.
-        _lock_employee_row(employee)
-        datetime_now = datetime.now()
+        allowed_attendance_ips = AttendanceAllowedIP.objects.filter(
+            company_id=company
+        ).first()
+
+        if (
+            not request.__dict__.get("datetime")
+            and allowed_attendance_ips
+            and allowed_attendance_ips.is_enabled
+        ):
+            # get_client_ip() only trusts X-Forwarded-For as far as the
+            # deployment's declared proxy count -- taking the client-supplied
+            # header at face value let anyone claim to be on the office
+            # network.
+            ip = get_client_ip(request)
+
+            allowed_ips = (allowed_attendance_ips.additional_data or {}).get(
+                "allowed_ips", []
+            )
+            ip_allowed = False
+            for allowed_ip in allowed_ips:
+                try:
+                    if ipaddress.ip_address(ip) in ipaddress.ip_network(
+                        allowed_ip, strict=False
+                    ):
+                        ip_allowed = True
+                        break
+                except ValueError:
+                    continue
+
+            if not ip_allowed:
+                messages.error(
+                    request,
+                    _("Check-Out Restricted: Your current network is not authorized"),
+                )
+                return HorillaRedirect(request)
+
+        if not request.__dict__.get("datetime"):
+            geofence_error = geofence_denial_web(request, company)
+            if geofence_error:
+                messages.error(request, geofence_error)
+                return HorillaRedirect(request)
+
+        datetime_now = timezone.localtime()
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime
-        # A running break has already closed the open activity. End it first, at
-        # this check-out's own time, so the check-out closes the resumed
-        # activity and no break stays open.
-        from attendance.services import breaks as break_service
-
-        if break_service.open_break(employee) is not None:
-            checkout_at = (
-                timezone.make_aware(datetime_now)
-                if timezone.is_naive(datetime_now)
-                else datetime_now
-            )
-            break_service.end_break(employee, now=timezone.localtime(checkout_at))
+        employee, work_info = employee_exists(request)
         shift = work_info.shift_id
         date_today = date.today()
         if request.__dict__.get("date"):
             date_today = request.date
-        now = datetime.now().strftime("%H:%M")
-        if request.__dict__.get("time"):
-            now = request.time.strftime("%H:%M")
-        attendance = clock_out_attendance_and_activity(
-            employee=employee, date_today=date_today, now=now, out_datetime=datetime_now
+        day = date_today.strftime("%A").lower()
+        day = EmployeeShiftDay.objects.get(day=day)
+        attendance = (
+            Attendance.objects.filter(employee_id=employee)
+            .order_by("id", "attendance_date")
+            .last()
         )
-        if attendance:
-            # the shift schedule of the row this check-out finalized
+        if attendance is not None:
             if not attendance.attendance_day:
                 day_name = attendance.attendance_date.strftime("%A").lower()
                 attendance.attendance_day = EmployeeShiftDay.objects.get(day=day_name)
                 attendance.save(update_fields=["attendance_day"])
-            minimum_hour, start_time_sec, end_time_sec = shift_schedule_today(
-                day=attendance.attendance_day, shift=shift
-            )
+            day = attendance.attendance_day
+        now = datetime.now().strftime("%H:%M")
+        if request.__dict__.get("time"):
+            now = request.time.strftime("%H:%M")
+        minimum_hour, start_time_sec, end_time_sec = shift_schedule_today(
+            day=day, shift=shift
+        )
+        attendance = clock_out_attendance_and_activity(
+            employee=employee, date_today=date_today, now=now, out_datetime=datetime_now
+        )
+        if attendance:
             early_out_instance = attendance.late_come_early_out.filter(type="early_out")
             is_night_shift = attendance.is_night_shift()
             next_date = attendance.attendance_date + timedelta(days=1)
@@ -595,52 +592,17 @@ def clock_out(request):
                         shift=shift,
                     )
 
-        script = ""
-        hidden_label = ""
-        time_runner_enabled = timerunner_enabled(request)["enabled_timerunner"]
-        mouse_in = ""
-        mouse_out = ""
-        if time_runner_enabled:
-            script = """
-                <script>
-                $(document).ready(function () {{
-                    $('.at-work-seconds').html(secondsToDuration({at_work_seconds_forecasted}))
-                }});
-                run = 0;
-                at_work_seconds = {at_work_seconds_forecasted};
-                </script>
-            """.format(
-                at_work_seconds_forecasted=employee.get_forecasted_at_work()[
-                    "forecasted_at_work_seconds"
-                ],
-            )
-            hidden_label = """
-            style="display:none"
-            """
-            mouse_in = """ onmouseenter="$(this).find('div.at-work-seconds').hide();$(this).find('span').show();" """
-            mouse_out = """onmouseleave="$(this).find('div.at-work-seconds').show();$(this).find('span').hide();" """
-        return HttpResponse(
-            """
-                <button class="oh-btn oh-btn--success-outline mr-2"
-                {mouse_in}
-                {mouse_out}
-                hx-get="/attendance/clock-in"
-                hx-target='#attendance-activity-container'
-                hx-swap='innerHTML'>
-                <ion-icon class="oh-navbar__clock-icon mr-2 text-success"
-                name="enter-outline"></ion-icon>
-                <span class="hr-check-in-out-text" {hidden_label} >{check_in}</span>
-                <div class="at-work-seconds"></div>
-                </button>
-                {script}
-                """.format(
-                check_in=_("Check-In"),
-                script=script,
-                hidden_label=hidden_label,
-                mouse_in=mouse_in,
-                mouse_out=mouse_out,
-            )
+        # Refresh employee from DB so template re-evaluates is_clocked_in correctly
+        employee.refresh_from_db()
+        return render(
+            request, "attendance/components/in_out_component.html", {"run": 1}
         )
+
     else:
-        messages.error(request, _("Check in/Check out feature is not enabled."))
+        messages.error(
+            request,
+            _(
+                "The attendance check-in/check-out feature has not been enabled for your company."
+            ),
+        )
         return HorillaRedirect(request)

@@ -46,7 +46,7 @@
                 {% if day.can_skip_midday %}
                     <details class="du-skipbox">
                         <summary>{% trans "Skip Midday" %}</summary>
-                        <p class="du-muted">{% trans "Skipping never blocks Sign Out." %}</p>
+                        <p class="du-muted">{% trans "Skipping never blocks Sign Out. End-of-Day reminders will continue as usual." %}</p>
                         <div class="du-actions">
                             <form hx-post="{% url 'daily-updates-skip' %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button">
                                 <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />

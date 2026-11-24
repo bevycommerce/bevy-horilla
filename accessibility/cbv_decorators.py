@@ -24,6 +24,7 @@ def enter_if_accessible(function, feature, perm=None, method=None):
         request = getattr(_thread_locals, "request")
         if not getattr(self, "request", None):
             self.request = request
+
         accessible = False
         cache_key = request.session.session_key + "accessibility_filter"
         employee = getattr(request.user, "employee_get")
@@ -36,7 +37,7 @@ def enter_if_accessible(function, feature, perm=None, method=None):
         if accessible or has_perm or method(request):
             return function(self, *args, **kwargs)
 
-        messages.info(request, _("You dont have access to the feature"))
+        messages.info(request, _("You don't have access to the feature"))
 
         return HorillaRedirect(request)
 

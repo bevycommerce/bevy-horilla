@@ -11,6 +11,7 @@ from datetime import date
 
 from django import forms
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 from asset.models import (
@@ -18,12 +19,14 @@ from asset.models import (
     AssetAssignment,
     AssetCategory,
     AssetDocuments,
+    AssetItem,
     AssetLot,
     AssetReport,
     AssetRequest,
+    AssetServiceRequest,
 )
 from base.forms import ModelForm
-from base.methods import reload_queryset
+from base.methods import export_field_label, reload_queryset
 from employee.forms import MultipleFileField
 from employee.models import Employee
 from horilla.horilla_middlewares import _thread_locals
@@ -48,11 +51,32 @@ class AssetForm(ModelForm):
     class Meta:
         model = Asset
         fields = "__all__"
-        exclude = ["is_active"]
+        exclude = ["is_active", "owner"]
         widgets = {
+            "asset_purchase_date": forms.DateInput(
+                attrs={"type": "date", "class": "oh-input w-100"}
+            ),
+            "expiry_date": forms.DateInput(
+                attrs={
+                    "type": "date",
+                    "class": "oh-input w-100",
+                    "onchange": "toggleNotify($(this))",
+                }
+            ),
             "asset_lot_number_id": forms.Select(
                 attrs={"onchange": "batchNoChange($(this))"}
             ),
+        }
+        labels = {
+            "asset_name": _("Asset Name"),
+            "asset_description": _("Description"),
+            # "asset_tracking_id": "Tracking ID", #commented for translation
+            "asset_purchase_date": _("Purchase Date"),
+            "expiry_date": _("Warranty Expiry Date"),
+            "asset_purchase_cost": _("Cost"),
+            "asset_category_id": _("Category"),
+            "asset_status": _("Status"),
+            "asset_lot_number_id": _("Batch Number"),
         }
 
     def __init__(self, *args, **kwargs):
@@ -63,6 +87,9 @@ class AssetForm(ModelForm):
             kwargs.setdefault("initial", set_date_field_initial(instance))
 
         super().__init__(*args, **kwargs)
+
+        if self.instance.pk is None:
+            self.fields["expiry_date"].initial = None
 
         uuid_map = {
             field: str(uuid.uuid4())
@@ -105,8 +132,42 @@ class AssetForm(ModelForm):
                 .exists()
             ):
                 raise ValidationError(
-                    {"asset_tracking_id": "Already asset with this tracking id exists."}
+                    {"asset_tracking_id": "Already asset with this serial no. exists."}
                 )
+
+
+class AssetItemForm(forms.ModelForm):
+    """
+    Row form for the asset item bulk-edit table - tracking ID plus a
+    manually-settable status (e.g. Damaged -> Available once repaired).
+    """
+
+    class Meta:
+        model = AssetItem
+        fields = ["tracking_id", "status"]
+        widgets = {
+            "tracking_id": forms.TextInput(attrs={"class": "oh-input w-100"}),
+            "status": forms.Select(attrs={"class": "oh-select oh-select-2 w-100"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_status = self.instance.status if self.instance.pk else None
+        # "In use" only ever comes from an actual assignment - never hand-set here.
+        self.fields["status"].choices = [
+            choice
+            for choice in AssetItem.STATUS
+            if choice[0] != "In use" or choice[0] == current_status
+        ]
+        if current_status == "In use":
+            self.fields["status"].disabled = True
+
+
+AssetItemFormSet = forms.modelformset_factory(
+    AssetItem,
+    form=AssetItemForm,
+    extra=0,
+)
 
 
 class DocumentForm(forms.ModelForm):
@@ -159,6 +220,19 @@ class AssetReportForm(ModelForm):
     - __init__: Initializes the form, disabling the 'asset_id' field.
     """
 
+    file = forms.FileField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "name": "file",
+                "type": "File",
+                "class": "form-control",
+                "multiple": "True",
+                "accept": ".jpeg, .jpg, .png, .pdf",
+            }
+        ),
+    )
+
     class Meta:
         """
         Metadata options for the AssetReportForm.
@@ -170,10 +244,7 @@ class AssetReportForm(ModelForm):
         """
 
         model = AssetReport
-        fields = [
-            "title",
-            "asset_id",
-        ]
+        fields = ["title", "asset_id", "file"]
         exclude = ["is_active"]
 
     def __init__(self, *args, **kwargs):
@@ -185,13 +256,19 @@ class AssetReportForm(ModelForm):
         - **kwargs: Arbitrary keyword arguments.
         """
         super().__init__(*args, **kwargs)
-        self.fields["asset_id"].widget.attrs["disabled"] = "disabled"
+        # self.fields["asset_id"].widget.attrs["disabled"] = "disabled"
 
 
 class AssetCategoryForm(ModelForm):
     """
     A form for creating and updating AssetCategory instances.
     """
+
+    cols = {
+        "asset_category_name": 12,
+        "asset_category_description": 12,
+        "company_id": 12,
+    }
 
     class Meta:
         """
@@ -212,6 +289,8 @@ class AssetRequestForm(ModelForm):
     A Django ModelForm for creating and updating AssetRequest instances.
     """
 
+    cols = {"requested_employee_id": 12, "asset_category_id": 12, "description": 12}
+
     class Meta:
         """
         Specifies the model and fields to be used for the AssetRequestForm.
@@ -226,12 +305,42 @@ class AssetRequestForm(ModelForm):
         model = AssetRequest
         fields = "__all__"
         exclude = ["is_active"]
+        widgets = {
+            "requested_employee_id": forms.Select(
+                attrs={
+                    "class": "oh-select  oh-select-2 select2-hidden-accessible",
+                }
+            ),
+            "asset_category_id": forms.Select(
+                attrs={
+                    "class": "oh-select  oh-select-2 select2-hidden-accessible",
+                }
+            ),
+            "description": forms.Textarea(
+                attrs={
+                    "type": "text",
+                    "id": "objective_description",
+                    "placeholder": _(
+                        "Requesting a laptop for software development purposes."
+                    ),
+                    "class": "oh-input oh-input--textarea oh-input--block",
+                    "rows": 3,
+                    "cols": 40,
+                }
+            ),
+        }
 
     def __init__(self, *args, **kwargs):
-        user = kwargs.pop("user", None)
-        super().__init__(*args, **kwargs)
+        # user = kwargs.pop("user", None)
+        request = getattr(_thread_locals, "request", None)
+        user = request.user
+        super(AssetRequestForm, self).__init__(
+            *args,
+            **kwargs,
+        )
         reload_queryset(self.fields)
         if user is not None and user.has_perm("asset.add_assetrequest"):
+
             self.fields["requested_employee_id"].queryset = Employee.objects.all()
             self.fields["requested_employee_id"].initial = Employee.objects.filter(
                 id=user.employee_get.id
@@ -250,17 +359,71 @@ class AssetAllocationForm(ModelForm):
     A Django ModelForm for creating and updating AssetAssignment instances.
     """
 
+    cols = {
+        "assigned_to_employee_id": 12,
+        "asset_id": 12,
+        "asset_item_id": 12,
+        "assigned_by_employee_id": 12,
+    }
+
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        request = getattr(_thread_locals, "request", None)
+        user = request.user
+        super(AssetAllocationForm, self).__init__(*args, **kwargs)
         reload_queryset(self.fields)
-        self.fields["asset_id"].queryset = Asset.objects.filter(
-            asset_status="Available"
-        )
+        self.fields["asset_id"].queryset = Asset.available_assets()
+        self.fields["assigned_by_employee_id"].initial = user.employee_get
 
         self.fields["assign_images"] = MultipleFileField(
             label=_("Assign Condition Images")
         )
         self.fields["assign_images"].required = True
+
+        asset = None
+        submitted_asset_id = self.data.get("asset_id") if self.data else None
+        if submitted_asset_id:
+            asset = Asset.objects.filter(pk=submitted_asset_id).first()
+        elif self.instance.pk:
+            asset = self.instance.asset_id
+        if asset:
+            self.fields["asset_item_id"].queryset = asset.asset_items.filter(
+                Q(status="Available") | Q(pk=self.instance.asset_item_id_id)
+            )
+        else:
+            self.fields["asset_item_id"].queryset = AssetItem.objects.none()
+        self.fields["asset_id"].widget.attrs.update(
+            {
+                "hx-target": "#id_asset_item_id_parent_div",
+                "hx-include": "#id_asset_item_id",
+                "hx-trigger": "change,load",
+                "hx-swap": "innerHTML",
+                "hx-get": "/asset/get-asset-items-hx/",
+            }
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        asset = cleaned_data.get("asset_id")
+        asset_item = cleaned_data.get("asset_item_id")
+        if asset:
+            if not asset_item:
+                available_items = asset.asset_items.filter(status="Available")
+                if available_items.count() == 1:
+                    asset_item = available_items.first()
+                    cleaned_data["asset_item_id"] = asset_item
+                elif available_items.count() > 1:
+                    raise ValidationError(
+                        {"asset_item_id": _("Please select an asset item to assign.")}
+                    )
+            elif asset_item.asset_id_id != asset.id:
+                raise ValidationError(
+                    {
+                        "asset_item_id": _(
+                            "The selected item does not belong to the chosen asset."
+                        )
+                    }
+                )
+        return cleaned_data
 
     class Meta:
         """
@@ -280,10 +443,12 @@ class AssetAllocationForm(ModelForm):
             "return_condition",
             "assigned_date",
             "return_images",
+            "assign_images",
             "is_active",
         ]
         widgets = {
             "asset_id": forms.Select(attrs={"class": "oh-select oh-select-2 "}),
+            "asset_item_id": forms.Select(attrs={"class": "oh-select oh-select-2 "}),
             "assigned_to_employee_id": forms.Select(
                 attrs={"class": "oh-select oh-select-2 "}
             ),
@@ -293,9 +458,6 @@ class AssetAllocationForm(ModelForm):
                 },
             ),
         }
-
-        # def clean(self):
-        #     cleaned_data = super.clean()
 
 
 class AssetReturnForm(ModelForm):
@@ -317,6 +479,9 @@ class AssetReturnForm(ModelForm):
         model = AssetAssignment
         fields = ["return_date", "return_condition", "return_status", "return_images"]
         widgets = {
+            "return_date": forms.DateInput(
+                attrs={"type": "date", "class": "oh-input w-100", "required": "true"}
+            ),
             "return_condition": forms.Textarea(
                 attrs={
                     "class": "oh-input oh-input--textarea oh-input--block",
@@ -337,11 +502,24 @@ class AssetReturnForm(ModelForm):
         Initializes the AssetReturnForm with initial values and custom field settings.
         """
         super().__init__(*args, **kwargs)
-        self.fields["return_date"].widget.attrs.update({"required": "true"})
+        self.fields["return_date"].initial = date.today()
+
         self.fields["return_images"] = MultipleFileField(
             label=_("Return Condition Images")
         )
-        self.fields["return_images"].required = True
+        # Required unless the asset is reported Lost: there is nothing to
+        # photograph then. The browser-side "required" is toggled in the
+        # template; clean() below enforces it on the server.
+        self.fields["return_images"].required = False
+        self.fields["return_images"].widget.attrs["required"] = "required"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get("return_status") != "Lost" and not (
+            self.files and self.files.getlist("return_images")
+        ):
+            self.add_error("return_images", _("This field is required."))
+        return cleaned_data
 
     def clean_return_date(self):
         """
@@ -364,10 +542,75 @@ class AssetReturnForm(ModelForm):
         return return_date
 
 
+class AssetServiceRequestForm(ModelForm):
+    """
+    A Django ModelForm for employees to raise a service request against
+    one of their own active asset allocations.
+    """
+
+    cols = {"issue_description": 12}
+
+    class Meta:
+        model = AssetServiceRequest
+        fields = ["assignment_id", "issue_description"]
+        widgets = {
+            "assignment_id": forms.HiddenInput(),
+            "issue_description": forms.Textarea(
+                attrs={
+                    "class": "oh-input oh-input--textarea oh-input--block",
+                    "rows": 3,
+                    "cols": 40,
+                    "placeholder": _(
+                        "The laptop screen flickers and shuts down randomly."
+                    ),
+                }
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        request = getattr(_thread_locals, "request", None)
+        employee = request.user.employee_get
+        super().__init__(*args, **kwargs)
+        self.fields["assignment_id"].queryset = AssetAssignment.objects.filter(
+            assigned_to_employee_id=employee, return_date__isnull=True
+        )
+
+        assignment_id = None
+        if self.data:
+            assignment_id = self.data.get("assignment_id")
+        elif request and request.GET.get("assignment_id"):
+            assignment_id = request.GET.get("assignment_id")
+        if assignment_id:
+            self.fields["assignment_id"].initial = assignment_id
+
+    def clean_assignment_id(self):
+        assignment = self.cleaned_data.get("assignment_id")
+        if (
+            assignment
+            and AssetServiceRequest.objects.filter(
+                assignment_id=assignment, status__in=["Requested", "In Progress"]
+            ).exists()
+        ):
+            raise ValidationError(
+                _("There is already an open service request for this asset.")
+            )
+        return assignment
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        request = getattr(_thread_locals, "request", None)
+        instance.requested_employee_id = request.user.employee_get
+        if commit:
+            instance.save()
+        return instance
+
+
 class AssetBatchForm(ModelForm):
     """
     A Django ModelForm for creating or updating AssetLot instances.
     """
+
+    cols = {"lot_description": 12, "lot_number": 12}
 
     class Meta:
         """
@@ -382,3 +625,68 @@ class AssetBatchForm(ModelForm):
 
         model = AssetLot
         fields = "__all__"
+        exclude = ["is_active"]
+
+
+class AssetReassignForm(ModelForm):
+    """
+    ModelForm to swap the asset on an existing assignment to a replacement asset.
+    Only exposes asset_id with queryset scoped to the same category.
+    """
+
+    class Meta:
+        model = AssetAssignment
+        fields = ["asset_id"]
+        labels = {"asset_id": _("Replacement Asset")}
+        widgets = {
+            "asset_id": forms.Select(attrs={"class": "oh-select oh-select-2 w-100"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["asset_id"].queryset = (
+                Asset.available_assets()
+                .filter(asset_category_id=self.instance.asset_id.asset_category_id)
+                .exclude(id=self.instance.asset_id.id)
+            )
+        else:
+            self.fields["asset_id"].queryset = Asset.available_assets()
+
+
+_ASSET_HISTORY_EXPORT_EXCLUDED = {
+    "id",
+    "created_at",
+    "is_active",
+    "additional_info",
+    "return_images",
+    "assign_images",
+    "return_request",
+}
+
+_asset_history_field_choices = [
+    (field.name, export_field_label(field.verbose_name))
+    for field in AssetAssignment._meta.get_fields()
+    if hasattr(field, "verbose_name")
+    and field.name not in _ASSET_HISTORY_EXPORT_EXCLUDED
+]
+
+
+class AssetHistoryExportForm(forms.Form):
+    """
+    Column picker for Asset History Excel export (same pattern as employee export).
+    """
+
+    selected_fields = forms.MultipleChoiceField(
+        choices=_asset_history_field_choices,
+        widget=forms.CheckboxSelectMultiple,
+        initial=[
+            "asset_id",
+            "assigned_to_employee_id",
+            "assigned_date",
+            "assigned_by_employee_id",
+            "return_date",
+            "return_status",
+            "return_condition",
+        ],
+    )

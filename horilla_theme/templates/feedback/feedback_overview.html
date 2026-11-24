@@ -1,0 +1,154 @@
+{% load i18n %}
+{% if not is_chunk %}<div class="accordion-wrapper space-y-2">{% endif %}
+    {% for question, answers in feedback_overview.items %}
+        <div class="accordion-item border border-primary-300 rounded-md overflow-hidden">
+            <!-- Accordion Button -->
+            <button class="accordion-btn w-full flex justify-between items-center px-4 py-2 bg-primary-100 text-primary-600 text-sm transition-all">
+                <div class="flex items-center gap-2">
+                    {{ question }}
+                </div>
+                <div class="flex items-center gap-5">
+                    <span class="icon text-xl font-bold">+</span>
+                </div>
+            </button>
+
+            <!-- Accordion Panel -->
+            <div class="accordion-panel max-h-0 overflow-hidden transition-all duration-300 bg-white px-4 text-sm text-gray-700">
+                <div class="py-3">
+                    {% if answers %}
+                        <table class="w-full">
+                            <thead class="bg-white">
+                                <tr class="border-b border-[#ececec]">
+                                    <th class="text-sm font-medium text-left p-1.5">{% trans "Employee" %}</th>
+                                    <th class="text-sm font-medium text-left p-1.5">{% trans "Answer" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for answer in answers %}
+                                    {% for employee, value in answer.items %}
+                                        <tr class="border-b border-[#ebebeb]">
+                                            <td class="text-sm text-left p-1 text-[#666] h-[30px]">
+                                                <div class="flex gap-3 items-center font-normal text-sm">
+                                                    <img
+                                                        src="{{ employee.avatar_url }}"
+                                                        class="rounded-full"
+                                                        alt=""
+                                                        width="24"
+                                                    >
+                                                    <span>{{ employee }}</span>
+                                                </div>
+                                            </td>
+                                            <td class="text-sm text-left p-1 text-[#666] h-[30px]">
+                                                {% if value.1.type == '1' %}
+                                                    <span class="oh-activity-sidebar__a">{{ value.0.answer }}</span>
+                                                {% elif value.1.type == '2' %}
+                                                    <ul class="flex gap-2 text-lg ps-4">
+                                                        {% for i in "12345" %}
+                                                            <li>
+                                                                <i
+                                                                    class="fa-solid fa-star"
+                                                                    style="{% if i <= value.0.answer %}color:#FFA800{% else %}color:#dfdfdf{% endif %}"
+                                                                ></i>
+                                                            </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                {% elif value.1.type == '3' %}
+                                                    <div class="flex gap-2">
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-xs font-medium {% if value.0.answer|lower == 'yes' %}border-primary-600 bg-primary-300 text-dark-600{% else %}border-secondary-200 bg-white text-dark-100 opacity-60{% endif %}">
+                                                            <span class="w-3 h-3 shrink-0 rounded-full border-2 {% if value.0.answer|lower == 'yes' %}border-primary-600 bg-primary-600 ring-2 ring-inset ring-white{% else %}border-secondary-300{% endif %}"></span>
+                                                            {% trans "Yes" %}
+                                                        </span>
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-xs font-medium {% if value.0.answer|lower == 'no' %}border-primary-600 bg-primary-300 text-dark-600{% else %}border-secondary-200 bg-white text-dark-100 opacity-60{% endif %}">
+                                                            <span class="w-3 h-3 shrink-0 rounded-full border-2 {% if value.0.answer|lower == 'no' %}border-primary-600 bg-primary-600 ring-2 ring-inset ring-white{% else %}border-secondary-300{% endif %}"></span>
+                                                            {% trans "No" %}
+                                                        </span>
+                                                    </div>
+                                                {% elif value.1.type == '4' %}
+                                                    <div class="flex gap-2">
+                                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-xs font-medium border-primary-600 bg-primary-300 text-dark-600">
+                                                            <span class="w-3 h-3 shrink-0 rounded-full border-2 border-primary-600 bg-primary-600 ring-2 ring-inset ring-white"></span>
+                                                            {{ value.0.answer }}
+                                                        </span>
+                                                    </div>
+                                                {% elif value.1.type == '5' %}
+                                                    <div class="d-block mt-2">
+                                                        <div class="oh-input-picker-group oh-input-picker-group--resp">
+                                                            <div class="oh-input-picker oh-input-picker--likert likert-colour oh-input-picker--selected">
+                                                                {{ value.0.answer }}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                {% elif value.1.type == '6' %}
+                                                    <div class="mt-2">
+                                                        <div class="oh-input-picker-group oh-input-picker-group--resp">
+                                                            <div
+                                                                class="
+                                                                    oh-input-picker oh-input-picker--likert oh-input-picker--selected
+                                                                    {% if value.0.answer == 'Bad' %} oh-input-picker--1
+                                                                    {% elif value.0.answer == 'Average' %} oh-input-picker--2
+                                                                    {% elif value.0.answer == 'Good' %} oh-input-picker--3
+                                                                    {% elif value.0.answer == 'Perfect' %} oh-input-picker--4
+                                                                    {% endif %}
+                                                                "
+                                                            >
+                                                                {{ value.0.answer }}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <p class="py-2 text-gray-500 text-sm">{% trans "No answers yet." %}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+    {% if page_obj.has_next %}
+        <div
+            hx-get="{% url 'get-feedback-overview' feedback.id %}?page={{ page_obj.next_page_number }}"
+            hx-trigger="intersect once"
+            hx-swap="outerHTML"
+            hx-select="unset"
+            hx-push-url="false"
+        >
+            <div class="flex justify-center items-center p-4">
+                <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-600"></div>
+            </div>
+        </div>
+    {% endif %}
+{% if not is_chunk %}</div>
+
+<!-- ACCORDION -->
+<script>
+    (function () {
+        const pane = document.getElementById("feedback-overview");
+        if (!pane || pane.dataset.accordionBound) return;
+        pane.dataset.accordionBound = "1";
+
+        pane.addEventListener("click", (event) => {
+            const btn = event.target.closest(".accordion-btn");
+            if (!btn) return;
+
+            const panel = btn.nextElementSibling;
+            const icon = btn.querySelector(".icon");
+            const isOpen = panel.style.maxHeight && panel.style.maxHeight !== "0px";
+
+            pane.querySelectorAll(".accordion-panel").forEach((p) => {
+                p.style.maxHeight = null;
+                p.previousElementSibling.querySelector(".icon").textContent = "+";
+            });
+
+            if (!isOpen) {
+                panel.style.maxHeight = panel.scrollHeight + "px";
+                icon.textContent = "−";
+            }
+        });
+    })();
+</script>
+{% endif %}

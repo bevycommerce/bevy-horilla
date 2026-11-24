@@ -1,0 +1,64 @@
+{% extends 'index.html' %}
+{% load i18n %}
+{% block content %}
+    <div class="oh-wrapper">
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin: 16px 0">
+            <div>
+                <h2 style="font-size: 18px; font-weight: 600">{% trans "Expense Log" %}</h2>
+                <p style="font-size: 12px; color: #888; margin-top: 2px">
+                    {% if can_view_all %}{% trans "Expenses of all employees" %}{% else %}{% trans "Your expenses" %}{% endif %}
+                </p>
+            </div>
+            <form method="get" style="display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap">
+                <label style="font-size: 12px; color: #666">{% trans "From" %}
+                    <input type="date" name="from" value="{{ date_from }}" style="display: block; height: 36px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px">
+                </label>
+                <label style="font-size: 12px; color: #666">{% trans "To" %}
+                    <input type="date" name="to" value="{{ date_to }}" style="display: block; height: 36px; padding: 0 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px">
+                </label>
+                <button type="submit" style="height: 36px; padding: 0 16px; border: 0; border-radius: 5px; background: #e54f38; color: #fff; font-size: 13px; cursor: pointer">{% trans "Filter" %}</button>
+                <a href="{% url 'expense-submit' %}" style="height: 36px; line-height: 36px; padding: 0 16px; border-radius: 5px; background: rgb(233 145 13 / 10%); color: #e9910d; font-size: 13px">{% trans "New Expense" %}</a>
+            </form>
+        </div>
+
+        <div style="display: flex; gap: 24px; margin-bottom: 12px; font-size: 13px">
+            <div><span style="color: #888">{% trans "Total expenses" %}:</span> <strong>{{ rows|length }}</strong></div>
+            <div><span style="color: #888">{% trans "Total amount" %}:</span> <strong>{{ total }}</strong></div>
+        </div>
+
+        <div style="overflow-x: auto; border: 1px solid #ebebeb; border-radius: 6px">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px">
+                <thead>
+                    <tr style="background: #f5f5f5; text-align: left">
+                        {% if can_view_all %}<th style="padding: 10px 12px">{% trans "Employee" %}</th>{% endif %}
+                        <th style="padding: 10px 12px">{% trans "Expense Date" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Vendor / Company" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Description" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Amount" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Proof" %}</th>
+                        <th style="padding: 10px 12px">{% trans "Submitted" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                        <tr style="border-top: 1px solid #ebebeb">
+                            {% if can_view_all %}<td style="padding: 10px 12px">{{ row.employee }}</td>{% endif %}
+                            <td style="padding: 10px 12px">{{ row.expense_date|date:"d M Y" }}</td>
+                            <td style="padding: 10px 12px">{{ row.vendor }}</td>
+                            <td style="padding: 10px 12px; max-width: 300px">{{ row.description }}</td>
+                            <td style="padding: 10px 12px; font-variant-numeric: tabular-nums">{{ row.amount }}</td>
+                            <td style="padding: 10px 12px">
+                                {% for proof in row.proofs %}
+                                    <a href="{{ proof.file.url }}" target="_blank" rel="noopener" style="display: block; color: #e9910d">{{ proof.original_name }}</a>
+                                {% empty %}-{% endfor %}
+                            </td>
+                            <td style="padding: 10px 12px">{{ row.created_at|date:"d M Y H:i" }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="7" style="padding: 24px; text-align: center; color: #888">{% trans "No expenses found for this period." %}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}

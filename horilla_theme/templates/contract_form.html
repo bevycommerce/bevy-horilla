@@ -1,0 +1,65 @@
+{% load widget_tweaks %}
+{% load i18n %}
+
+<div
+    class="oh-general__tab-target oh-profile-section bg-[white] rounded-md border border-dark-50 p-[20px] w-full"
+    id="personal"
+>
+<div class="oh-profile-section__card">
+    <div class="row">
+        <div class="col-12 js-non-field-errors" style="padding-right: 0">
+            {{ form.non_field_errors }}
+        </div>
+
+        {% for field in form.visible_fields %}
+            {% if field.name != 'contract_status' %}
+                <div
+                    class="col-12 {% if field.name != 'note' %}col-md-6{% endif %}"
+                    id="id_{{ field.name }}_parent_div"
+                >
+                    {% if field.label %}
+                        <div class="flex oh-label" for="id_{{ field.name }}">
+                            <label
+                                class="{% if field.field.required %}required-star{% endif %}"
+                                for="id_{{ field.name }}"
+                            >{% trans field.label %}</label>
+                            {% if field.help_text != "" %}
+                                <span class="oh-info mr-2" title="{{ field.help_text }}"></span>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+
+                    {% if field.field.widget.input_type == "checkbox" %}
+                        <div class="oh-switch" style="width: 30px">
+                            {{ field|add_class:"oh-switch__checkbox" }}
+                        </div>
+                        {{ field.errors }}
+                    {% else %}
+                        <div id="dynamic_field_{{ field.name }}">
+                            {{ field|add_class:"form-control" }} {{ field.errors }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    {% for field in form.hidden_fields %}
+        {{ field }}
+    {% endfor %}
+
+    <div class="d-flex flex gap-1 justify-end pt-3 mt-3">
+        <button type="submit" class="oh-btn oh-btn--secondary mt-2 mr-0 pl-4 pr-5 oh-btn--w-100-resp">
+            {% trans "Save" %}
+        </button>
+    </div>
+</div>
+</div>
+
+<script>
+    $(document).ready(function () {
+      $("#personal").find("select").select2({
+        width: '100%'
+      });
+    });
+</script>

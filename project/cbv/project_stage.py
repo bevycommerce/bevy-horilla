@@ -50,7 +50,8 @@ class ProjectStageCreateForm(HorillaFormView):
                     or request.user.is_superuser
                 ):
                     return super().get(request, *args, pk=pk, **kwargs)
-                return handle_no_permission(request)
+                else:
+                    return handle_no_permission(request)
             except Exception as e:
                 logger.error(e)
                 return HorillaRedirect(request, message=_("Something went wrong!"))
@@ -86,6 +87,7 @@ class ProjectStageCreateForm(HorillaFormView):
 from django import forms
 
 
+@method_decorator(login_required, name="dispatch")
 class StageDynamicCreateForm(ProjectStageCreateForm):
     """
     dynamic create form for stage

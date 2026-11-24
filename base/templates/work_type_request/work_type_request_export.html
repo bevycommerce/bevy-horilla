@@ -1,12 +1,5 @@
 {% load i18n %}
-<div class="oh-modal__dialog-header">
-  <h2 class="oh-modal__dialog-title" id="workTypeRequestsExportLavel">{% trans 'Export Work Type Requests' %}</h2>
-  <button class="oh-modal__close" aria-label="Close"><ion-icon name="close-outline"></ion-icon></button>
-</div>
-<div class="oh-modal__dialog-body" id="workTypeRequestsExportModalBody">
-  <form action="{% url 'work-type-request-info-export' %}" method="get" id="workTypeRequestsExportForm"
-  onsubmit="event.stopPropagation();$(this).parents().find('.oh-modal--show').last().toggleClass('oh-modal--show');" class="oh-profile-section">
-    {% csrf_token %} <div class="oh-dropdown__filter-body">
+<div class="oh-dropdown__filter-body">
       <div class="oh-accordion">
         <div class="oh-accordion-header">
           {% trans 'Excel columns' %}
@@ -15,7 +8,7 @@
           <div class="row">
             <div class="col-sm-12 col-md-12 col-lg-6">
               <div class="oh-input-group">
-                <label class="oh-label" for="select-all-fields"><input type="checkbox" id="select-all-fields" /> {% trans 'Select All' %}</label>
+                <label class="oh-label" for="select-all-fields"><input type="checkbox" id="select-all-fields" onchange="$(this).closest('form').find('input[name=selected_fields]').prop('checked', $(this).is(':checked')).change()" /> {% trans 'Select All' %}</label>
               </div>
             </div>
           </div>
@@ -54,7 +47,7 @@
                 {{ export_filter.form.employee_id__employee_work_info__company_id }}
               </div>
               <div class="oh-input-group">
-                <label class="oh-label" for="{{ export_filter.form.employee_id__is_active.id_for_label }}">{% trans 'Is Active' %}?</label>
+                <label class="oh-label" for="{{ export_filter.form.employee_id__is_active.id_for_label }}">{% trans 'Active' %}?</label>
                 {{ export_filter.form.employee_id__is_active }}
               </div>
             </div>
@@ -95,12 +88,8 @@
                 {{ export_filter.form.requested_date }}
               </div>
               <div class="oh-input-group">
-                <label class="oh-label" for="{{ export_filter.form.approved.id_for_label }}">{% trans 'Approved' %}?</label>
-                {{ export_filter.form.approved }}
-              </div>
-              <div class="oh-input-group">
-                <label class="oh-label" for="{{ export_filter.form.canceled.id_for_label }}">{% trans 'Canceled' %}?</label>
-                {{ export_filter.form.canceled }}
+                <label class="oh-label" for="{{ export_filter.form.status.id_for_label }}">{% trans 'Status' %}</label>
+                {{ export_filter.form.status }}
               </div>
             </div>
             <div class="col-sm-12 col-md-12 col-lg-6">
@@ -138,8 +127,3 @@
         </div>
       </div>
     </div>
-    <div class="oh-modal__dialog-footer p-0 pt-3">
-      <button type="submit" class="oh-btn oh-btn--secondary oh-btn--shadow">{% trans 'Export' %}</button>
-    </div>
-  </form>
-</div>

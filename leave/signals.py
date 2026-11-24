@@ -8,7 +8,7 @@ from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 
 from horilla.methods import get_horilla_model_class
-from leave.models import LeaveRequest
+from leave.models import LeaveRequest, LeaveRequestConditionApproval
 
 if apps.is_installed("attendance"):
 
@@ -28,8 +28,30 @@ if apps.is_installed("attendance"):
             super(LeaveRequest, instance).save()
 
         period_dates = instance.requested_dates()
-        if instance.status == "approved":
+        if instance.status in ["approved", "cancel_requested"]:
+            from attendance.methods.leave_days import leave_counted_dates
+            from attendance.models import AttendanceConflictResolution
+
+            # Holidays and week-offs the leave type excludes are not leave: no leave work record
+            # for them (and one an earlier save made is dropped). A day that has been regularised
+            # keeps what the regularisation says.
+            counted = leave_counted_dates(instance)
             for date in period_dates:
+                if date not in counted:
+                    WorkRecords._base_manager.filter(
+                        is_leave_record=True,
+                        date=date,
+                        employee_id=instance.employee_id,
+                        leave_request_id=instance,
+                    ).delete()
+            regularised = set(
+                AttendanceConflictResolution._base_manager.filter(
+                    employee_id=instance.employee_id, date__in=counted
+                ).values_list("date", flat=True)
+            )
+            for date in counted:
+                if date in regularised:
+                    continue
                 try:
                     work_entry = (
                         WorkRecords.objects.filter(
@@ -63,10 +85,11 @@ if apps.is_installed("attendance"):
                     )
                     work_entry.work_record_type = status
                     work_entry.date = date
+                    # WorkRecords.message is max_length=30; the previous
+                    # 36-char text raised DataError on PostgreSQL and
+                    # aborted the transaction for every half-day leave.
                     work_entry.message = (
-                        "Leave"
-                        if status == "ABS"
-                        else _("Half day Attendance need to validate")
+                        "Leave" if status == "ABS" else _("Half day: needs validation")
                     )
                     work_entry.save()
 
@@ -75,7 +98,7 @@ if apps.is_installed("attendance"):
 
         else:
             for date in period_dates:
-                WorkRecords.objects.filter(
+                WorkRecords._base_manager.filter(
                     is_leave_record=True,
                     date=date,
                     employee_id=instance.employee_id,
@@ -85,7 +108,9 @@ if apps.is_installed("attendance"):
     def leaverequest_pre_delete(sender, instance, **kwargs):
         from attendance.models import WorkRecords
 
-        work_records = WorkRecords.objects.filter(leave_request_id=instance).delete()
+        work_records = WorkRecords._base_manager.filter(
+            leave_request_id=instance
+        ).delete()
 
 
 # @receiver(post_migrate)
@@ -130,3 +155,14 @@ def add_missing_leave_to_workrecords(sender, **kwargs):
 
     except Exception as e:
         print(f"Error in leave/work records sync: {e}")
+
+
+@receiver(post_save, sender=LeaveRequestConditionApproval)
+def auto_approve_self_approval_stage(sender, instance, created, **kwargs):
+    """
+    When an approver in the multiple-approval chain is the same employee who
+    submitted the leave request, automatically approve their stage so the
+    request is not stuck and can progress to the next approver.
+    """
+    if created and instance.manager_id == instance.leave_request_id.employee_id:
+        sender.objects.filter(pk=instance.pk).update(is_approved=True)

@@ -4,6 +4,8 @@ component_views.py
 This module is used to write methods to the component_urls patterns respectively
 """
 
+import ast
+import contextlib
 import json
 import math
 import operator
@@ -14,6 +16,7 @@ from urllib.parse import parse_qs
 
 import pandas as pd
 from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.db.models import Sum
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, QueryDict
@@ -21,11 +24,13 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext_noop
 from django.views.decorators.cache import never_cache
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
+import payroll.models.models
 from base.backends import ConfiguredEmailBackend
 from base.methods import (
     closest_numbers,
@@ -33,6 +38,8 @@ from base.methods import (
     filter_own_records,
     get_key_instances,
     get_next_month_same_date,
+    get_nth_month_same_date,
+    has_export_access,
     sortby,
 )
 from base.models import Company
@@ -41,11 +48,11 @@ from horilla.decorators import (
     handle_no_permission,
     hx_request_required,
     login_required,
+    manager_can_enter,
     owner_can_enter,
     permission_required,
 )
 from horilla.group_by import group_by_queryset
-from horilla.horilla_settings import HORILLA_DATE_FORMATS
 from horilla.http.response import HorillaRedirect
 from horilla.methods import dynamic_attr, get_horilla_model_class, get_urlencode
 
@@ -60,24 +67,13 @@ from payroll.filters import (
     ReimbursementFilter,
 )
 from payroll.forms import component_forms as forms
-from payroll.methods.deductions import create_deductions, update_compensation_deduction
-from payroll.methods.methods import (
-    calculate_employer_contribution,
-    compute_net_pay,
-    compute_salary_on_period,
-    paginator_qry,
-    save_payslip,
+from payroll.methods.deductions import create_deductions
+from payroll.methods.methods import paginator_qry, payslip_fields, save_payslip
+from payroll.methods.payroll_run import (  # noqa: F401  (re-exported for callers)
+    get_pending_attendance,
+    payroll_calculation,
 )
-from payroll.methods.payslip_calc import (
-    calculate_allowance,
-    calculate_gross_pay,
-    calculate_net_pay_deduction,
-    calculate_post_tax_deduction,
-    calculate_pre_tax_deduction,
-    calculate_tax_deduction,
-    calculate_taxable_gross_pay,
-)
-from payroll.methods.tax_calc import calculate_taxable_amount
+from payroll.methods.tax_calc import TaxComputationError
 from payroll.models.models import (
     Allowance,
     Contract,
@@ -86,8 +82,11 @@ from payroll.models.models import (
     Payslip,
     Reimbursement,
     ReimbursementMultipleAttachment,
+    SalaryStructure,
 )
 from payroll.threadings.mail import MailSendThread
+
+# from asset.models import Asset
 
 
 def return_none(a, b):
@@ -106,156 +105,6 @@ operator_mapping = {
 }
 
 
-def payroll_calculation(employee, start_date, end_date):
-    """
-    Calculate payroll components for the specified employee within the given date range.
-
-
-    Args:
-        employee (Employee): The employee for whom the payroll is calculated.
-        start_date (date): The start date of the payroll period.
-        end_date (date): The end date of the payroll period.
-
-
-    Returns:
-        dict: A dictionary containing the calculated payroll components:
-    """
-
-    basic_pay_details = compute_salary_on_period(employee, start_date, end_date)
-    contract = basic_pay_details["contract"]
-    contract_wage = basic_pay_details["contract_wage"]
-    basic_pay = basic_pay_details["basic_pay"]
-    loss_of_pay = basic_pay_details["loss_of_pay"]
-    paid_days = basic_pay_details["paid_days"]
-    unpaid_days = basic_pay_details["unpaid_days"]
-
-    working_days_details = basic_pay_details["month_data"]
-
-    updated_basic_pay_data = update_compensation_deduction(
-        employee, basic_pay, "basic_pay", start_date, end_date
-    )
-    basic_pay = updated_basic_pay_data["compensation_amount"]
-    basic_pay_deductions = updated_basic_pay_data["deductions"]
-
-    loss_of_pay_amount = 0
-    if not contract.deduct_leave_from_basic_pay:
-        loss_of_pay_amount = loss_of_pay
-    else:
-        basic_pay = basic_pay - loss_of_pay_amount
-
-    kwargs = {
-        "employee": employee,
-        "start_date": start_date,
-        "end_date": end_date,
-        "basic_pay": basic_pay,
-        "day_dict": working_days_details,
-    }
-    # basic pay will be basic_pay = basic_pay - update_compensation_amount
-    allowances = calculate_allowance(**kwargs)
-
-    # finding the total allowance
-    total_allowance = sum(allowance["amount"] for allowance in allowances["allowances"])
-
-    kwargs["allowances"] = allowances
-    kwargs["total_allowance"] = total_allowance
-    updated_gross_pay_data = calculate_gross_pay(**kwargs)
-    gross_pay = updated_gross_pay_data["gross_pay"]
-    gross_pay_deductions = updated_gross_pay_data["deductions"]
-
-    kwargs["gross_pay"] = gross_pay
-    pretax_deductions = calculate_pre_tax_deduction(**kwargs)
-    post_tax_deductions = calculate_post_tax_deduction(**kwargs)
-
-    installments = (
-        pretax_deductions["installments"] | post_tax_deductions["installments"]
-    )
-
-    taxable_gross_pay = calculate_taxable_gross_pay(**kwargs)
-    tax_deductions = calculate_tax_deduction(**kwargs)
-    federal_tax = calculate_taxable_amount(**kwargs)
-
-    total_allowance = sum(item["amount"] for item in allowances["allowances"])
-    total_pretax_deduction = sum(
-        item["amount"] for item in pretax_deductions["pretax_deductions"]
-    )
-    total_post_tax_deduction = sum(
-        item["amount"] for item in post_tax_deductions["post_tax_deductions"]
-    )
-    total_tax_deductions = sum(
-        item["amount"] for item in tax_deductions["tax_deductions"]
-    )
-
-    total_deductions = (
-        total_pretax_deduction
-        + total_post_tax_deduction
-        + total_tax_deductions
-        + federal_tax
-        + loss_of_pay  # 1022
-    )
-
-    net_pay = gross_pay - total_deductions
-    # loss_of_pay        -> actual lop amount
-    # loss_of_pay_amount -> actual lop if deduct from basic-
-    #                       pay from contract is enabled
-    net_pay = compute_net_pay(
-        net_pay=net_pay,
-        gross_pay=gross_pay,
-        total_pretax_deduction=total_pretax_deduction,
-        total_post_tax_deduction=total_post_tax_deduction,
-        total_tax_deductions=total_tax_deductions,
-        federal_tax=federal_tax,
-        loss_of_pay_amount=loss_of_pay_amount,
-        loss_of_pay=loss_of_pay,
-    )
-    updated_net_pay_data = update_compensation_deduction(
-        employee, net_pay, "net_pay", start_date, end_date
-    )
-    net_pay = updated_net_pay_data["compensation_amount"]
-    update_net_pay_deductions = updated_net_pay_data["deductions"]
-
-    net_pay_deductions = calculate_net_pay_deduction(
-        net_pay,
-        post_tax_deductions["net_pay_deduction"],
-        **kwargs,
-    )
-    net_pay_deduction_list = net_pay_deductions["net_pay_deductions"]
-    for deduction in update_net_pay_deductions:
-        net_pay_deduction_list.append(deduction)
-    net_pay = net_pay - net_pay_deductions["net_deduction"]
-    payslip_data = {
-        "employee": employee,
-        "contract_wage": contract_wage,
-        "basic_pay": basic_pay,
-        "gross_pay": gross_pay,
-        "taxable_gross_pay": taxable_gross_pay["taxable_gross_pay"],
-        "net_pay": net_pay,
-        "allowances": allowances["allowances"],
-        "paid_days": paid_days,
-        "unpaid_days": unpaid_days,
-        "basic_pay_deductions": basic_pay_deductions,
-        "gross_pay_deductions": gross_pay_deductions,
-        "pretax_deductions": pretax_deductions["pretax_deductions"],
-        "post_tax_deductions": post_tax_deductions["post_tax_deductions"],
-        "tax_deductions": tax_deductions["tax_deductions"],
-        "net_deductions": net_pay_deduction_list,
-        "total_deductions": total_deductions,
-        "loss_of_pay": loss_of_pay,
-        "federal_tax": federal_tax,
-        "start_date": start_date,
-        "end_date": end_date,
-        "range": f"{start_date.strftime('%b %d %Y')} - {end_date.strftime('%b %d %Y')}",
-    }
-    data_to_json = payslip_data.copy()
-    data_to_json["employee"] = employee.id
-    data_to_json["start_date"] = start_date.strftime("%Y-%m-%d")
-    data_to_json["end_date"] = end_date.strftime("%Y-%m-%d")
-    json_data = json.dumps(data_to_json)
-
-    payslip_data["json_data"] = json_data
-    payslip_data["installments"] = installments
-    return payslip_data
-
-
 @login_required
 @hx_request_required
 def allowances_deductions_tab(request, emp_id):
@@ -271,7 +120,9 @@ def allowances_deductions_tab(request, emp_id):
     user = request.user
     employee_deductions = []
     employee_allowances = []
-    employee = Employee.objects.get(id=emp_id)
+    employee = Employee.objects.filter(id=emp_id).first()
+    if not employee:
+        return HttpResponse()
     if getattr(user, "employee_get", None) != employee and not (
         user.has_perm("payroll.view_allowance")
         and user.has_perm("payroll.view_deduction")
@@ -281,6 +132,8 @@ def allowances_deductions_tab(request, emp_id):
     active_contracts = employee.contract_set.filter(contract_status="active").first()
     basic_pay = active_contracts.wage if active_contracts else None
     if basic_pay:
+        from payroll.methods.component_engine import group_targeted
+
         allowances = (
             Allowance.objects.filter(specific_employees=employee)
             | Allowance.objects.filter(is_condition_based=True).exclude(
@@ -289,6 +142,7 @@ def allowances_deductions_tab(request, emp_id):
             | Allowance.objects.filter(include_active_employees=True).exclude(
                 exclude_employees=employee
             )
+            | group_targeted(employee, Allowance)
         )
 
         for allowance in allowances:
@@ -336,6 +190,7 @@ def allowances_deductions_tab(request, emp_id):
             | Deduction.objects.filter(
                 include_active_employees=True,
             ).exclude(exclude_employees=employee)
+            | group_targeted(employee, Deduction)
         )
         for deduction in deductions:
             applicable = True
@@ -391,14 +246,32 @@ def create_allowance(request):
     This method is used to create allowance condition template
     """
     form = forms.AllowanceForm()
+    is_htmx = request.headers.get("HX-Request") is not None
     if request.method == "POST":
         form = forms.AllowanceForm(request.POST)
         if form.is_valid():
             form.save()
             form = forms.AllowanceForm()
             messages.success(request, _("Allowance created."))
-            return redirect(view_allowance)
-    return render(request, "payroll/common/form.html", {"form": form})
+            if is_htmx:
+                response = HttpResponse("", status=200)
+                response["HX-Trigger"] = json.dumps(
+                    {"reloadPayrollAllowances": {"target": "body"}}
+                )
+                return response
+            return redirect(reverse("view-allowance"))
+    template_name = (
+        "payroll/common/form_fragment.html" if is_htmx else "payroll/common/form.html"
+    )
+    return render(
+        request,
+        template_name,
+        {
+            "form": form,
+            "post_url": request.get_full_path(),
+            "back_url": reverse("allowances-list-view"),
+        },
+    )
 
 
 @login_required
@@ -407,7 +280,10 @@ def view_allowance(request):
     """
     This method is used render template to view all the allowance instances
     """
-    allowances = Allowance.objects.exclude(only_show_under_employee=True)
+
+    allowances = payroll.models.models.Allowance.objects.exclude(
+        only_show_under_employee=True
+    )
     allowance_filter = AllowanceFilter(request.GET)
     allowances = paginator_qry(allowances, request.GET.get("page"))
     allowance_ids = json.dumps([instance.id for instance in allowances.object_list])
@@ -487,53 +363,135 @@ def update_allowance(request, allowance_id, **kwargs):
     Args:
         id : allowance instance id
     """
-    instance = Allowance.objects.get(id=allowance_id)
+    instance = Allowance.find(allowance_id)
+    is_htmx = request.headers.get("HX-Request") is not None
+    if not instance:
+        return HorillaRedirect(request, message=_("Allowance not found."))
     form = forms.AllowanceForm(instance=instance)
     if request.method == "POST":
         form = forms.AllowanceForm(request.POST, instance=instance)
         if form.is_valid():
             form.save()
             messages.success(request, _("Allowance updated."))
-            return redirect(view_allowance)
-    return render(request, "payroll/common/form.html", {"form": form})
+            if is_htmx:
+                response = HttpResponse("", status=200)
+                response["HX-Trigger"] = json.dumps(
+                    {"reloadPayrollAllowances": {"target": "body"}}
+                )
+                return response
+            return redirect(reverse("view-allowance"))
+    template_name = (
+        "payroll/common/form_fragment.html" if is_htmx else "payroll/common/form.html"
+    )
+    return render(
+        request,
+        template_name,
+        {
+            "form": form,
+            "post_url": request.get_full_path(),
+            "back_url": reverse("allowances-list-view"),
+        },
+    )
+
+
+# @login_required
+# @hx_request_required
+# @permission_required("payroll.delete_allowance")
+# def delete_allowance(request, allowance_id):
+#     """
+#     This method is used to delete the allowance instance
+#     """
+#     target = request.META.get("HTTP_HX_TARGET")
+
+
+#     try:
+#         allowance = payroll.models.models.Allowance.objects.filter(
+#             id=allowance_id
+#         ).first()
+#         if allowance:
+#             # allowance.delete()
+#             messages.success(request, _("Allowance deleted successfully"))
+#         else:
+#             messages.error(request, _("Allowance not found"))
+
+#     except ValidationError as validation_error:
+#         messages.error(
+#             request, _("Validation error occurred while deleting the allowance")
+#         )
+#         messages.error(request, str(validation_error))
+#     except Exception as exception:
+#         messages.error(request, _("An error occurred while deleting the allowance"))
+#         messages.error(request, str(exception))
+#     if target and target == "allowance_id":
+#         return redirect(reverse("allowances-list-view"))
+#         # return HttpResponse("<script>location.reload();</script>")
+#     if target and target == "allowance_tab_id":
+#         # return redirect(reverse("allowance-tab-list"))
+#         return HttpResponse("<script>location.reload();</script>")
+
+#     if (
+#         request.path.split("/")[2] == "delete-employee-allowance"
+#         or not payroll.models.models.Allowance.objects.filter()
+#     ):
+#         return return HorillaRedirect(request)
+#     return redirect(filter_allowance)
 
 
 @login_required
 @hx_request_required
 @permission_required("payroll.delete_allowance")
-def delete_allowance(request, allowance_id):
-    """
-    This method is used to delete the allowance instance
-    """
-    previous_data = get_urlencode(request)
-    try:
-        allowance = Allowance.objects.filter(id=allowance_id).first()
-        if allowance:
-            allowance.delete()
-            messages.success(request, _("Allowance deleted successfully"))
-        else:
-            messages.error(request, _("Allowance not found"))
-    except Exception as e:
-        messages.error(request, _("An error occurred while deleting the allowance"))
-        messages.error(request, str(e))
-
-    if (
-        request.path.split("/")[2] == "delete-employee-allowance"
-        or not Allowance.objects.exists()
-    ):
-        return HorillaRedirect(request)
-
+def delete_allowance(request, allowance_id, emp_id=None):
+    target = request.META.get("HTTP_HX_TARGET")
     instances_ids = request.GET.get("instances_ids")
+    next_instance = None
+    instances_list = None
     if instances_ids:
         instances_list = json.loads(instances_ids)
         previous_instance, next_instance = closest_numbers(instances_list, allowance_id)
-        if allowance_id in instances_list:
-            instances_list.remove(allowance_id)
-            url = f"/payroll/single-allowance-view/{next_instance}"
-            params = f"?{previous_data}&instances_ids={instances_list}"
-            return redirect(url + params)
+        instances_list.remove(allowance_id)
+    allowance = payroll.models.models.Allowance.objects.filter(id=allowance_id).first()
+    if allowance and allowance.is_system:
+        # A standard pay item cannot be removed: the loan, penalty or
+        # reimbursement code reads it to decide how the rows it generates are
+        # treated, and with it gone they would silently fall back to model
+        # defaults nobody chose. See payroll/system_components.py.
+        messages.error(
+            request,
+            _(
+                "%(title)s is a standard component and cannot be deleted. "
+                "Its settings can still be changed."
+            )
+            % {"title": allowance.title},
+        )
+        allowance = None
+    if allowance:
+        allowance.delete()
+        messages.success(request, _("Allowance deleted successfully"))
+    elif not instances_ids:
+        messages.error(request, _("Allowance not found"))
 
-    return redirect(f"/payroll/filter-allowance?{previous_data}")
+    paths = {
+        "payroll-deduction-container": f"/payroll/filter_allowance?{request.GET.urlencode()}",
+        "allowance_tab_id": f"/payroll/allowance-tab-list/{emp_id}?deleted=true",
+        "allowance_id": "/payroll/allowances-list-view/",
+        "allowance_card": "/payroll/allowances-card-view/",
+        "genericModalBody": f"/payroll/allowance-detail-view/{next_instance}?instance_ids={instances_list}&deleted=true",
+    }
+    http_hx_target = request.META.get("HTTP_HX_TARGET")
+    redirected_path = paths.get(http_hx_target)
+    if http_hx_target:
+        if (
+            http_hx_target == "payroll-deduction-container"
+            and not Deduction.objects.filter()
+        ):
+            return HorillaRedirect(request)
+        if redirected_path:
+            return redirect(redirected_path)
+
+    default_redirect = (
+        request.path if http_hx_target else request.META.get("HTTP_REFERER", "/")
+    )
+    return HttpResponseRedirect(default_redirect)
 
 
 @login_required
@@ -543,13 +501,31 @@ def create_deduction(request):
     This method is used to create deduction
     """
     form = forms.DeductionForm()
+    is_htmx = request.headers.get("HX-Request") is not None
     if request.method == "POST":
         form = forms.DeductionForm(request.POST)
         if form.is_valid():
             form.save()
             messages.success(request, _("Deduction created."))
-            return redirect(view_deduction)
-    return render(request, "payroll/common/form.html", {"form": form})
+            if is_htmx:
+                response = HttpResponse("", status=200)
+                response["HX-Trigger"] = json.dumps(
+                    {"reloadPayrollDeductions": {"target": "body"}}
+                )
+                return response
+            return redirect(reverse("view-deduction"))
+    template_name = (
+        "payroll/common/form_fragment.html" if is_htmx else "payroll/common/form.html"
+    )
+    return render(
+        request,
+        template_name,
+        {
+            "form": form,
+            "post_url": request.get_full_path(),
+            "back_url": reverse("deduction-view-list"),
+        },
+    )
 
 
 @login_required
@@ -664,15 +640,35 @@ def update_deduction(request, deduction_id, **kwargs):
     """
     This method is used to update the deduction instance
     """
-    instance = Deduction.objects.get(id=deduction_id)
+    instance = Deduction.find(deduction_id)
+    is_htmx = request.headers.get("HX-Request") is not None
+    if not instance:
+        return HorillaRedirect(request, message=_("Deduction not found."))
     form = forms.DeductionForm(instance=instance)
     if request.method == "POST":
         form = forms.DeductionForm(request.POST, instance=instance)
         if form.is_valid():
             form.save()
             messages.success(request, _("Deduction updated."))
-            return redirect(view_deduction)
-    return render(request, "payroll/common/form.html", {"form": form})
+            if is_htmx:
+                response = HttpResponse("", status=200)
+                response["HX-Trigger"] = json.dumps(
+                    {"reloadPayrollDeductions": {"target": "body"}}
+                )
+                return response
+            return redirect(reverse("view-deduction"))
+    template_name = (
+        "payroll/common/form_fragment.html" if is_htmx else "payroll/common/form.html"
+    )
+    return render(
+        request,
+        template_name,
+        {
+            "form": form,
+            "post_url": request.get_full_path(),
+            "back_url": reverse("deduction-view-list"),
+        },
+    )
 
 
 @login_required
@@ -689,16 +685,33 @@ def delete_deduction(request, deduction_id, emp_id=None):
         previous_instance, next_instance = closest_numbers(instances_list, deduction_id)
         instances_list.remove(deduction_id)
     deduction = Deduction.objects.filter(id=deduction_id).first()
+    if deduction and deduction.is_system:
+        # A standard pay item cannot be removed: the loan, penalty or
+        # reimbursement code reads it to decide how the rows it generates are
+        # treated, and with it gone they would silently fall back to model
+        # defaults nobody chose. See payroll/system_components.py.
+        messages.error(
+            request,
+            _(
+                "%(title)s is a standard component and cannot be deleted. "
+                "Its settings can still be changed."
+            )
+            % {"title": deduction.title},
+        )
+        deduction = None
     if deduction:
         deduction.delete()
         messages.success(request, _("Deduction deleted successfully"))
-    else:
+    elif not instances_ids:
         messages.error(request, _("Deduction not found"))
 
     paths = {
+        "deduct-container": f"/payroll/deduction-view-list?{request.GET.urlencode()}",
         "payroll-deduction-container": f"/payroll/filter-deduction?{request.GET.urlencode()}",
-        "allowance_deduction": f"/payroll/allowances-deductions-tab/{emp_id}",
-        "objectDetailsModalTarget": f"/payroll/single-deduction-view/{next_instance}?{previous_data}&instances_ids={instances_list}",
+        "allowance_deduction": f"/employee/allowances-deductions-tab/{emp_id}",
+        "deduct-div": f"/payroll/deduction-tab-list/{emp_id}?deleted=true",
+        "objectDetailsModalTarget": f"/payroll/single-deduction-view/{next_instance}?instances_ids={instances_list}",
+        "genericModalBody": f"/payroll/deduction-detail-view/{next_instance}?instance_ids={instances_list}&deleted=true",
     }
     http_hx_target = request.META.get("HTTP_HX_TARGET")
     redirected_path = paths.get(http_hx_target)
@@ -710,10 +723,47 @@ def delete_deduction(request, deduction_id, emp_id=None):
             return HorillaRedirect(request)
         if redirected_path:
             return redirect(redirected_path)
+
     default_redirect = (
         request.path if http_hx_target else request.META.get("HTTP_REFERER", "/")
     )
-    return HorillaRedirect(request)
+    return HttpResponseRedirect(default_redirect)
+
+
+@login_required
+@hx_request_required
+@permission_required("payroll.change_salarystructure")
+def remove_structure_allowance(request, structure_pk, pk):
+    """
+    Unlink an allowance from a salary structure (the allowance itself keeps
+    existing for whatever other structures/employees still use it).
+    """
+    structure = SalaryStructure.objects.filter(pk=structure_pk).first()
+    allowance = Allowance.objects.filter(pk=pk).first()
+    if structure and allowance:
+        structure.remove_allowance(allowance)
+        messages.success(request, _("Allowance removed from the salary structure"))
+    return redirect(
+        reverse("salary-structure-detail-view", kwargs={"pk": structure_pk})
+    )
+
+
+@login_required
+@hx_request_required
+@permission_required("payroll.change_salarystructure")
+def remove_structure_deduction(request, structure_pk, pk):
+    """
+    Unlink a deduction from a salary structure (the deduction itself keeps
+    existing for whatever other structures/employees still use it).
+    """
+    structure = SalaryStructure.objects.filter(pk=structure_pk).first()
+    deduction = Deduction.objects.filter(pk=pk).first()
+    if structure and deduction:
+        structure.remove_deduction(deduction)
+        messages.success(request, _("Deduction removed from the salary structure"))
+    return redirect(
+        reverse("salary-structure-detail-view", kwargs={"pk": structure_pk})
+    )
 
 
 def get_month_start_end(year):
@@ -764,49 +814,69 @@ def generate_payslip(request):
             end_date = form.cleaned_data["end_date"]
 
             group_name = form.cleaned_data["group_name"]
+            emp_count = employees.count()
+
+            from attendance.views.summary import build_monthly_summary
+
+            att_rows, _total_working, _summary_totals = build_monthly_summary(
+                start_date, end_date, employees
+            )
+            att_summary = {row["employee"].pk: row for row in att_rows}
+
             for employee in employees:
                 contract = Contract.objects.filter(
                     employee_id=employee, contract_status="active"
                 ).first()
                 if start_date < contract.contract_start_date:
                     start_date = contract.contract_start_date
-                payslip = payroll_calculation(employee, start_date, end_date)
+
+                if end_date < start_date:
+                    messages.error(
+                        request, _(f"{employee}'s contract has not started yet.")
+                    )
+                    emp_count -= 1
+                    continue
+
+                try:
+                    payslip = payroll_calculation(
+                        employee,
+                        start_date,
+                        end_date,
+                        month_summary=att_summary.get(employee.pk, dict({})),
+                    )
+                except TaxComputationError as exc:
+                    # Skip this employee rather than saving a payslip whose tax
+                    # silently computed to 0. Same shape as the contract-not-
+                    # started skip above: report it, drop the count, carry on
+                    # with the rest of the batch.
+                    messages.error(request, str(exc))
+                    emp_count -= 1
+                    continue
                 payslips.append(payslip)
                 json_data.append(payslip["json_data"])
 
                 payslip["payslip"] = payslip
-                data = {}
-                data["employee"] = employee
-                data["group_name"] = group_name
-                data["start_date"] = payslip["start_date"]
-                data["end_date"] = payslip["end_date"]
-                data["status"] = "draft"
-                data["contract_wage"] = payslip["contract_wage"]
-                data["basic_pay"] = payslip["basic_pay"]
-                data["gross_pay"] = payslip["gross_pay"]
-                data["deduction"] = payslip["total_deductions"]
-                data["net_pay"] = payslip["net_pay"]
-                data["pay_data"] = json.loads(payslip["json_data"])
-                calculate_employer_contribution(data)
-                data["installments"] = payslip["installments"]
-                instance = save_payslip(**data)
+                instance = save_payslip(
+                    **payslip_fields(
+                        payslip, employee, status="draft", group_name=group_name
+                    )
+                )
                 instances.append(instance)
                 notify.send(
                     request.user.employee_get,
                     recipient=employee.employee_user_id,
-                    verb="Payslip has been generated for you.",
-                    verb_ar="تم إصدار كشف راتب لك.",
-                    verb_de="Gehaltsabrechnung wurde für Sie erstellt.",
-                    verb_es="Se ha generado la nómina para usted.",
-                    verb_fr="La fiche de paie a été générée pour vous.",
+                    verb=gettext_noop("Payslip has been generated for you."),
                     redirect=reverse(
                         "view-created-payslip", kwargs={"payslip_id": instance.id}
                     ),
                     icon="close",
                 )
-            messages.success(request, f"{employees.count()} payslip saved as draft")
+            messages.success(
+                request,
+                _("%(emp_count)s payslip saved as draft") % {"emp_count": emp_count},
+            )
             return redirect(
-                f"/payroll/view-payslip?group_by=group_name&active_group={group_name}"
+                f"/payroll/view-payslip/?group_by=group_name&active_group={group_name}"
             )
 
     return render(request, "payroll/common/form.html", {"form": form})
@@ -818,6 +888,7 @@ def check_contract_start_date(request):
     """
     Check if the employee's contract start date is after the provided payslip start date.
     """
+
     employee_id = request.GET.get("employee_id")
     start_date = request.GET.get("start_date")
 
@@ -852,6 +923,7 @@ def check_contract_start_date(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.add_payslip")
 def create_payslip(request, new_post_data=None):
     """
@@ -900,37 +972,32 @@ def create_payslip(request, new_post_data=None):
                 employee = form.cleaned_data["employee_id"]
                 start_date = form.cleaned_data["start_date"]
                 end_date = form.cleaned_data["end_date"]
-                payslip_data = payroll_calculation(employee, start_date, end_date)
+                try:
+                    payslip_data = payroll_calculation(employee, start_date, end_date)
+                except TaxComputationError as exc:
+                    # Re-show the form with the reason rather than saving a
+                    # payslip whose tax silently computed to 0.
+                    messages.error(request, str(exc))
+                    return render(
+                        request,
+                        "payroll/payslip/create_payslip.html",
+                        {"individual_form": form},
+                    )
                 payslip_data["payslip"] = payslip
-                data = {}
-                data["employee"] = employee
-                data["start_date"] = payslip_data["start_date"]
-                data["end_date"] = payslip_data["end_date"]
-                data["status"] = (
-                    "draft"
-                    if request.GET.get("status") is None
-                    else request.GET["status"]
+                payslip_data["instance"] = save_payslip(
+                    **payslip_fields(
+                        payslip_data,
+                        employee,
+                        status=request.GET.get("status") or "draft",
+                    )
                 )
-                data["contract_wage"] = payslip_data["contract_wage"]
-                data["basic_pay"] = payslip_data["basic_pay"]
-                data["gross_pay"] = payslip_data["gross_pay"]
-                data["deduction"] = payslip_data["total_deductions"]
-                data["net_pay"] = payslip_data["net_pay"]
-                data["pay_data"] = json.loads(payslip_data["json_data"])
-                calculate_employer_contribution(data)
-                data["installments"] = payslip_data["installments"]
-                payslip_data["instance"] = save_payslip(**data)
                 form = forms.PayslipForm()
                 messages.success(request, _("Payslip Saved"))
                 payslip = payslip_data["instance"]
                 notify.send(
                     request.user.employee_get,
                     recipient=employee.employee_user_id,
-                    verb="Payslip has been generated for you.",
-                    verb_ar="تم إصدار كشف راتب لك.",
-                    verb_de="Gehaltsabrechnung wurde für Sie erstellt.",
-                    verb_es="Se ha generado la nómina para usted.",
-                    verb_fr="La fiche de paie a été générée pour vous.",
+                    verb=gettext_noop("Payslip has been generated for you."),
                     redirect=reverse(
                         "view-created-payslip", kwargs={"payslip_id": payslip.pk}
                     ),
@@ -939,10 +1006,9 @@ def create_payslip(request, new_post_data=None):
                 return HorillaRedirect(
                     request,
                     redirect_to=reverse(
-                        "view-payslip", kwargs={"payslip_id": payslip.pk}
+                        "view-created-payslip", kwargs={"payslip_id": payslip.pk}
                     ),
                 )
-
     return render(
         request,
         "payroll/payslip/create_payslip.html",
@@ -951,6 +1017,7 @@ def create_payslip(request, new_post_data=None):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.add_payslip")
 def validate_start_date(request):
     """
@@ -958,8 +1025,8 @@ def validate_start_date(request):
     """
     end_datetime = None
     start_datetime = None
-    errors = []
     valid = True
+    errors = []
     start_date = request.GET.get("start_date")
     end_date = request.GET.get("end_date")
     try:
@@ -1020,11 +1087,70 @@ def view_individual_payslip(request, employee_id, start_date, end_date):
     This method is used to render the template for viewing a payslip.
     """
 
-    payslip_data = payroll_calculation(employee_id, start_date, end_date)
+    try:
+        payslip_data = payroll_calculation(employee_id, start_date, end_date)
+    except TaxComputationError as exc:
+        return HorillaRedirect(request, message=str(exc))
+    if not payslip_data:
+        return HorillaRedirect(
+            request,
+            message=_(
+                "Payslip data not found for the specified employee and date range."
+            ),
+        )
+    payslip_data["company"] = Company.objects.filter(hq=True).first()
     return render(
         request,
         "payroll/payslip/individual_payslip.html",
         payslip_data,
+    )
+
+
+@login_required
+@manager_can_enter("attendance.change_attendance")
+@hx_request_required
+def payslip_pending_attendance_action(request):
+    """
+    Validate or approve overtime for a single attendance record directly
+    from the payslip page, without navigating away. Does not regenerate
+    the payslip itself — re-run payroll to pick up the updated hours.
+    """
+    if not apps.is_installed("attendance"):
+        return HttpResponse("")
+
+    attendance_id = request.POST.get("attendance_id")
+    action = request.POST.get("action")
+
+    Attendance = get_horilla_model_class(app_label="attendance", model="attendance")
+    try:
+        attendance = Attendance.objects.get(pk=attendance_id)
+    except (Attendance.DoesNotExist, ValueError, TypeError):
+        return HttpResponse("")
+
+    if action == "validate":
+        attendance.attendance_validated = True
+        attendance.save()
+    elif action == "approve_ot":
+        attendance.attendance_overtime_approve = True
+        attendance.save()
+
+    worked = attendance.at_work_second or 0
+    overtime = attendance.overtime_second or 0
+    pending_row = {
+        "id": attendance.id,
+        "date_label": attendance.attendance_date.strftime("%d %b %Y"),
+        "worked_label": f"{worked // 3600}h {(worked % 3600) // 60:02d}m",
+        "overtime_label": f"{overtime // 3600}h {(overtime % 3600) // 60:02d}m",
+        "needs_validation": not attendance.attendance_validated,
+        "needs_ot_approval": bool(attendance.overtime_second)
+        and not attendance.attendance_overtime_approve,
+    }
+    if not pending_row["needs_validation"] and not pending_row["needs_ot_approval"]:
+        return HttpResponse("")
+    return render(
+        request,
+        "payroll/payslip/pending_attendance_row.html",
+        {"pa": pending_row},
     )
 
 
@@ -1117,6 +1243,11 @@ def payslip_export(request):
     This view exports payslip data based on selected fields and filters,
     and generates an Excel file for download.
     """
+    if not has_export_access(request, Payslip):
+        return HorillaRedirect(
+            request, message=_("You don't have access to export this data")
+        )
+
     if request.META.get("HTTP_HX_REQUEST"):
         return render(
             request,
@@ -1141,17 +1272,30 @@ def payslip_export(request):
     selected_fields = request.GET.getlist("selected_fields")
     form = forms.PayslipExportColumnForm()
 
+    # Rows selected in the list view take priority over whatever's left in
+    # the filter fields - same convention as the other export flows. Guarded
+    # separately from the "ids" fallback below so one doesn't clobber the
+    # other when selected_fields is also empty.
+    instance_ids = request.GET.get("instance_ids")
+    has_instance_ids = False
+    if instance_ids:
+        with contextlib.suppress(ValueError, SyntaxError):
+            instance_ids = ast.literal_eval(instance_ids)
+            if instance_ids:
+                payslips = Payslip.objects.filter(pk__in=instance_ids)
+                has_instance_ids = True
+
     if not selected_fields:
         selected_fields = form.fields["selected_fields"].initial
-        ids = request.GET.get("ids")
-        id_list = json.loads(ids)
-        payslips = Payslip.objects.filter(id__in=id_list)
+        if not has_instance_ids:
+            ids = request.GET.get("ids", "[]")
+            id_list = json.loads(ids)
+            payslips = Payslip.objects.filter(id__in=id_list)
 
-    for field in forms.excel_columns:
-        value = field[0]
-        key = field[1]
-        if value in selected_fields:
-            selected_columns.append((value, key))
+    excel_columns_map = dict(forms.excel_columns)
+    for value in selected_fields:
+        if value in excel_columns_map:
+            selected_columns.append((value, excel_columns_map[value]))
 
     for column_value, column_name in selected_columns:
         nested_attributes = column_value.split("__")
@@ -1166,11 +1310,11 @@ def payslip_export(request):
             if column_name == "Status":
                 data = choices_mapping.get(value, "")
 
-            if type(value) == date:
+            if type(value) is date:
                 date_format = request.user.employee_get.get_date_format()
                 start_date = datetime.strptime(str(value), "%Y-%m-%d").date()
 
-                for format_name, format_string in HORILLA_DATE_FORMATS.items():
+                for format_name, format_string in settings.HORILLA_DATE_FORMATS.items():
                     if format_name == date_format:
                         data = start_date.strftime(format_string)
             else:
@@ -1184,9 +1328,12 @@ def payslip_export(request):
     response["Content-Disposition"] = f'attachment; filename="{file_name}"'
 
     writer = pd.ExcelWriter(response, engine="xlsxwriter")
-    data_frame.style.map(lambda x: "text-align: center").to_excel(
-        writer, index=False, sheet_name="Sheet1"
-    )
+    try:
+        data_frame.style.map(lambda x: "text-align: center").to_excel(
+            writer, index=False, sheet_name="Sheet1"
+        )
+    except Exception:
+        data_frame.to_excel(writer, index=False, sheet_name="Sheet1")
     worksheet = writer.sheets["Sheet1"]
     worksheet.set_column("A:Z", 20)
     writer.close()
@@ -1194,6 +1341,7 @@ def payslip_export(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.add_allowance")
 def hx_create_allowance(request):
     """
@@ -1204,23 +1352,27 @@ def hx_create_allowance(request):
 
 
 @login_required
+# @hx_request_required
 @permission_required("payroll.add_payslip")
 def send_slip(request):
     """
     Send payslip method
     """
+
     email_backend = ConfiguredEmailBackend()
     view = request.GET.get("view")
     payslip_ids = request.GET.getlist("id")
+
+    # payslip_ids = request.GET.get("id")
     payslips = Payslip.objects.filter(id__in=payslip_ids)
     if not getattr(
         email_backend, "dynamic_from_email_with_display_name", None
     ) or not len(email_backend.dynamic_from_email_with_display_name):
-        messages.error(request, "Email server is not configured")
+        messages.error(request, _("Email server is not configured"))
         if view:
             return HorillaRedirect(request)
         else:
-            return redirect(filter_payslip)
+            return redirect(reverse("payslip-list"))
 
     result_dict = defaultdict(
         lambda: {"employee_id": None, "instances": [], "count": 0}
@@ -1230,27 +1382,33 @@ def send_slip(request):
         result_dict[employee_id]["employee_id"] = employee_id
         result_dict[employee_id]["instances"].append(payslip)
         result_dict[employee_id]["count"] += 1
+
     mail_thread = MailSendThread(request, result_dict=result_dict, ids=payslip_ids)
     mail_thread.start()
-    messages.info(request, "Mail processing")
+    messages.info(request, _("Mail processing"))
     if view:
         return HorillaRedirect(request)
     else:
-        return redirect(filter_payslip)
+        return redirect(reverse("payslip-list"))
 
 
 @login_required
 @permission_required("payroll.add_allowance")
 def add_bonus(request):
-    employee_id = request.GET["employee_id"]
+    employee_id = request.GET.get("employee_id")
     payslip_id = request.GET.get("payslip_id")
+    if not employee_id or not payslip_id:
+        return HorillaRedirect(request, message=_("Missing required parameters."))
     if payslip_id != "None" and payslip_id:
-        instance = Payslip.objects.get(id=payslip_id)
+        instance = Payslip.find(payslip_id)
+        if not instance:
+            return HorillaRedirect(request, _("Payslip not found"))
         form = forms.PayslipAllowanceForm(
             initial={"employee_id": employee_id, "date": instance.start_date}
         )
     else:
         form = forms.BonusForm(initial={"employee_id": employee_id})
+
     if request.method == "POST":
         form = forms.BonusForm(request.POST, initial={"employee_id": employee_id})
         contract = Contract.objects.filter(
@@ -1278,8 +1436,11 @@ def add_bonus(request):
                         start_date=instance.start_date,
                         end_date=instance.end_date,
                     ).first()
-                    return HttpResponse(
-                        f"<script>window.location.href='/payroll/view-payslip/{payslip.id}'</script>"
+                    return HorillaRedirect(
+                        request,
+                        redirect_to=reverse(
+                            "view-created-payslip", kwargs={"payslip_id": payslip.id}
+                        ),
                     )
                 else:
                     messages.warning(
@@ -1289,6 +1450,7 @@ def add_bonus(request):
                         ).format(employee),
                     )
             return HorillaRedirect(request)
+
     return render(
         request,
         "payroll/bonus/form.html",
@@ -1299,8 +1461,10 @@ def add_bonus(request):
 @login_required
 @permission_required("payroll.add_deduction")
 def add_deduction(request):
-    employee_id = request.GET["employee_id"]
+    employee_id = request.GET.get("employee_id")
     payslip_id = request.GET.get("payslip_id")
+    if not employee_id or not payslip_id:
+        return HorillaRedirect(request, message=_("Missing required parameters."))
     instance = Payslip.objects.get(id=payslip_id)
 
     if request.method == "POST":
@@ -1335,8 +1499,12 @@ def add_deduction(request):
                 start_date=instance.start_date,
                 end_date=instance.end_date,
             ).first()
-            return HttpResponse(
-                f"<script>window.location.href='/payroll/view-payslip/{payslip.id}'</script>"
+
+            return HorillaRedirect(
+                request,
+                redirect_to=reverse(
+                    "view-created-payslip", kwargs={"payslip_id": payslip.id}
+                ),
             )
 
     else:
@@ -1398,7 +1566,7 @@ def create_loan(request):
         form = forms.LoanAccountForm(request.POST, instance=instance)
         if form.is_valid():
             form.save()
-            messages.success(request, "Loan created/updated")
+            messages.success(request, _("Loan created/updated"))
             return HorillaRedirect(request)
     return render(
         request, "payroll/loan/form.html", {"form": form, "instance_id": instance_id}
@@ -1411,11 +1579,16 @@ def view_installments(request):
     """
     View install ments
     """
-    loan_id = request.GET["loan_id"]
-    loan = LoanAccount.objects.get(id=loan_id)
+    loan_id = request.GET.get("loan_id")
+    if not loan_id:
+        return HorillaRedirect(request, message=_("Missing required parameters."))
+    loan = LoanAccount.find(loan_id)
+    if not loan:
+        return HorillaRedirect(request, message=_("Loan not found."))
     installments = loan.deduction_ids.all()
 
     requests_ids_json = request.GET.get("instances_ids")
+    previous_id, next_id = None, None
     if requests_ids_json:
         requests_ids = json.loads(requests_ids_json)
         previous_id, next_id = closest_numbers(requests_ids, int(loan_id))
@@ -1452,10 +1625,16 @@ def delete_loan(request):
             ).exists()
         ):
             loan.delete()
-            messages.success(request, "Loan account deleted")
+            messages.success(request, _("Loan account deleted"))
         else:
-            messages.error(request, "Loan account cannot be deleted")
-    return redirect(view_loans)
+            messages.error(request, _("Loan account cannot be deleted"))
+    if request.headers.get("HX-Request"):
+        response = HttpResponse("", status=200)
+        response["HX-Trigger"] = json.dumps(
+            {"reloadPayrollLoanTabs": {"target": "body"}}
+        )
+        return response
+    return redirect(reverse("view-loan"))
 
 
 @login_required
@@ -1464,6 +1643,8 @@ def edit_installment_amount(request):
     loan_id = request.GET.get("loan_id")
     ded_id = request.GET.get("ded_id")
     amount_raw = request.POST.get("amount")
+    if not loan_id or not ded_id or not amount_raw:
+        return HorillaRedirect(request, message=_("Missing required parameters."))
     try:
         value = float(amount_raw) if amount_raw else 0.0
         if not math.isfinite(value):
@@ -1471,9 +1652,14 @@ def edit_installment_amount(request):
     except (TypeError, ValueError):
         value = 0.0
 
-    loan = LoanAccount.objects.filter(id=loan_id).first()
+    loans = LoanAccount.objects.filter(id=loan_id)
+    loan = loans.first()
+    if not loan:
+        return HorillaRedirect(request, message=_("Loan not found."))
     deductions = loan.deduction_ids.all().order_by("one_time_date")
     deduction = deductions.filter(id=ded_id).first()
+    if not deduction:
+        return HorillaRedirect(request, message=_("Deduction not found."))
     deductions_before = deductions.filter(one_time_date__lt=deduction.one_time_date)
     deductions_after = deductions.filter(one_time_date__gt=deduction.one_time_date)
     total_sum = deductions_before.aggregate(Sum("amount"))["amount__sum"] or 0
@@ -1486,31 +1672,45 @@ def edit_installment_amount(request):
         value = loan.loan_amount - total_sum
         new_installment = 0
 
-    if not deduction.installment_payslip():
+    if not deduction.installment_payslip:
         deduction.amount = value
         deduction.save()
 
         for item in deductions.filter(one_time_date__gt=deduction.one_time_date):
-            item.amount = new_installment
-            item.save()
+            if new_installment > 0:
+                item.amount = new_installment
+                item.save()
+            else:
+                item.delete()
+                loan.deduction_ids.remove(item)
 
+        # If there are no deductions after the current one and a new installment amount is calculated,
         if len(deductions_after) == 0 and new_installment != 0:
-            date = get_next_month_same_date(deduction.one_time_date)
+            if loan.installment_start_date:
+                date = get_nth_month_same_date(
+                    loan.installment_start_date, len(deductions)
+                )
+            else:
+                date = get_next_month_same_date(deduction.one_time_date)
             installment = create_deductions(loan, new_installment, date)
             loan.deduction_ids.add(installment)
 
-        messages.success(request, "Installment amount updated successfully")
+        loans.update(installments=len(loan.deduction_ids.all()))
+        messages.success(request, _("Installment amount updated successfully"))
     else:
-        messages.error(request, "Cannot change paid installments ")
+        messages.error(request, _("Cannot change paid installments "))
 
-    return render(
+    response = render(
         request,
-        "payroll/loan/installments.html",
+        "cbv/loan/loan_installment_table.html",
         {
-            "installments": loan.deduction_ids.all(),
+            "installments": loan.deduction_ids.all().order_by("one_time_date"),
             "loan": loan,
         },
     )
+    # The message goes to the page's own toast; only the rows are swapped.
+    response["HX-Trigger"] = "showMessages"
+    return response
 
 
 @login_required
@@ -1647,7 +1847,7 @@ def create_reimbursement(request):
         form = forms.ReimbursementForm(request.POST, request.FILES, instance=instance)
         if form.is_valid():
             form.save()
-            messages.success(request, "Reimbursement saved successfully")
+            messages.success(request, _("Reimbursement saved successfully"))
             return HorillaRedirect(request)
     else:
         form = forms.ReimbursementForm(instance=instance)
@@ -1705,11 +1905,54 @@ def search_reimbursement(request):
 
 
 @login_required
+def bonus_points_note(request):
+    """
+    The note under a Bonus Point Encashment form: how many bonus points the
+    selected employee has available. Loaded when the form opens and again
+    whenever the employee is changed (htmx).
+
+    Whoever may create a reimbursement can look up any employee; anyone else
+    only sees their own points (their form has no employee field).
+    """
+    from base.methods import check_manager
+    from employee.models import BonusPoint
+
+    own_employee = getattr(request.user, "employee_get", None)
+    employee_id = request.GET.get("employee_id")
+    employee = (
+        Employee.objects.filter(id=employee_id).first()
+        if employee_id and str(employee_id).isdigit()
+        else own_employee
+    )
+    if employee and employee != own_employee:
+        if not (
+            request.user.has_perm("payroll.add_reimbursement")
+            or (own_employee and check_manager(own_employee, employee))
+        ):
+            employee = None
+    if not employee:
+        return HttpResponse("")
+
+    bonus = BonusPoint.objects.filter(employee_id=employee).first()
+    return render(
+        request,
+        "payroll/reimbursement/bonus_points_note.html",
+        {"employee": employee, "points": bonus.points if bonus else 0},
+    )
+
+
+@login_required
 def get_assigned_leaves(request):
     """
     This method is used to return assigned leaves of the employee
     in Json
     """
+    emp_id = request.GET.get("employeeId")
+    if not emp_id:
+        messages.error(request, _("Missing required parameters."))
+        return JsonResponse(
+            {"error": "Missing required parameters: employeeId"}, status=400
+        )
     if apps.is_installed("leave"):
         AvailableLeave = get_horilla_model_class(
             app_label="leave", model="availableleave"
@@ -1739,7 +1982,9 @@ def approve_reimbursements(request):
     This method is used to approve or reject the reimbursement request
     """
     ids = request.GET.getlist("ids")
-    status = request.GET["status"]
+    status = request.GET.get("status")
+    if not status:
+        return HorillaRedirect(request, message=_("Missing required parameters."))
     if status == "canceled":
         status = "rejected"
     amount = (
@@ -1769,11 +2014,7 @@ def approve_reimbursements(request):
             notify.send(
                 request.user.employee_get,
                 recipient=emp.employee_user_id,
-                verb="Your reimbursement request has been rejected.",
-                verb_ar="تم رفض طلب استرداد النفقات الخاص بك.",
-                verb_de="Ihr Erstattungsantrag wurde abgelehnt.",
-                verb_es="Su solicitud de reembolso ha sido rechazada.",
-                verb_fr="Votre demande de remboursement a été rejetée.",
+                verb=gettext_noop("Your reimbursement request has been rejected."),
                 redirect=reverse("view-reimbursement") + f"?id={reimbursement.id}",
                 icon="checkmark",
             )
@@ -1781,15 +2022,17 @@ def approve_reimbursements(request):
             notify.send(
                 request.user.employee_get,
                 recipient=emp.employee_user_id,
-                verb="Your reimbursement request has been approved.",
-                verb_ar="تمت الموافقة على طلب استرداد نفقاتك.",
-                verb_de="Ihr Rückerstattungsantrag wurde genehmigt.",
-                verb_es="Se ha aprobado tu solicitud de reembolso.",
-                verb_fr="Votre demande de remboursement a été approuvée.",
+                verb=gettext_noop("Your reimbursement request has been approved."),
                 redirect=reverse("view-reimbursement") + f"?id={reimbursement.id}",
                 icon="checkmark",
             )
-    return redirect(view_reimbursement)
+    if request.headers.get("HX-Request"):
+        response = HttpResponse("", status=200)
+        response["HX-Trigger"] = json.dumps(
+            {"reloadPayrollReimbursements": {"target": "body"}}
+        )
+        return response
+    return redirect(reverse("view-reimbursement"))
 
 
 @login_required
@@ -1799,24 +2042,34 @@ def delete_reimbursements(request):
     This method is used to delete the reimbursements
     """
     ids = request.GET.getlist("ids")
-    reimbursements = Reimbursement.objects.filter(id__in=ids)
-    for reimbursement in reimbursements:
-        user = reimbursement.employee_id.employee_user_id
-    reimbursements.delete()
-    messages.success(request, "Reimbursements deleted")
-    notify.send(
-        request.user.employee_get,
-        recipient=user,
-        verb="Your reimbursement request has been deleted.",
-        verb_ar="تم حذف طلب استرداد نفقاتك.",
-        verb_de="Ihr Rückerstattungsantrag wurde gelöscht.",
-        verb_es="Tu solicitud de reembolso ha sido eliminada.",
-        verb_fr="Votre demande de remboursement a été supprimée.",
-        redirect="/",
-        icon="trash",
+    reimbursements = Reimbursement.objects.filter(id__in=ids).select_related(
+        "employee_id__employee_user_id"
     )
+    recipients = []
+    seen_user_ids = set()
+    for reimbursement in reimbursements:
+        recipient = getattr(reimbursement.employee_id, "employee_user_id", None)
+        if recipient and recipient.id not in seen_user_ids:
+            recipients.append(recipient)
+            seen_user_ids.add(recipient.id)
+    reimbursements.delete()
+    messages.success(request, _("Reimbursements deleted"))
+    if recipients:
+        notify.send(
+            request.user.employee_get,
+            recipient=recipients,
+            verb=gettext_noop("Your reimbursement request has been deleted."),
+            redirect="/",
+            icon="trash",
+        )
 
-    return redirect(view_reimbursement)
+    if request.headers.get("HX-Request"):
+        response = HttpResponse("", status=200)
+        response["HX-Trigger"] = json.dumps(
+            {"reloadPayrollReimbursements": {"target": "body"}}
+        )
+        return response
+    return redirect("view-reimbursement")
 
 
 @login_required
@@ -1825,7 +2078,9 @@ def reimbursement_individual_view(request, instance_id):
     """
     This method is used to render the individual view of reimbursement object
     """
-    reimbursement = Reimbursement.objects.get(id=instance_id)
+    reimbursement = Reimbursement.find(instance_id)
+    if not reimbursement:
+        return HorillaRedirect(request, message=_("Reimbursement request not found."))
     requests_ids_json = request.GET.get("instances_ids")
     if requests_ids_json:
         requests_ids = json.loads(requests_ids_json)
@@ -1849,7 +2104,9 @@ def reimbursement_attachments(request, instance_id):
     """
     This method is used to render all the attachements under the reimbursement object
     """
-    reimbursement = Reimbursement.objects.get(id=instance_id)
+    reimbursement = Reimbursement.find(instance_id)
+    if not reimbursement:
+        return HorillaRedirect(request, message=_("Reimbursement request not found."))
     return render(
         request,
         "payroll/reimbursement/attachments.html",
@@ -1865,11 +2122,12 @@ def delete_attachments(request, _reimbursement_id):
     """
     ids = request.GET.getlist("ids")
     ReimbursementMultipleAttachment.objects.filter(id__in=ids).delete()
-    messages.success(request, "Attachment deleted")
-    return redirect(view_reimbursement)
+    messages.success(request, _("Attachment deleted"))
+    return redirect("view-reimbursement")
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.view_payslip")
 def get_contribution_report(request):
     """
@@ -1977,11 +2235,10 @@ def payslip_detailed_export_data(request):
     if not selected_fields:
         selected_fields = form.fields["selected_fields"].initial
 
-    for field in forms.excel_columns:
-        value, key = field
-
-        if value in selected_fields:
-            selected_columns.append((value, key))
+    excel_columns_map = dict(forms.excel_columns)
+    for value in selected_fields:
+        if value in excel_columns_map:
+            selected_columns.append((value, excel_columns_map[value]))
 
     selected_columns += [
         (value.title, value.title)
@@ -2089,7 +2346,7 @@ def payslip_detailed_export_data(request):
                 date_format = request.user.employee_get.get_date_format()
                 start_date = datetime.strptime(str(value), "%Y-%m-%d").date()
 
-                for format_name, format_string in HORILLA_DATE_FORMATS.items():
+                for format_name, format_string in settings.HORILLA_DATE_FORMATS.items():
                     if format_name == date_format:
                         data = start_date.strftime(format_string)
             else:
@@ -2286,7 +2543,7 @@ def payslip_detailed_export(request):
                 cell.font = Font(bold=True)
             cell.border = thin_border
 
-    for col_num, _ in enumerate(header_row, 1):
+    for col_num, _unused in enumerate(header_row, 1):
         max_length = max(
             len(str(cell.value))
             for cell in ws[get_column_letter(col_num)]

@@ -34,9 +34,8 @@ from django import forms
 from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db.models.query import QuerySet
-from django.forms import DateTimeInput
+from django.forms import DateInput, DateTimeInput, TimeInput
 from django.template.loader import render_to_string
-from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
 from attendance.filters import AttendanceFilters
@@ -55,7 +54,9 @@ from attendance.models import (
     validate_time_format,
 )
 from base.forms import ModelForm as BaseModelForm
+from base.forms import MultipleFileField
 from base.methods import (
+    export_field_label,
     filtersubordinatesemployeemodel,
     get_working_days,
     is_reportingmanager,
@@ -76,6 +77,8 @@ class AttendanceUpdateForm(BaseModelForm):
     This model form is used to direct save the validated query dict to attendance model
     from AttendanceUpdateForm. This form can be used to update existing attendance.
     """
+
+    container_id = "attendanceUpdateFormFields"
 
     class Meta:
         """
@@ -111,12 +114,7 @@ class AttendanceUpdateForm(BaseModelForm):
         self.fields[field_name].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceUpdateForm",
-                "hx-target": "#id_attendance_worked_hour_parent_div",
-                "hx-swap": "outerHTML",
-                "hx-select": "#id_attendance_worked_hour_parent_div",
-                "hx-get": "/attendance/update-worked-hour-field",
-                "hx-trigger": "change delay:300ms",  # Delay added here for 500ms
+                "onchange": "attendanceWorkedHourChange($(this))",
             }
         )
 
@@ -132,11 +130,15 @@ class AttendanceUpdateForm(BaseModelForm):
             )
             initial = {
                 "attendance_date": instance.attendance_date.strftime("%Y-%m-%d"),
-                "attendance_clock_in": instance.attendance_clock_in.strftime("%H:%M"),
-                "attendance_clock_in_date": instance.attendance_clock_in_date.strftime(
-                    "%Y-%m-%d"
-                ),
             }
+            if instance.attendance_clock_in is not None:
+                initial["attendance_clock_in"] = instance.attendance_clock_in.strftime(
+                    "%H:%M"
+                )
+            if instance.attendance_clock_in_date is not None:
+                initial["attendance_clock_in_date"] = (
+                    instance.attendance_clock_in_date.strftime("%Y-%m-%d")
+                )
             if instance.attendance_clock_out_date is not None:
                 initial["attendance_clock_out"] = (
                     instance.attendance_clock_out.strftime("%H:%M")
@@ -150,9 +152,7 @@ class AttendanceUpdateForm(BaseModelForm):
         self.fields["shift_id"].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceUpdateForm",
-                "hx-target": "#attendanceUpdateForm",
-                "hx-get": "/attendance/update-fields-based-shift",
+                "onchange": "attendanceShiftChange($(this))",
             }
         )
         for field in [
@@ -180,7 +180,9 @@ class AttendanceUpdateForm(BaseModelForm):
             del self.fields["attendance_overtime_approve"]
         self.fields["batch_attendance_id"].choices = list(
             self.fields["batch_attendance_id"].choices
-        ) + [("dynamic_create", "Dynamic create")]
+        ) + [
+            ("dynamic_create", _("Create %(label)s") % {"label": _("Batch Attendance")})
+        ]
         self.fields["batch_attendance_id"].widget.attrs.update(
             {
                 "onchange": "dynamicBatchAttendance($(this))",
@@ -202,12 +204,13 @@ class AttendanceForm(BaseModelForm):
     Model form for Attendance model
     """
 
+    container_id = "attendanceFormFields"
     employee_id = HorillaMultiSelectField(
         queryset=Employee.objects.filter(employee_work_info__isnull=False),
         widget=HorillaMultiSelectWidget(
             filter_route_name="employee-widget-filter",
             filter_class=EmployeeFilter,
-            filter_instance_contex_name="f",
+            filter_instance_context_name="f",
             filter_template_path="employee_filters.html",
         ),
         label=_("Employees"),
@@ -249,12 +252,7 @@ class AttendanceForm(BaseModelForm):
         self.fields[field_name].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceCreateForm",
-                "hx-target": "#id_attendance_worked_hour_parent_div",
-                "hx-swap": "outerHTML",
-                "hx-select": "#id_attendance_worked_hour_parent_div",
-                "hx-get": "/attendance/update-worked-hour-field",
-                "hx-trigger": "change delay:300ms",  # Delay added here for 500ms
+                "onchange": "attendanceWorkedHourChange($(this))",
             }
         )
 
@@ -275,14 +273,16 @@ class AttendanceForm(BaseModelForm):
             initial.update(
                 {
                     "attendance_date": instance.attendance_date.strftime("%Y-%m-%d"),
-                    "attendance_clock_in": instance.attendance_clock_in.strftime(
-                        "%H:%M"
-                    ),
-                    "attendance_clock_in_date": instance.attendance_clock_in_date.strftime(
-                        "%Y-%m-%d"
-                    ),
                 }
             )
+            if instance.attendance_clock_in is not None:
+                initial["attendance_clock_in"] = instance.attendance_clock_in.strftime(
+                    "%H:%M"
+                )
+            if instance.attendance_clock_in_date is not None:
+                initial["attendance_clock_in_date"] = (
+                    instance.attendance_clock_in_date.strftime("%Y-%m-%d")
+                )
             if instance.attendance_clock_out_date is not None:
                 initial["attendance_clock_out"] = (
                     instance.attendance_clock_out.strftime("%H:%M")
@@ -301,9 +301,7 @@ class AttendanceForm(BaseModelForm):
         self.fields["shift_id"].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceCreateForm",
-                "hx-target": "#attendanceCreateForm",
-                "hx-get": "/attendance/update-fields-based-shift",
+                "onchange": "attendanceShiftChange($(this))",
             }
         )
 
@@ -324,7 +322,9 @@ class AttendanceForm(BaseModelForm):
         self.fields["work_type_id"].widget.attrs.update({"id": str(uuid.uuid4())})
         self.fields["batch_attendance_id"].choices = list(
             self.fields["batch_attendance_id"].choices
-        ) + [("dynamic_create", "Dynamic create")]
+        ) + [
+            ("dynamic_create", _("Create %(label)s") % {"label": _("Batch Attendance")})
+        ]
         self.fields["batch_attendance_id"].widget.attrs.update(
             {
                 "onchange": "dynamicBatchAttendance($(this))",
@@ -444,7 +444,7 @@ class MonthSelectField(forms.ChoiceField):
         choices = [
             (month_name[i].lower(), _(month_name[i].capitalize())) for i in range(1, 13)
         ]
-        super().__init__(choices=choices, *args, **kwargs)
+        super().__init__(*args, choices=choices, **kwargs)
 
 
 class AttendanceOverTimeForm(BaseModelForm):
@@ -509,17 +509,32 @@ class AttendanceValidationConditionForm(forms.ModelForm):
     Model form for AttendanceValidationCondition
     """
 
+    cols = {
+        "shift_ids": 12,
+        "company_id": 12,
+    }
+
+    minimum_at_work_to_validate = forms.CharField(
+        required=True,
+        initial="00:00",
+        validators=[validate_time_format],
+        widget=forms.TextInput(
+            attrs={"class": "oh-input w-100", "placeholder": "00:30"}
+        ),
+        label=_("Minimum Worked Hours to Auto Approve"),
+        help_text=_(
+            "Do not Auto Validate Attendance if an Employee Works Less Than this Amount of Duration"
+        ),
+    )
     validation_at_work = forms.CharField(
         required=True,
         initial="00:00",
         widget=forms.TextInput(
             attrs={"class": "oh-input w-100", "placeholder": "09:00"}
         ),
-        label=format_html(
-            _(
-                "<span title='Do not Auto Validate Attendance if an Employee Works More Than this Amount of Duration'>{}</span>"
-            ),
-            _("Worked Hours(At Work) Auto Approve Till"),
+        label=_("Maximum Worked Hours to Auto Approve"),
+        help_text=_(
+            "Do not Auto Validate Attendance if an Employee Works More Than this Amount of Duration"
         ),
     )
     minimum_overtime_to_approve = forms.CharField(
@@ -538,6 +553,15 @@ class AttendanceValidationConditionForm(forms.ModelForm):
         ),
         label=_("Maximum Allowed Overtime Per Day"),
     )
+    shift_ids = forms.ModelMultipleChoiceField(
+        label=_("Shifts"),
+        queryset=EmployeeShift.objects.all(),
+        required=False,
+        help_text=_(
+            "Leave empty to apply to every shift that has no condition of its own."
+        ),
+        widget=forms.SelectMultiple(attrs={"class": "oh-select oh-select-2 w-100"}),
+    )
     company_id = forms.ModelMultipleChoiceField(
         label=_("Company"),
         queryset=Company.objects.all(),
@@ -554,23 +578,79 @@ class AttendanceValidationConditionForm(forms.ModelForm):
         fields = "__all__"
         exclude = ["is_active"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        active_company_id = horilla_middlewares.get_selected_company()
+        if active_company_id and not active_company_id == "all":
+            self.fields["company_id"].queryset = Company.objects.filter(
+                id=active_company_id
+            )
+
+    def clean(self):
+        """
+        Validate the auto validate hour range and that no two conditions share a shift.
+        """
+        cleaned_data = super().clean()
+        minimum = cleaned_data.get("minimum_at_work_to_validate")
+        till = cleaned_data.get("validation_at_work")
+        try:
+            if minimum and till and strtime_seconds(minimum) > strtime_seconds(till):
+                self.add_error(
+                    "minimum_at_work_to_validate",
+                    _("Minimum hours cannot be greater than the maximum hours."),
+                )
+        except ValueError:
+            pass
+
+        shift_ids = {shift.id for shift in cleaned_data.get("shift_ids") or []}
+        company_ids = {company.id for company in cleaned_data.get("company_id") or []}
+        others = (
+            AttendanceValidationCondition._base_manager.filter(is_active=True)
+            .exclude(pk=self.instance.pk)
+            .prefetch_related("shift_ids", "company_id")
+        )
+        for other in others:
+            other_company_ids = {company.id for company in other.company_id.all()}
+            if (
+                company_ids
+                and other_company_ids
+                and not company_ids & other_company_ids
+            ):
+                continue
+            other_shift_ids = {shift.id for shift in other.shift_ids.all()}
+            if not shift_ids and not other_shift_ids:
+                self.add_error(
+                    "shift_ids", _("A condition for all shifts already exists.")
+                )
+                break
+            if shift_ids & other_shift_ids:
+                shifts = ", ".join(
+                    str(shift)
+                    for shift in EmployeeShift.objects.filter(
+                        id__in=shift_ids & other_shift_ids
+                    )
+                )
+                self.add_error(
+                    "shift_ids",
+                    _("%(shifts)s already has a condition.") % {"shifts": shifts},
+                )
+                break
+        return cleaned_data
+
 
 class AttendanceRequestForm(BaseModelForm):
     """
     AttendanceRequestForm
     """
 
+    cols = {"request_description": 12}
+
     def update_worked_hour_hx_fields(self, field_name):
         """Update the widget attributes for worked hour fields."""
         self.fields[field_name].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceRequestForm",
-                "hx-target": "#id_attendance_worked_hour_parent_div",
-                "hx-swap": "outerHTML",
-                "hx-select": "#id_attendance_worked_hour_parent_div",
-                "hx-get": "/attendance/update-worked-hour-field",
-                "hx-trigger": "change delay:300ms",  # Delay added here for 300ms
+                "onchange": "attendanceWorkedHourChange($(this))",
             }
         )
 
@@ -580,31 +660,41 @@ class AttendanceRequestForm(BaseModelForm):
             # so here overriding default forms instance method to set initial value
             initial = {
                 "attendance_date": instance.attendance_date.strftime("%Y-%m-%d"),
-                "attendance_clock_in": instance.attendance_clock_in.strftime("%H:%M"),
-                "attendance_clock_in_date": instance.attendance_clock_in_date.strftime(
-                    "%Y-%m-%d"
-                ),
             }
-            if instance.attendance_clock_out_date is not None:
-                initial["attendance_clock_out"] = (
-                    instance.attendance_clock_out.strftime("%H:%M")
+            if instance.attendance_clock_in is not None:
+                initial["attendance_clock_in"] = instance.attendance_clock_in.strftime(
+                    "%H:%M"
                 )
+            if instance.attendance_clock_in_date is not None:
+                initial["attendance_clock_in_date"] = (
+                    instance.attendance_clock_in_date.strftime("%Y-%m-%d")
+                )
+            if instance.attendance_clock_out_date is not None:
+                if isinstance(instance.attendance_clock_out_date, str):
+                    instance.attendance_clock_out_date = datetime.datetime.strptime(
+                        instance.attendance_clock_out_date, "%Y-%m-%d"
+                    ).date()
+                if instance.attendance_clock_out:
+                    initial["attendance_clock_out"] = (
+                        instance.attendance_clock_out.strftime("%H:%M")
+                    )
                 initial["attendance_clock_out_date"] = (
                     instance.attendance_clock_out_date.strftime("%Y-%m-%d")
                 )
             kwargs["initial"] = initial
         super().__init__(*args, **kwargs)
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        if request and not request.user.has_perm("attendance.change_attendance"):
+            self.fields["minimum_hour"].widget = forms.HiddenInput()
         self.fields["attendance_clock_out_date"].required = False
         self.fields["attendance_clock_out"].required = False
-        self.fields["shift_id"].widget.attrs.update(
-            {
-                "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceRequestForm",
-                "hx-target": "#attendanceRequestDiv",
-                "hx-swap": "outerHTML",
-                "hx-get": "/attendance/update-fields-based-shift",
-            }
-        )
+        if not self.instance.pk:
+            self.fields["shift_id"].widget.attrs.update(
+                {
+                    "id": str(uuid.uuid4()),
+                    "onchange": "attendanceShiftChange($(this))",
+                }
+            )
         for field in [
             "attendance_clock_in_date",
             "attendance_clock_in",
@@ -620,7 +710,9 @@ class AttendanceRequestForm(BaseModelForm):
         self.fields["work_type_id"].widget.attrs.update({"id": str(uuid.uuid4())})
         self.fields["batch_attendance_id"].choices = list(
             self.fields["batch_attendance_id"].choices
-        ) + [("dynamic_create", "Dynamic create")]
+        ) + [
+            ("dynamic_create", _("Create %(label)s") % {"label": _("Batch Attendance")})
+        ]
         self.fields["batch_attendance_id"].widget.attrs.update(
             {
                 "onchange": "dynamicBatchAttendance($(this))",
@@ -636,11 +728,11 @@ class AttendanceRequestForm(BaseModelForm):
         fields = [
             "attendance_date",
             "shift_id",
-            "work_type_id",
             "attendance_clock_in_date",
             "attendance_clock_in",
             "attendance_clock_out_date",
             "attendance_clock_out",
+            "work_type_id",
             "attendance_worked_hour",
             "minimum_hour",
             "request_description",
@@ -652,6 +744,14 @@ class AttendanceRequestForm(BaseModelForm):
             "attendance_clock_in_date": DateTimeInput(attrs={"type": "date"}),
             "attendance_clock_out": DateTimeInput(attrs={"type": "time"}),
             "attendance_clock_out_date": DateTimeInput(attrs={"type": "date"}),
+        }
+
+        widgets = {
+            "attendance_clock_in": TimeInput(attrs={"type": "time"}),
+            "attendance_clock_out": TimeInput(attrs={"type": "time"}),
+            "attendance_clock_out_date": DateInput(attrs={"type": "date"}),
+            "attendance_date": DateInput(attrs={"type": "date"}),
+            "attendance_clock_in_date": DateInput(attrs={"type": "date"}),
         }
 
     def as_p(self, *args, **kwargs):
@@ -686,8 +786,7 @@ class NewRequestForm(AttendanceRequestForm):
                 widget=forms.Select(
                     attrs={
                         "class": "oh-select oh-select-2 w-100",
-                        "hx-target": "#id_shift_id_div",
-                        "hx-get": "/attendance/get-employee-shift?bulk=False",
+                        "onchange": "attendanceEmployeeChange($(this))",
                     }
                 ),
                 initial=view_initial.get("employee_id"),
@@ -698,15 +797,15 @@ class NewRequestForm(AttendanceRequestForm):
                 widget=forms.CheckboxInput(
                     attrs={
                         "class": "oh-checkbox",
-                        "hx-target": "#objectCreateModalTarget",
-                        "hx-get": "/attendance/request-new-attendance?bulk=True",
+                        "hx-target": "#genericModalBody",
+                        "hx-swap": "innerHTML",
+                        "hx-get": "/attendance/request-bulk-attendance/?bulk=True",
                     }
                 ),
             ),
         }
         new_dict.update(old_dict)
         self.fields = new_dict
-
         kwargs["initial"] = view_initial
 
     def as_p(self, *args, **kwargs):
@@ -722,6 +821,30 @@ class NewRequestForm(AttendanceRequestForm):
 
     def clean(self) -> Dict[str, Any]:
         super().clean()
+
+        required_for_logic = (
+            "employee_id",
+            "attendance_date",
+            "attendance_clock_in_date",
+            "attendance_clock_in",
+            "shift_id",
+            "work_type_id",
+            "attendance_worked_hour",
+        )
+        for key in required_for_logic:
+            if key not in self.cleaned_data:
+                if not self._errors.get(key):
+                    self.add_error(
+                        key,
+                        ValidationError(_("This field is required.")),
+                    )
+        if any(k not in self.cleaned_data for k in required_for_logic):
+            return self.cleaned_data
+
+        if "attendance_clock_out" not in self.cleaned_data:
+            self.cleaned_data["attendance_clock_out"] = None
+        if "attendance_clock_out_date" not in self.cleaned_data:
+            self.cleaned_data["attendance_clock_out_date"] = None
 
         employee = self.cleaned_data["employee_id"]
         attendance_date = self.cleaned_data["attendance_date"]
@@ -740,13 +863,15 @@ class NewRequestForm(AttendanceRequestForm):
             "shift_id": self.cleaned_data["shift_id"],
             "work_type_id": self.cleaned_data["work_type_id"],
             "attendance_worked_hour": self.cleaned_data["attendance_worked_hour"],
-            "minimum_hour": self.data["minimum_hour"],
+            "minimum_hour": self.data.get("minimum_hour", ""),
         }
         if attendances.exists():
             data["employee_id"] = employee.id
             data["attendance_date"] = str(attendance_date)
-            data["attendance_clock_in_date"] = self.data["attendance_clock_in_date"]
-            data["attendance_clock_in"] = self.data["attendance_clock_in"]
+            data["attendance_clock_in_date"] = self.data.get(
+                "attendance_clock_in_date", ""
+            )
+            data["attendance_clock_in"] = self.data.get("attendance_clock_in", "")
             data["attendance_clock_out"] = (
                 None
                 if data["attendance_clock_out"] == "None"
@@ -757,8 +882,8 @@ class NewRequestForm(AttendanceRequestForm):
                 if data["attendance_clock_out_date"] == "None"
                 else data["attendance_clock_out_date"]
             )
-            data["work_type_id"] = self.data["work_type_id"]
-            data["shift_id"] = self.data["shift_id"]
+            data["work_type_id"] = self.data.get("work_type_id")
+            data["shift_id"] = self.data.get("shift_id")
             attendance = attendances.first()
             for key, value in data.items():
                 data[key] = str(value)
@@ -766,18 +891,18 @@ class NewRequestForm(AttendanceRequestForm):
             attendance.is_validate_request = True
             if attendance.request_type != "create_request":
                 attendance.request_type = "update_request"
-            attendance.request_description = self.data["request_description"]
+            attendance.request_description = self.data.get("request_description", "")
             attendance.save()
             self.new_instance = None
-            return
+            return self.cleaned_data
 
         new_instance = Attendance(**data)
         new_instance.is_validate_request = True
         new_instance.attendance_validated = False
-        new_instance.request_description = self.data["request_description"]
+        new_instance.request_description = self.data.get("request_description", "")
         new_instance.request_type = "create_request"
         self.new_instance = new_instance
-        return
+        return self.cleaned_data
 
 
 excluded_fields = [
@@ -807,7 +932,7 @@ class AttendanceExportForm(forms.Form):
 
     model_fields = Attendance._meta.get_fields()
     field_choices = [
-        (field.name, field.verbose_name)
+        (field.name, export_field_label(field.verbose_name))
         for field in model_fields
         if hasattr(field, "verbose_name") and field.name not in excluded_fields
     ]
@@ -839,13 +964,13 @@ class LateComeEarlyOutExportForm(forms.Form):
 
     model_fields = AttendanceLateComeEarlyOut._meta.get_fields()
     field_choices_1 = [
-        (field.name, field.verbose_name)
+        (field.name, export_field_label(field.verbose_name))
         for field in model_fields
         if hasattr(field, "verbose_name") and field.name not in excluded_fields
     ]
     model_fields_2 = Attendance._meta.get_fields()
     field_choices_2 = [
-        ("attendance_id__" + field.name, field.verbose_name)
+        ("attendance_id__" + field.name, export_field_label(field.verbose_name))
         for field in model_fields_2
         if hasattr(field, "verbose_name") and field.name not in excluded_fields
     ]
@@ -875,7 +1000,7 @@ class AttendanceActivityExportForm(forms.Form):
 
     model_fields = AttendanceActivity._meta.get_fields()
     field_choices = [
-        (field.name, field.verbose_name)
+        (field.name, export_field_label(field.verbose_name))
         for field in model_fields
         if hasattr(field, "verbose_name") and field.name not in excluded_fields
     ]
@@ -902,7 +1027,7 @@ class AttendanceOverTimeExportForm(forms.Form):
 
     model_fields = AttendanceOverTime._meta.get_fields()
     field_choices = [
-        (field.name, field.verbose_name)
+        (field.name, export_field_label(field.verbose_name))
         for field in model_fields
         if hasattr(field, "verbose_name") and field.name not in excluded_fields
     ]
@@ -925,6 +1050,8 @@ class GraceTimeForm(BaseModelForm):
     Form for create or update Grace time
     """
 
+    cols = {"allowed_time": 12, "company_id": 12, "shifts": 12}
+
     shifts = forms.ModelMultipleChoiceField(
         queryset=EmployeeShift.objects.all(),
         required=False,
@@ -939,11 +1066,14 @@ class GraceTimeForm(BaseModelForm):
         model = GraceTime
         fields = "__all__"
         widgets = {
-            "is_default": forms.HiddenInput(),
             "allowed_time": forms.TextInput(attrs={"placeholder": "00:00:00 Hours"}),
         }
 
         exclude = ["objects", "allowed_time_in_secs", "is_active"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["company_id"].required = True
 
 
 class GraceTimeAssignForm(forms.Form):
@@ -954,7 +1084,6 @@ class GraceTimeAssignForm(forms.Form):
     shifts = forms.ModelMultipleChoiceField(
         queryset=EmployeeShift.objects.all(),
     )
-    verbose_name = _("Assign Shifts")
 
     def as_p(self, *args, **kwargs):
         """
@@ -1041,12 +1170,7 @@ class BulkAttendanceRequestForm(BaseModelForm):
 
     employee_id = forms.ModelChoiceField(
         queryset=Employee.objects.filter(is_active=True),
-        widget=forms.Select(
-            attrs={
-                "hx-target": "#id_shift_id_div",
-                "hx-get": "/attendance/get-employee-shift?bulk=True",
-            }
-        ),
+        widget=forms.Select(attrs={"onchange": "attendanceEmployeeChange($(this))"}),
         label=_("Employee"),
     )
     create_bulk = forms.BooleanField(
@@ -1056,20 +1180,29 @@ class BulkAttendanceRequestForm(BaseModelForm):
         widget=forms.CheckboxInput(
             attrs={
                 "class": "oh-checkbox",
-                "hx-target": "#objectCreateModalTarget",
-                "hx-get": "/attendance/request-new-attendance?bulk=False",
+                "hx-target": "#genericModalBody",
+                "hx-swap": "innerHTML",
+                "hx-get": "/attendance/request-new-attendance/?bulk=False",
             }
         ),
     )
     from_date = forms.DateField(
         required=False,
         label=_("From Date"),
-        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        widget=forms.DateInput(
+            attrs={
+                "type": "date",
+                "class": "form-control oh-input w-100",
+                "onchange": "attendanceShiftChange($(this))",
+            }
+        ),
     )
     to_date = forms.DateField(
         required=False,
         label=_("To Date"),
-        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        widget=forms.DateInput(
+            attrs={"type": "date", "class": "form-control oh-input w-100"}
+        ),
     )
     batch_attendance_id = forms.ModelChoiceField(
         queryset=BatchAttendance.objects.all(),
@@ -1098,17 +1231,17 @@ class BulkAttendanceRequestForm(BaseModelForm):
             "request_description",
         )
 
+        widgets = {
+            "attendance_clock_in": TimeInput(attrs={"type": "time"}),
+            "attendance_clock_out": TimeInput(attrs={"type": "time"}),
+        }
+
     def update_worked_hour_hx_fields(self, field_name):
         """Update the widget attributes for worked hour fields."""
         self.fields[field_name].widget.attrs.update(
             {
                 "id": str(uuid.uuid4()),
-                "hx-include": "#attendanceRequestForm",
-                "hx-target": "#id_attendance_worked_hour_parent_div",
-                "hx-swap": "outerHTML",
-                "hx-select": "#id_attendance_worked_hour_parent_div",
-                "hx-get": "/attendance/update-worked-hour-field",
-                "hx-trigger": "change delay:300ms",
+                "onchange": "attendanceWorkedHourChange($(this))",
             }
         )
 
@@ -1124,6 +1257,9 @@ class BulkAttendanceRequestForm(BaseModelForm):
             "attendance_clock_out",
         ]:
             self.update_worked_hour_hx_fields(field)
+        self.fields["shift_id"].widget.attrs.update(
+            {"onchange": "attendanceShiftChange($(this))"}
+        )
         if request.user.has_perm("attendance.add_attendance") or is_reportingmanager(
             request
         ):
@@ -1139,7 +1275,9 @@ class BulkAttendanceRequestForm(BaseModelForm):
             )
         self.fields["batch_attendance_id"].choices = list(
             self.fields["batch_attendance_id"].choices
-        ) + [("dynamic_create", "Dynamic create")]
+        ) + [
+            ("dynamic_create", _("Create %(label)s") % {"label": _("Batch Attendance")})
+        ]
 
     def clean(self):
         cleaned_data = self.cleaned_data
@@ -1183,6 +1321,9 @@ class BulkAttendanceRequestForm(BaseModelForm):
         from_date = cleaned_data.get("from_date")
         to_date = cleaned_data.get("to_date")
         shift_id = cleaned_data.get("shift_id")
+        from horilla.horilla_middlewares import _thread_locals
+
+        request = _thread_locals.request
         attendance_clock_in = cleaned_data.get("attendance_clock_in")
         attendance_clock_out = cleaned_data.get("attendance_clock_out")
         request_description = cleaned_data.get("request_description")
@@ -1197,9 +1338,9 @@ class BulkAttendanceRequestForm(BaseModelForm):
         )
         # Prepare initial data for the form
         initial_data = {
-            "employee_id": employee_id,
-            "shift_id": shift_id,
-            "work_type_id": work_type_id,
+            "employee_id": employee_id.pk if employee_id else None,
+            "shift_id": shift_id.pk if shift_id else None,
+            "work_type_id": work_type_id.pk if work_type_id else None,
             "attendance_clock_in": attendance_clock_in,
             "attendance_clock_out": attendance_clock_out,
             "attendance_worked_hour": attendance_worked_hour,
@@ -1207,6 +1348,11 @@ class BulkAttendanceRequestForm(BaseModelForm):
             "minimum_hour": minimum_hour,
             "request_description": request_description,
         }
+        attendance_mapping = dict(
+            Attendance.objects.filter(
+                attendance_date__in=date_list, employee_id=employee_id
+            ).values_list("attendance_date", "pk")
+        )
         for date in date_list:
             initial_data.update(
                 {
@@ -1220,6 +1366,8 @@ class BulkAttendanceRequestForm(BaseModelForm):
                 instance = form.save(commit=False)
                 instance.is_validate_request = True
                 instance.employee_id = employee_id
+                if pk := attendance_mapping.get(date):
+                    instance.pk = pk
                 instance.request_type = "create_request"
                 instance.is_bulk_request = True
                 if batch:

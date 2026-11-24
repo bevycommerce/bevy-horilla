@@ -16,14 +16,6 @@
           <div class="oh-input-group">
             <label
               class="oh-label"
-              for="{{rec_filter_obj.form.start_date.id_for_label}}"
-              >{% trans 'Start Date' %}</label
-            >
-            {{ rec_filter_obj.form.start_date }}
-          </div>
-          <div class="oh-input-group">
-            <label
-              class="oh-label"
               for="{{rec_filter_obj.form.start_from.id_for_label}}"
               >{% trans 'Start Date From' %}</label
             >
@@ -33,7 +25,7 @@
             <label
               class="oh-label"
               for="{{rec_filter_obj.form.closed.id_for_label}}"
-              >{% trans 'Is Closed' %}</label
+              >{% trans 'Closed' %}</label
             >
             {{ rec_filter_obj.form.closed }}
           </div>
@@ -51,14 +43,6 @@
           <div class="oh-input-group">
             <label
               class="oh-label"
-              for="{{rec_filter_obj.form.end_date.id_for_label}}"
-              >{% trans 'End Date' %}</label
-            >
-            {{ rec_filter_obj.form.end_date }}
-          </div>
-          <div class="oh-input-group">
-            <label
-              class="oh-label"
               for="{{rec_filter_obj.form.end_till.id_for_label}}"
               >{% trans 'Till End Date' %}</label
             >
@@ -68,7 +52,7 @@
             <label
               class="oh-label"
               for="{{rec_filter_obj.form.is_published.id_for_label}}"
-              >{% trans 'Is Published' %}</label
+              >{% trans 'Published' %}</label
             >
             {{ rec_filter_obj.form.is_published }}
           </div>
@@ -120,11 +104,11 @@
           </div>
           <div class="col-sm-12 col-md-12 col-lg-12 mb-2">
             <div class="oh-input-group">
-              <label class="oh-label">{% trans 'Reject Reason' %}</label>
+              <label class="oh-label">{% trans 'Rejection Reason' %}</label>
               {{ candidate_filter_obj.form.rejected_candidate__reject_reason_id }}
             </div>
             <div class="oh-input-group">
-              <label class="oh-label">{% trans 'Is Hired' %}</label>
+              <label class="oh-label">{% trans 'Hired' %}</label>
               {{ candidate_filter_obj.form.hired }}
             </div>
             <div class="oh-input-group">
@@ -151,7 +135,7 @@
             {{ candidate_filter_obj.form.offer_letter_status }}
           </div>
           <div class="oh-input-group">
-            <label class="oh-label">{% trans 'Is Canceled' %}</label>
+            <label class="oh-label">{% trans 'Canceled' %}</label>
             {{ candidate_filter_obj.form.canceled }}
           </div>
           <div class="oh-input-group">
@@ -172,7 +156,7 @@
     class="oh-btn oh-btn--secondary oh-btn--small w-100 filterButton"
     id=""
   >
-    {% trans 'Filter' %}
+    {% trans 'Apply' %}
   </button>
 </div>
 <script src="{% static '/base/filter.js' %}"></script>

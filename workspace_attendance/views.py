@@ -33,11 +33,7 @@ def login_required(view_func):
     @wraps(view_func)
     def wrapped(request, *args, **kwargs):
         user = request.user
-        if (
-            user.is_authenticated
-            and user.is_active
-            and get_adapter().get_employee(user) is None
-        ):
+        if user.is_authenticated and user.is_active and get_adapter().get_employee(user) is None:
             return view_func(request, *args, **kwargs)
         return horilla_wrapped(request, *args, **kwargs)
 
@@ -96,9 +92,7 @@ def _run_action(request, call):
     except Exception:
         logger.exception("Workspace action failed")
         error = _("Something went wrong. Please try again.")
-    return _render_card(
-        request, employee, message=message, error=error, error_code=error_code
-    )
+    return _render_card(request, employee, message=message, error=error, error_code=error_code)
 
 
 @login_required
@@ -106,8 +100,7 @@ def _run_action(request, call):
 def sign_in(request):
     ip, coords = get_client_ip(request), _coords(request)
     return _run_action(
-        request,
-        lambda e: services.sign_in(e, source="web", client_ip=ip, coords=coords),
+        request, lambda e: services.sign_in(e, source="web", client_ip=ip, coords=coords)
     )
 
 
@@ -116,8 +109,7 @@ def sign_in(request):
 def sign_out(request):
     ip, coords = get_client_ip(request), _coords(request)
     return _run_action(
-        request,
-        lambda e: services.sign_out(e, source="web", client_ip=ip, coords=coords),
+        request, lambda e: services.sign_out(e, source="web", client_ip=ip, coords=coords)
     )
 
 
@@ -126,9 +118,7 @@ def sign_out(request):
 def break_start(request):
     reason = request.POST.get("reason", "")
     note = request.POST.get("note", "")
-    return _run_action(
-        request, lambda e: services.start_break(e, reason, note, source="web")
-    )
+    return _run_action(request, lambda e: services.start_break(e, reason, note, source="web"))
 
 
 @login_required
@@ -155,10 +145,7 @@ def _parse_time(raw, label):
             return datetime.strptime(raw, fmt).time().replace(second=0, microsecond=0)
         except ValueError:
             continue
-    raise ValueError(
-        _("%(label)s is not a valid time. Use the format HH:MM, for example 09:30.")
-        % {"label": label}
-    )
+    raise ValueError(_("%(label)s is not a valid time. Use the format HH:MM, for example 09:30.") % {"label": label})
 
 
 def _row(day, sign_in_value=None, sign_out_value=None, message="", error=""):
@@ -167,12 +154,8 @@ def _row(day, sign_in_value=None, sign_out_value=None, message="", error=""):
 
     return {
         **day,
-        "sign_in_value": (
-            fmt(day["sign_in"]) if sign_in_value is None else sign_in_value
-        ),
-        "sign_out_value": (
-            fmt(day["sign_out"]) if sign_out_value is None else sign_out_value
-        ),
+        "sign_in_value": fmt(day["sign_in"]) if sign_in_value is None else sign_in_value,
+        "sign_out_value": fmt(day["sign_out"]) if sign_out_value is None else sign_out_value,
         "message": message,
         "error": error,
     }
@@ -209,25 +192,11 @@ def fix_times_save(request):
         return render(
             request,
             "workspace_attendance/fix_times_row.html",
-            {
-                "row": {
-                    "date": None,
-                    "sign_in_value": raw_in,
-                    "sign_out_value": raw_out,
-                    "error": _(
-                        "That date is not valid. Please reload the page and try again."
-                    ),
-                }
-            },
+            {"row": {"date": None, "sign_in_value": raw_in, "sign_out_value": raw_out,
+                     "error": _("That date is not valid. Please reload the page and try again.")}},
         )
 
-    base = {
-        "date": work_date,
-        "sign_in": None,
-        "sign_out": None,
-        "worked": None,
-        "missing_sign_out": False,
-    }
+    base = {"date": work_date, "sign_in": None, "sign_out": None, "worked": None, "missing_sign_out": False}
     try:
         sign_in_time = _parse_time(raw_in, _("Sign in time"))
         sign_out_time = _parse_time(raw_out, _("Sign out time"))
@@ -240,12 +209,7 @@ def fix_times_save(request):
 
     try:
         _status, body = services.correct_times(
-            employee,
-            work_date,
-            sign_in_time,
-            sign_out_time,
-            actor=request.user,
-            source="web",
+            employee, work_date, sign_in_time, sign_out_time, actor=request.user, source="web"
         )
     except services.WorkspaceError as exc:
         return render(
@@ -258,19 +222,10 @@ def fix_times_save(request):
         return render(
             request,
             "workspace_attendance/fix_times_row.html",
-            {
-                "row": _row(
-                    base,
-                    raw_in,
-                    raw_out,
-                    error=_("Something went wrong. Please try again."),
-                )
-            },
+            {"row": _row(base, raw_in, raw_out, error=_("Something went wrong. Please try again."))},
         )
 
-    fresh = next(
-        (d for d in services.recent_days(employee) if d["date"] == work_date), base
-    )
+    fresh = next((d for d in services.recent_days(employee) if d["date"] == work_date), base)
     return render(
         request,
         "workspace_attendance/fix_times_row.html",

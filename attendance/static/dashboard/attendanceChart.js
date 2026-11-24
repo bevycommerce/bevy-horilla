@@ -7,8 +7,9 @@ $(document).ready(function () {
     };
     window["departmentOvertimeChart"] = {};
     const departmentOvertimeChart = document.getElementById(
-        "departmentOverChart"
+        "departmentOverChart",
     );
+    const themedOptions = ChartTheme.getThemedOptions();
     if (departmentOvertimeChart) {
         var departmentAttendanceChart = new Chart(departmentOvertimeChart, {
             type: "pie",
@@ -16,6 +17,9 @@ $(document).ready(function () {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                plugins: {
+                    ...themedOptions.plugins,
+                },
             },
             plugins: [
                 {
@@ -24,16 +28,26 @@ $(document).ready(function () {
                 },
             ],
         });
+        window["departmentOvertimeChart"] = departmentAttendanceChart
+        ChartTheme.observe("departmentOvertimeChart");
     }
 
     var today = new Date();
-    month = ("0" + (today.getMonth() + 1)).slice(-2);
-    year = today.getFullYear();
+    var month = ("0" + (today.getMonth() + 1)).slice(-2);
+    var year = today.getFullYear();
     var day = ("0" + today.getDate()).slice(-2);
-    var formattedDate = year + "-" + month + "-" + day;
+
+    function getFormattedDate() {
+        var dt = new Date();
+        var y = dt.getFullYear();
+        var m = ("0" + (dt.getMonth() + 1)).slice(-2);
+        var d = ("0" + dt.getDate()).slice(-2);
+        return y + "-" + m + "-" + d;
+    }
+
     var currentWeek = getWeekNumber(today);
 
-    $("#attendance_month").val(formattedDate);
+    $("#attendance_month").val(getFormattedDate());
 
     $.ajax({
         url: "/attendance/dashboard-attendance",
@@ -66,7 +80,7 @@ $(document).ready(function () {
         let end_date = $("#department_month2").val();
         $.ajax({
             type: "GET",
-            url: "/attendance/department-overtime-chart",
+            url: "/attendance/department-overtime-chart/",
             dataType: "json",
             data: {
                 date: date,
@@ -87,10 +101,10 @@ $(document).ready(function () {
         if (dataType === "date_range") {
             $("#department_month").prop("type", "date");
             $("#department_day_input").after(
-                '<input type="date" class="mb-2 float-end pointer oh-select ml-2" id="department_month2" style="width: 100px;color:#5e5c5c;"/>'
+                '<input type="date" class="mb-2 float-end pointer oh-select ml-2" id="department_month2" style="width: 100px;color:#5e5c5c;"/>',
             );
-            $("#department_month").val(formattedDate);
-            $("#department_month2").val(formattedDate);
+            $("#department_month").val(getFormattedDate());
+            $("#department_month2").val(getFormattedDate());
             changeDepartmentMonth();
         } else {
             $("#department_month2").remove();
@@ -104,7 +118,7 @@ $(document).ready(function () {
                 changeDepartmentMonth();
             } else if (dataType === "day") {
                 $("#department_month").prop("type", "date");
-                $("#department_month").val(formattedDate);
+                $("#department_month").val(getFormattedDate());
                 changeDepartmentMonth();
             } else {
                 $("#department_month").prop("type", "month");
@@ -117,7 +131,7 @@ $(document).ready(function () {
     // Function for empty message for department overtime chart.
 
     function emptyOvertimeChart(departmentAttendanceChart, args, options) {
-        flag = false;
+        var flag = false;
         for (let i = 0; i < departmentAttendanceChart.data.datasets.length; i++) {
             flag =
                 flag + departmentAttendanceChart.data.datasets[i].data.some(Boolean);
@@ -138,9 +152,9 @@ $(document).ready(function () {
                 ? departmentAttendanceChart.data.emptyImageSrc
                 : staticUrl + "images/ui/no_records.svg";
 
-            message = departmentAttendanceChart.data.message
+            var message = departmentAttendanceChart.data.message
                 ? departmentAttendanceChart.data.message
-                : emptyMessages[languageCode];
+                : i18nMessages.emptyMessages;
 
             noDataImage.onload = () => {
                 // Draw image first at center
@@ -159,7 +173,7 @@ $(document).ready(function () {
     // Ajax request to create department overtime chart initially.
 
     $.ajax({
-        url: "/attendance/department-overtime-chart",
+        url: "/attendance/department-overtime-chart/",
         type: "GET",
         dataType: "json",
         headers: {
@@ -209,10 +223,18 @@ function getWeekNumber(date) {
 }
 
 var today = new Date();
-month = ("0" + (today.getMonth() + 1)).slice(-2);
-year = today.getFullYear();
+var month = ("0" + (today.getMonth() + 1)).slice(-2);
+var year = today.getFullYear();
 var day = ("0" + today.getDate()).slice(-2);
-var formattedDate = year + "-" + month + "-" + day;
+
+function getGlobalFormattedDate() {
+    var dt = new Date();
+    var y = dt.getFullYear();
+    var m = ("0" + (dt.getMonth() + 1)).slice(-2);
+    var d = ("0" + dt.getDate()).slice(-2);
+    return y + "-" + m + "-" + d;
+}
+
 var currentWeek = getWeekNumber(today);
 
 function createAttendanceChart(dataSet, labels) {
@@ -220,76 +242,99 @@ function createAttendanceChart(dataSet, labels) {
         labels: labels,
         datasets: dataSet,
     };
-    // Create chart using the Chart.js library
+
     window["attendanceChart"] = {};
-    if (document.getElementById("dailyAnalytic")) {
-        const ctx = document.getElementById("dailyAnalytic").getContext("2d");
-        attendanceChart = new Chart(ctx, {
-            type: "bar",
-            data: data,
-            options: {
-                responsive: true,
-                onClick: (e, activeEls) => {
-                    let datasetIndex = activeEls[0].datasetIndex;
-                    let dataIndex = activeEls[0].index;
-                    let datasetLabel = e.chart.data.datasets[datasetIndex].label;
-                    let value = e.chart.data.datasets[datasetIndex].data[dataIndex];
-                    let label = e.chart.data.labels[dataIndex];
-                    var parms =
-                        "?department=" +
-                        datasetLabel +
-                        "&type=" +
-                        label.toLowerCase().replace(/\s/g, "_");
-                    var type = $("#type").val();
-                    const dateStr = $("#attendance_month").val();
-                    if (type == "weekly") {
-                        const [year, week] = dateStr.split("-W");
-                        parms = parms + "&week=" + week + "&year=" + year;
-                    } else if (type == "monthly") {
-                        const [year, month] = dateStr.split("-");
-                        parms = parms + "&month=" + month + "&year=" + year;
-                    } else if (type == "day") {
-                        parms = parms + "&attendance_date=" + dateStr;
-                    } else if (type == "date_range") {
-                        var start_date = dateStr;
-                        var end_date = $("#attendance_month2").val();
-                        parms =
-                            parms +
-                            "&attendance_date__gte=" +
-                            start_date +
-                            "&attendance_date__lte=" +
-                            end_date;
-                    }
-                    localStorage.removeItem("savedFilters");
-                    if (label == "On Time") {
-                        $.ajax({
-                            url: "/attendance/on-time-view" + parms,
-                            type: "GET",
-                            data: {
-                                input_type: type,
-                            },
-                            headers: {
-                                "X-Requested-With": "XMLHttpRequest",
-                            },
-                            success: (response) => {
-                                $("#back_button").removeClass("d-none");
-                                $("#dashboard").html(response);
-                            },
-                            error: (error) => { },
-                        });
-                    } else {
-                        window.location.href =
-                            "/attendance/late-come-early-out-view" + parms;
-                    }
+
+    if (!document.getElementById("dailyAnalytic")) return;
+
+    const ctx = document.getElementById("dailyAnalytic").getContext("2d");
+    const themedOptions = ChartTheme.getThemedOptions();
+
+    attendanceChart = new Chart(ctx, {
+        type: "bar",
+        data: data,
+        options: {
+            responsive: true,
+            scales: {
+                x: {
+                    ...themedOptions.scales.x,
+                },
+                y: {
+                    ...themedOptions.scales.y,
                 },
             },
-            plugins: [
-                {
-                    afterRender: (chart) => emptyChart(chart),
-                },
-            ],
-        });
-    }
+            plugins: {
+                ...themedOptions.plugins,
+            },
+            onClick: (e, activeEls) => {
+                if (!activeEls || activeEls.length === 0) return;
+
+                let datasetIndex = activeEls[0].datasetIndex;
+                let dataIndex = activeEls[0].index;
+                let datasetLabel = e.chart.data.datasets[datasetIndex].label;
+                let label = e.chart.data.labels[dataIndex];
+
+                var parms =
+                    "?department=" +
+                    datasetLabel +
+                    "&type=" +
+                    label.toLowerCase().replace(/\s/g, "_");
+
+                var type = $("#type").val();
+                const dateStr = $("#attendance_month").val();
+
+                if (type == "weekly") {
+                    const [year, week] = dateStr.split("-W");
+                    parms = parms + "&week=" + week + "&year=" + year;
+                } else if (type == "monthly") {
+                    const [year, month] = dateStr.split("-");
+                    parms = parms + "&month=" + month + "&year=" + year;
+                } else if (type == "day") {
+                    parms = parms + "&attendance_date=" + dateStr;
+                } else if (type == "date_range") {
+                    var start_date = dateStr;
+                    var end_date = $("#attendance_month2").val();
+                    parms =
+                        parms +
+                        "&attendance_date__gte=" +
+                        start_date +
+                        "&attendance_date__lte=" +
+                        end_date;
+                }
+
+                localStorage.removeItem("savedFilters");
+
+                if (label == "On Time") {
+                    $.ajax({
+                        url: "/attendance/on-time-view" + parms,
+                        type: "GET",
+                        data: {
+                            input_type: type,
+                        },
+                        headers: {
+                            "X-Requested-With": "XMLHttpRequest",
+                        },
+                        success: (response) => {
+                            $("#back_button").removeClass("d-none");
+                            $("#dashboard").html(response);
+                        },
+                        error: (error) => { },
+                    });
+                } else {
+                    window.location.href =
+                        "/attendance/late-come-early-out-view" + parms;
+                }
+            },
+        },
+        plugins: [
+            {
+                afterRender: (chart) => emptyChart(chart),
+            },
+        ],
+    });
+
+    window["attendanceChart"] = attendanceChart
+    ChartTheme.observe("attendanceChart");
 }
 
 function changeMonth() {
@@ -298,7 +343,7 @@ function changeMonth() {
     let end_date = $("#attendance_month2").val();
     $.ajax({
         type: "GET",
-        url: "/attendance/dashboard-attendance",
+        url: "/attendance/dashboard-attendance/",
         dataType: "json",
         data: {
             date: date,
@@ -318,10 +363,10 @@ function changeView(element) {
     if (dataType === "date_range") {
         $("#attendance_month").prop("type", "date");
         $("#day_input").after(
-            '<input type="date" class="mb-2 float-end pointer oh-select ml-2" id="attendance_month2" style="width: 100px;color:#5e5c5c;" onchange="changeMonth(this)"/>'
+            '<input type="date" class="oh-input w-40" id="attendance_month2" onchange="changeMonth(this)"/>',
         );
-        $("#attendance_month").val(formattedDate);
-        $("#attendance_month2").val(formattedDate);
+        $("#attendance_month").val(getGlobalFormattedDate());
+        $("#attendance_month2").val(getGlobalFormattedDate());
         changeMonth();
     } else {
         $("#attendance_month2").remove();
@@ -335,7 +380,7 @@ function changeView(element) {
             changeMonth();
         } else if (dataType === "day") {
             $("#attendance_month").prop("type", "date");
-            $("#attendance_month").val(formattedDate);
+            $("#attendance_month").val(getGlobalFormattedDate());
             changeMonth();
         } else {
             $("#attendance_month").prop("type", "month");
@@ -351,60 +396,69 @@ window["pendingHoursCanvas"] = chart;
 function pendingHourChart(year, month) {
     $.ajax({
         type: "get",
-        url: "/attendance/pending-hours",
+        url: "/attendance/pending-hours/",
         data: { month: month, year: year },
         success: function (response) {
             var ctx = document.getElementById("pendingHoursCanvas");
-            if (ctx) {
-                pendingHoursCanvas.destroy();
-                pendingHoursCanvas = new Chart(ctx, {
-                    type: "bar", // Bar chart type
-                    data: response.data,
-                    options: {
-                        responsive: true,
-                        aspectRatio: false,
-                        indexAxis: "x",
-                        scales: {
-                            x: {
-                                stacked: true, // Stack the bars on the x-axis
-                            },
-                            y: {
-                                beginAtZero: true,
-                                stacked: true,
-                            },
+            if (!ctx) return;
+            const themedOptions = ChartTheme.getThemedOptions();
+            pendingHoursCanvas.destroy();
+            pendingHoursCanvas = new Chart(ctx, {
+                type: "bar",
+                data: response.data,
+                options: {
+                    responsive: true,
+                    aspectRatio: false,
+                    indexAxis: "x",
+                    scales: {
+                        x: {
+                            stacked: true,
+                            ...themedOptions.scales.x,
                         },
-                        onClick: (e, activeEls) => {
-                            let datasetIndex = activeEls[0].datasetIndex;
-                            let dataIndex = activeEls[0].index;
-                            let datasetLabel = e.chart.data.datasets[datasetIndex].label;
-                            let value = e.chart.data.datasets[datasetIndex].data[dataIndex];
-                            let label = e.chart.data.labels[dataIndex];
-                            parms =
-                                "?year=" +
-                                year +
-                                "&month=" +
-                                month +
-                                "&department_name=" +
-                                label +
-                                "&";
-                            if (datasetLabel.toLowerCase() == "worked hours") {
-                                parms = parms + "worked_hours__gte=1&";
-                            } else {
-                                parms = parms + "pending_hours__gte=1&";
-                            }
-                            window.location.href =
-                                "/attendance/attendance-overtime-view" + parms;
+                        y: {
+                            beginAtZero: true,
+                            stacked: true,
+                            ...themedOptions.scales.y,
                         },
                     },
-                    plugins: [
-                        {
-                            afterRender: (chart) => {
-                                emptyChart(chart);
-                            },
+                    plugins: {
+                        ...themedOptions.plugins,
+                    },
+                    onClick: (e, activeEls) => {
+                        if (!activeEls || activeEls.length === 0) return;
+                        let datasetIndex = activeEls[0].datasetIndex;
+                        let dataIndex = activeEls[0].index;
+                        let datasetLabel = e.chart.data.datasets[datasetIndex].label;
+                        let label = e.chart.data.labels[dataIndex];
+
+                        let parms =
+                            "?year=" +
+                            year +
+                            "&month=" +
+                            month +
+                            "&department_name=" +
+                            label +
+                            "&";
+                        if (datasetLabel.toLowerCase() == "worked hours") {
+                            parms = parms + "worked_hours__gte=1&";
+                        } else {
+                            parms = parms + "pending_hours__gte=1&";
+                        }
+                        window.location.href =
+                            "/attendance/attendance-overtime-view" + parms;
+                    },
+                },
+                plugins: [
+                    {
+                        afterRender: (chart) => {
+                            emptyChart(chart);
                         },
-                    ],
-                });
-            }
+                    },
+                ],
+            });
+
+            window["pendingHoursCanvas"] = pendingHoursCanvas
+            ChartTheme.observe("pendingHoursCanvas");
         },
     });
 }

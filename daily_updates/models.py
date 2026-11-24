@@ -59,9 +59,7 @@ class DailyUpdate(models.Model):
 class DailyUpdateRevision(models.Model):
     """Previous content of an edited update. Append-only."""
 
-    update = models.ForeignKey(
-        DailyUpdate, on_delete=models.CASCADE, related_name="revisions"
-    )
+    update = models.ForeignKey(DailyUpdate, on_delete=models.CASCADE, related_name="revisions")
     revision_number = models.PositiveIntegerField()
     summary = models.TextField()
     completed = models.TextField(blank=True, default="")
@@ -70,21 +68,14 @@ class DailyUpdateRevision(models.Model):
     content_submitted_at = models.DateTimeField()
     replaced_at = models.DateTimeField(auto_now_add=True)
     edited_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="+",
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default="web")
 
     class Meta:
         ordering = ["-revision_number"]
         constraints = [
-            models.UniqueConstraint(
-                fields=["update", "revision_number"],
-                name="daily_update_revision_unique",
-            )
+            models.UniqueConstraint(fields=["update", "revision_number"], name="daily_update_revision_unique")
         ]
 
     def save(self, *args, **kwargs):
@@ -106,9 +97,7 @@ class MiddaySkip(models.Model):
         (COMBINE, _("Combine Midday with End of Day")),
     ]
 
-    employee = models.ForeignKey(
-        "employee.Employee", on_delete=models.CASCADE, related_name="midday_skips"
-    )
+    employee = models.ForeignKey("employee.Employee", on_delete=models.CASCADE, related_name="midday_skips")
     work_date = models.DateField()
     choice = models.CharField(max_length=10, choices=CHOICES)
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default="web")
@@ -117,9 +106,7 @@ class MiddaySkip(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(
-                fields=["employee", "work_date"], name="midday_skip_one_per_day"
-            )
+            models.UniqueConstraint(fields=["employee", "work_date"], name="midday_skip_one_per_day")
         ]
 
     def __str__(self):

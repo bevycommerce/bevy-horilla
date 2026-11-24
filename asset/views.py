@@ -6,6 +6,7 @@ This module is used to"""
 import csv
 import json
 import os
+import uuid
 from datetime import date, datetime
 from urllib.parse import parse_qs
 
@@ -14,11 +15,15 @@ from django.contrib import messages
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import ProtectedError
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.utils.translation import gettext_noop
 
 from asset.filters import (
     AssetAllocationFilter,
@@ -37,6 +42,7 @@ from asset.forms import (
     AssetBatchForm,
     AssetCategoryForm,
     AssetForm,
+    AssetItemFormSet,
     AssetReportForm,
     AssetRequestForm,
     AssetReturnForm,
@@ -46,16 +52,22 @@ from asset.models import (
     AssetAssignment,
     AssetCategory,
     AssetDocuments,
+    AssetGeneralSetting,
     AssetLot,
     AssetRequest,
+    AssetServiceRequest,
+    AssetServiceRequestNote,
     ReturnImages,
 )
+from base.import_template_data import import_template_frame, write_import_xlsx
 from base.methods import (
     closest_numbers,
     eval_validate,
     filtersubordinates,
     get_key_instances,
     get_pagination,
+    get_session_company,
+    has_export_access,
     paginator_qry,
     sortby,
 )
@@ -70,8 +82,7 @@ from horilla.decorators import (
     permission_required,
 )
 from horilla.group_by import group_by_queryset
-from horilla.horilla_settings import HORILLA_DATE_FORMATS
-from horilla.http import HorillaRedirect
+from horilla.http.response import HorillaRedirect
 from horilla.methods import horilla_users_with_perms
 from notifications.signals import notify
 
@@ -114,7 +125,7 @@ def asset_creation(request, asset_category_id):
     asset_category = AssetCategory.find(asset_category_id)
     if not asset_category:
         messages.error(request, _("Asset category not found"))
-        return HorillaRedirect(request)
+        return HttpResponse(status=204, headers={"HX-Refresh": "true"})
 
     initial_data = {"asset_category_id": asset_category_id}
     # Use request.GET to pre-fill the form with dynamic create batch number data if available
@@ -134,20 +145,27 @@ def asset_creation(request, asset_category_id):
 
 
 @login_required
+@hx_request_required
 def add_asset_report(request, asset_id=None):
     """
     Function for adding asset report to the asset
     """
     asset_report_form = AssetReportForm()
     if asset_id:
-        asset = Asset.objects.get(id=asset_id)
+        asset = Asset.find(asset_id)
+        if not asset:
+            return HorillaRedirect(request, message=_("Asset not found"))
         asset_report_form = AssetReportForm(initial={"asset_id": asset})
         if not request.GET.get("asset_list"):
-            if request.user.employee_get == AssetAssignment.objects.get(
+            asset_assignment = AssetAssignment.objects.filter(
                 asset_id=asset_id, return_date__isnull=True
-            ).assigned_to_employee_id or request.user.has_perm("asset.change_asset"):
-                pass
-            else:
+            ).first()
+            if not (
+                asset_assignment
+                and request.user.employee_get
+                == asset_assignment.assigned_to_employee_id
+                or request.user.has_perm("asset.change_asset")
+            ):
                 return redirect(asset_request_allocation_view)
 
     if request.method == "POST":
@@ -199,7 +217,9 @@ def asset_update(request, asset_id):
     if not asset_under:
         # if asset there is no asset_under data that means the request is form the category list
         asset_under = "asset_category"
-    instance = Asset.objects.get(id=asset_id)
+    instance = Asset.find(asset_id)
+    if not instance:
+        return HorillaRedirect(request, message=_("Asset not found"))
     asset_form = AssetForm(instance=instance)
     previous_data = request.GET.urlencode()
 
@@ -239,7 +259,9 @@ def asset_information(request, asset_id):
         A rendered HTML template displaying the information about the requested Asset object.
     """
 
-    asset = Asset.objects.get(id=asset_id)
+    asset = Asset.find(asset_id)
+    if not asset:
+        return HorillaRedirect(request, message=_("Asset not found"))
     context = {"asset": asset}
     requests_ids_json = request.GET.get("requests_ids")
     if requests_ids_json:
@@ -249,6 +271,67 @@ def asset_information(request, asset_id):
         context["previous"] = previous_id
         context["next"] = next_id
     return render(request, "asset/asset_information.html", context)
+
+
+@login_required
+@hx_request_required
+@permission_required("asset.change_asset")
+def asset_item_bulk_edit(request, asset_id):
+    """
+    Bulk edit the tracking IDs of an asset's individual AssetItems.
+    Args:
+        request: the HTTP request object
+        asset_id (int): the ID of the Asset whose items are being edited
+    Returns:
+        The rendered bulk edit table. On a valid POST, tracking IDs are
+        saved and the table is re-rendered with the updated values.
+    """
+
+    asset = Asset.find(asset_id)
+    if not asset:
+        return HorillaRedirect(request, message=_("Asset not found"))
+
+    queryset = asset.asset_items.all()
+    formset = AssetItemFormSet(queryset=queryset)
+    if request.method == "POST":
+        formset = AssetItemFormSet(request.POST, queryset=queryset)
+        if formset.is_valid():
+            formset.save()
+            messages.success(request, _("Asset items updated"))
+            return HttpResponse(
+                """<script>$("#reloadMessagesButton").click();
+                document.getElementById("relatedObjectModal").classList.remove("oh-modal--show");</script>"""
+            )
+
+    context = {"asset": asset, "formset": formset}
+    return render(request, "asset/asset_item_bulk_edit.html", context)
+
+
+@login_required
+@hx_request_required
+def get_asset_items_hx(request):
+    """
+    Returns the "Asset Item" field of the asset allocation form, populated
+    with the available AssetItems of the selected asset - only shown when
+    there's more than one available item to choose between.
+    """
+    asset_id = request.GET.get("asset_id")
+    asset_item_id = request.GET.get("asset_item_id")
+    form = AssetAllocationForm()
+    show_field = False
+    asset = Asset.objects.filter(id=asset_id).first() if asset_id else None
+    if asset:
+        available_items = asset.asset_items.filter(status="Available")
+        form.fields["asset_item_id"].queryset = available_items
+        show_field = available_items.count() > 1
+        if asset_item_id:
+            form.fields["asset_item_id"].initial = asset_item_id
+
+    html = render_to_string(
+        "cbv/request_and_allocation/forms/asset_item_field.html",
+        {"form": form, "show_field": show_field},
+    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -278,17 +361,20 @@ def asset_delete(request, asset_id):
         messages.error(request, _("Asset not found"))
         return HorillaRedirect(request)
     asset_cat_id = asset.asset_category_id.id
-    status = asset.asset_status
+    is_hx_request = bool(request.headers.get("HX-Request"))
     asset_list_filter = request.GET.get("asset_list")
     asset_allocation = AssetAssignment.objects.filter(asset_id=asset).first()
+    active_assignments = AssetAssignment.objects.filter(
+        asset_id=asset, return_date__isnull=True
+    ).exists()
     if asset_list_filter:
         # if the asset deleted is from the filtered list of asset
         asset_under = "asset_filter"
         assets = Asset.objects.all()
         previous_data = request.GET.urlencode()
         asset_filtered = AssetFilter(request.GET, queryset=assets)
-        asset_list = asset_filtered.qs
-        paginator = Paginator(asset_list, get_pagination())
+        filtered_assets = asset_filtered.qs
+        paginator = Paginator(filtered_assets, get_pagination())
         page_number = request.GET.get("page")
         page_obj = paginator.get_page(page_number)
         context = {
@@ -297,7 +383,7 @@ def asset_delete(request, asset_id):
             "asset_category_id": asset.asset_category_id.id,
             "asset_under": asset_under,
         }
-        if status == "In use":
+        if active_assignments:
             messages.info(request, _("Asset is in use"))
         elif asset_allocation:
             messages.error(request, _("Asset is used in allocation!."))
@@ -307,7 +393,19 @@ def asset_delete(request, asset_id):
 
     instances_ids = request.GET.get("requests_ids", "[]")
     instances_list = eval_validate(instances_ids)
-    if status == "In use":
+
+    # For category-row HTMX deletes, refresh the same accordion container instead of
+    # redirecting to detail pages. This keeps the table in sync immediately.
+    if is_hx_request:
+        if active_assignments:
+            messages.info(request, _("Asset is in use"))
+            return asset_list(request, asset_cat_id)
+        if asset_allocation:
+            messages.error(request, _("Asset is used in allocation!."))
+            return asset_list(request, asset_cat_id)
+        asset_del(request, asset)
+        return asset_list(request, asset_cat_id)
+    if active_assignments:
         messages.info(request, _("Asset is in use"))
         return redirect(
             f"/asset/asset-information/{asset.id}/?{previous_data}&requests_ids={instances_list}&asset_info=true"
@@ -319,6 +417,19 @@ def asset_delete(request, asset_id):
         )
     else:
         asset_del(request, asset)
+
+        if request.GET.get("instance_ids"):
+            instances_ids = request.GET.get("instance_ids")
+            instances_list = json.loads(instances_ids)
+            if asset_id in instances_list:
+                instances_list.remove(asset_id)
+            previous_instance, next_instance = closest_numbers(
+                json.loads(instances_ids), asset_id
+            )
+            return redirect(
+                f"/asset/asset-information/{next_instance}/?{previous_data}&instance_ids={instances_list}&asset_info=true"
+            )
+
         if len(eval_validate(instances_ids)) <= 1:
             return HorillaRedirect(request)
 
@@ -402,7 +513,7 @@ def asset_category_creation(request):
             form = AssetCategoryForm()
             if AssetCategory.objects.filter().count() == 1:
                 if AssetCategory.objects.count() == 1:
-                    return HorillaRedirect(request)
+                    return HttpResponse(status=204, headers={"HX-Refresh": "true"})
     context = {"form": form}
     return render(request, "category/asset_category_form.html", context)
 
@@ -424,7 +535,7 @@ def asset_category_update(request, cat_id):
     asset_category = AssetCategory.find(cat_id)
     if not asset_category:
         messages.error(request, _("Asset category not found"))
-        return HorillaRedirect(request)
+        return HttpResponse(status=204, headers={"HX-Refresh": "true"})
 
     form = AssetCategoryForm(instance=asset_category)
     context = {"form": form, "pg": previous_data}
@@ -459,7 +570,11 @@ def delete_asset_category(request, cat_id):
         messages.error(request, _("Assets are located within this category."))
 
     if not AssetCategory.objects.exists():
-        return HorillaRedirect(request)
+        return HttpResponse(status=204, headers={"HX-Refresh": "true"})
+
+    if request.headers.get("HX-Request"):
+        context = filter_pagination_asset_category(request)
+        return render(request, "category/asset_category.html", context)
 
     return redirect(f"/asset/asset-category-view-search-filter?{previous_data}")
 
@@ -486,9 +601,21 @@ def filter_pagination_asset_category(request):
         asset_category_filtered_form = None
 
     # Pagination
-    asset_category_paginator = Paginator(asset_category_queryset, get_pagination())
+    asset_category_paginator = Paginator(
+        asset_category_queryset.order_by("id"), get_pagination()
+    )
     page_number = request.GET.get("page")
     asset_categories = asset_category_paginator.get_page(page_number)
+
+    # Badge count should reflect active search/filters, not the unfiltered total.
+    filter_data = request.GET.copy()
+    for key in ("page", "category", "type", "asset_list", "dashboard"):
+        filter_data.pop(key, None)
+    for category in asset_categories:
+        category.filtered_asset_count = AssetFilter(
+            filter_data,
+            queryset=Asset.objects.filter(asset_category_id=category.pk),
+        ).qs.count()
 
     data_dict = parse_qs(previous_data)
     get_key_instances(Asset, data_dict)  # 882
@@ -515,26 +642,33 @@ def filter_pagination_asset_category(request):
 @permission_required(perm="asset.view_assetcategory")
 def asset_category_view(request):
     """
-    View function for rendering a paginated list of asset categories.
+    View function for rendering the Asset Category page shell.
+
+    The grouped-by-category asset list itself is rendered through the
+    standard HorillaViews nav/list pair (asset.cbv.asset_category
+    AssetCategoryNav / AssetCategoryListView), loaded via HTMX from the
+    page shell template.
     Args:
         request (HttpRequest): A Django HttpRequest object that contains information
         about the current request.
     Returns:
-        A rendered HTML template that displays a paginated list of asset categories.
+        A rendered HTML template that displays the Asset Category page.
     Raises:
         None
     """
 
-    queryset = AssetCategory.objects.all()
-    if queryset.exists():
-        template = "category/asset_category_view.html"
-    else:
-        template = "category/asset_empty.html"
-    context = filter_pagination_asset_category(request)
-    return render(request, template, context)
+    # Always the list page, even with no categories yet: an asset's category is
+    # chosen (or created) in the asset form now, so the page has to be there to
+    # start from.
+    return render(
+        request,
+        "category/asset_category_view.html",
+        {"dashboard": request.GET.get("dashboard")},
+    )
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="asset.view_assetcategory")
 def asset_category_view_search_filter(request):
     """
@@ -631,7 +765,9 @@ def asset_request_approve(request, req_id):
         messages.error(request, _("Asset request does not exist."))
         return HttpResponse(error_response)
 
-    assets = asset_request.asset_category_id.asset_set.filter(asset_status="Available")
+    assets = Asset.available_assets().filter(
+        asset_category_id=asset_request.asset_category_id
+    )
     if request.method == "POST":
         post_data = request.POST.copy()
         post_data["assigned_to_employee_id"] = asset_request.requested_employee_id
@@ -641,12 +777,15 @@ def asset_request_approve(request, req_id):
         if form.is_valid():
             try:
                 asset = form.cleaned_data["asset_id"]
-                asset.asset_status = "In use"
-                asset.save()
-
                 allocation = form.save(commit=False)
                 allocation.assigned_by_employee_id = request.user.employee_get
                 allocation.save()
+                active_count = AssetAssignment.objects.filter(
+                    asset_id=asset, return_date__isnull=True
+                ).count()
+                if active_count >= asset.quantity:
+                    asset.asset_status = "In use"
+                    asset.save()
 
                 asset_request.asset_request_status = "Approved"
                 asset_request.save()
@@ -654,7 +793,7 @@ def asset_request_approve(request, req_id):
                 notify.send(
                     request.user.employee_get,
                     recipient=allocation.assigned_to_employee_id.employee_user_id,
-                    verb=_("Your asset request has been approved!"),
+                    verb=gettext_noop("Your asset request has been approved!"),
                     redirect=reverse("asset-request-allocation-view")
                     + f"?asset_request_date={asset_request.asset_request_date}&"
                     f"asset_request_status={asset_request.asset_request_status}",
@@ -677,6 +816,13 @@ def asset_request_approve(request, req_id):
 def reject_request_return(request, asset_request, req_id):
     if not request.META.get("HTTP_HX_REQUEST"):
         return HorillaRedirect(request)
+
+    # Request & Allocation page uses tab/list container; refresh that container only.
+    referrer = request.META.get("HTTP_REFERER", "")
+    if "/asset/asset-request-allocation-view/" in referrer:
+        return redirect(
+            f"{reverse('tab-asset-request-allocation')}?{request.GET.urlencode()}"
+        )
 
     hx_target = request.META.get("HTTP_HX_TARGET")
     if hx_target == "objectDetailsModalW25Target":
@@ -721,18 +867,19 @@ def asset_request_reject(request, req_id):
         asset request detail view with an error message if the asset request is not
         found or already rejected
     """
-    asset_request = AssetRequest.objects.get(id=req_id)
+    try:
+        asset_request = AssetRequest.objects.get(id=req_id)
+    except AssetRequest.DoesNotExist:
+        messages.error(request, _("Asset request not found."))
+        return HorillaRedirect(request)
+
     asset_request.asset_request_status = "Rejected"
     asset_request.save()
     messages.info(request, _("Asset request has been rejected."))
     notify.send(
         request.user.employee_get,
         recipient=asset_request.requested_employee_id.employee_user_id,
-        verb="Your asset request rejected!.",
-        verb_ar="تم رفض طلب الأصول الخاص بك!",
-        verb_de="Ihr Antragsantrag wurde abgelehnt!",
-        verb_es="¡Se ha rechazado su solicitud de activo!",
-        verb_fr="Votre demande d'actif a été rejetée !",
+        verb=gettext_noop("Your asset request rejected!"),
         redirect=reverse("asset-request-allocation-view")
         + f"?asset_request_date={asset_request.asset_request_date}\
         &asset_request_status={asset_request.asset_request_status}",
@@ -757,11 +904,14 @@ def asset_allocate_creation(request):
     if request.method == "POST":
         form = AssetAllocationForm(request.POST)
         if form.is_valid():
-            asset = form.instance.asset_id.id
-            asset = Asset.objects.filter(id=asset).first()
-            asset.asset_status = "In use"
-            asset.save()
             instance = form.save()
+            asset = instance.asset_id
+            active_count = AssetAssignment.objects.filter(
+                asset_id=asset, return_date__isnull=True
+            ).count()
+            if active_count >= asset.quantity:
+                asset.asset_status = "In use"
+                asset.save()
             files = request.FILES.getlist("assign_images")
             attachments = []
             if request.FILES:
@@ -780,12 +930,20 @@ def asset_allocate_creation(request):
 
 
 @login_required
+@owner_can_enter(
+    "change_assetassignment", AssetAssignment, employee_field="assigned_to_employee_id"
+)
 def asset_allocate_return_request(request, asset_id):
     """
     Handle the initiation of a return request for an allocated asset.
     """
     previous_data = request.GET.urlencode()
-    asset_assign = AssetAssignment.objects.get(id=asset_id)
+    try:
+        asset_assign = AssetAssignment.objects.get(id=asset_id)
+    except AssetAssignment.DoesNotExist:
+        messages.error(request, _("Asset assignment not found."))
+        return HorillaRedirect(request)
+
     asset_assign.return_request = True
     asset_assign.save()
     message = _("Return request for {} initiated.").format(asset_assign.asset_id)
@@ -794,16 +952,13 @@ def asset_allocate_return_request(request, asset_id):
     notify.send(
         request.user.employee_get,
         recipient=permed_users,
-        verb=f"Return request for {asset_assign.asset_id} initiated from\
-            {asset_assign.assigned_to_employee_id}",
-        verb_ar=f"تم بدء طلب الإرجاع للمورد {asset_assign.asset_id}\
-            من الموظف {asset_assign.assigned_to_employee_id}",
-        verb_de=f"Rückgabewunsch für {asset_assign.asset_id} vom Mitarbeiter\
-            {asset_assign.assigned_to_employee_id} initiiert",
-        verb_es=f"Solicitud de devolución para {asset_assign.asset_id}\
-            iniciada por el empleado {asset_assign.assigned_to_employee_id}",
-        verb_fr=f"Demande de retour pour {asset_assign.asset_id}\
-            initiée par l'employé {asset_assign.assigned_to_employee_id}",
+        verb=gettext_noop(
+            "Return request for %(asset_id)s initiated from %(assigned_to_employee_id)s"
+        ),
+        verb_params={
+            "asset_id": str(asset_assign.asset_id),
+            "assigned_to_employee_id": str(asset_assign.assigned_to_employee_id),
+        },
         redirect=reverse("asset-request-allocation-view")
         + f"?assigned_to_employee_id={asset_assign.assigned_to_employee_id}&\
         asset_id={asset_assign.asset_id}&assigned_date={asset_assign.assigned_date}",
@@ -817,41 +972,50 @@ def asset_allocate_return_request(request, asset_id):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="asset.change_assetassignment")
-def asset_allocate_return(request, asset_id):
+def asset_allocate_return(request, assignment_id):
     """
     View function to return asset.
     Args:
-    - asset_id: integer value representing the ID of the asset
+    - assignment_id: integer value representing the ID of the AssetAssignment
+      being returned
     Returns:
     - message of the return
     """
 
     asset_return_form = AssetReturnForm()
-    asset_allocation = AssetAssignment.objects.filter(
-        asset_id=asset_id, return_status__isnull=True
-    ).first()
+    asset_allocation = AssetAssignment.objects.filter(id=assignment_id).first()
+    if not asset_allocation:
+        messages.error(request, _("Asset assignment not found."))
+        return HorillaRedirect(request)
     if request.method == "POST":
         asset_return_form = AssetReturnForm(request.POST, request.FILES)
 
         if asset_return_form.is_valid():
-            asset = Asset.objects.filter(id=asset_id).first()
+            asset = asset_allocation.asset_id
             asset_return_status = asset_return_form.cleaned_data["return_status"]
             asset_return_date = asset_return_form.cleaned_data["return_date"]
             asset_return_condition = asset_return_form.cleaned_data["return_condition"]
+            AssetServiceRequest.objects.filter(
+                assignment_id=asset_allocation, status__in=["Requested", "In Progress"]
+            ).update(status="Returned")
             files = request.FILES.getlist("return_images")
             attachments = []
-            context = {"asset_return_form": asset_return_form, "asset_id": asset_id}
-            response = render(request, "asset/asset_return_form.html", context)
+            context = {
+                "asset_return_form": asset_return_form,
+                "assignment_id": assignment_id,
+            }
             if asset_return_status == "Healthy":
-                asset_allocation = AssetAssignment.objects.filter(
-                    asset_id=asset_id, return_status__isnull=True
-                ).first()
                 asset_allocation.return_date = asset_return_date
                 asset_allocation.return_status = asset_return_status
                 asset_allocation.return_condition = asset_return_condition
                 asset_allocation.return_request = False
                 asset_allocation.save()
+                if asset_allocation.asset_item_id_id:
+                    asset_item = asset_allocation.asset_item_id
+                    asset_item.status = "Available"
+                    asset_item.save()
                 if request.FILES:
                     for file in files:
                         attachment = ReturnImages()
@@ -859,19 +1023,25 @@ def asset_allocate_return(request, asset_id):
                         attachment.save()
                         attachments.append(attachment)
                     asset_allocation.return_images.add(*attachments)
-                asset.asset_status = "Available"
+                active_count = AssetAssignment.objects.filter(
+                    asset_id=asset, return_date__isnull=True
+                ).count()
+                if active_count < asset.quantity:
+                    asset.asset_status = "Available"
+                else:
+                    asset.asset_status = "In use"
                 asset.save()
-                messages.info(request, _("Asset Return Successful !."))
+                messages.success(request, _("Asset Returned Successfully..."))
                 return HorillaRedirect(request)
-            asset.asset_status = "Not-Available"
-            asset.save()
-            asset_allocation = AssetAssignment.objects.filter(
-                asset_id=asset_id, return_status__isnull=True
-            ).first()
             asset_allocation.return_date = asset_return_date
             asset_allocation.return_status = asset_return_status
             asset_allocation.return_condition = asset_return_condition
             asset_allocation.save()
+            if asset_return_status == "Lost" and asset_allocation.asset_item_id_id:
+                # A lost unit is gone for good, so it must not stay "In use"
+                asset_item = asset_allocation.asset_item_id
+                asset_item.status = "Lost"
+                asset_item.save()
             if request.FILES:
                 for file in files:
                     attachment = ReturnImages()
@@ -879,10 +1049,28 @@ def asset_allocate_return(request, asset_id):
                     attachment.save()
                     attachments.append(attachment)
                 asset_allocation.return_images.add(*attachments)
+            if asset.quantity > 1:
+                # Damaged unit removed from pool; reduce serviceable quantity
+                asset.quantity = asset.quantity - 1
+                active_count = AssetAssignment.objects.filter(
+                    asset_id=asset, return_date__isnull=True
+                ).count()
+                if asset.quantity == 0:
+                    asset.asset_status = "Not-Available"
+                elif active_count < asset.quantity:
+                    asset.asset_status = "Available"
+                else:
+                    asset.asset_status = "In use"
+            else:
+                asset.asset_status = "Not-Available"
+            asset.save()
             messages.info(request, _("Asset Return Successful!."))
             return HorillaRedirect(request)
-
-    context = {"asset_return_form": asset_return_form, "asset_id": asset_id}
+    context = {
+        "asset_return_form": asset_return_form,
+        "assignment_id": assignment_id,
+        "asset_id": asset_allocation.asset_id_id,
+    }
     context["asset_alocation"] = asset_allocation
     return render(request, "asset/asset_return_form.html", context)
 
@@ -924,6 +1112,7 @@ def filter_pagination_asset_request_allocation(request):
     previous_data = request.GET.urlencode()
     assets_filtered = CustomAssetFilter(request.GET, queryset=assets)
     asset_request_filtered = AssetRequestFilter(request.GET, queryset=asset_request).qs
+    asset_request_count = asset_request_filtered.count()
     if request_field != "" and request_field is not None:
         asset_request_filtered = group_by_queryset(
             asset_request_filtered, request_field, request.GET.get("page"), "page"
@@ -947,6 +1136,7 @@ def filter_pagination_asset_request_allocation(request):
     asset_allocation_filtered = AssetAllocationFilter(
         request.GET, queryset=asset_assignment
     ).qs
+    asset_allocation_count = asset_allocation_filtered.count()
 
     if allocation_field != "" and allocation_field is not None:
         asset_allocation_filtered = group_by_queryset(
@@ -981,6 +1171,9 @@ def filter_pagination_asset_request_allocation(request):
         "assets": assets,
         "asset_requests": asset_request_filtered,
         "asset_allocations": asset_allocation_filtered,
+        "assets_count": assets_filtered.qs.count(),
+        "asset_requests_count": asset_request_count,
+        "asset_allocations_count": asset_allocation_count,
         "assets_filter_form": assets_filtered.form,
         "asset_request_filter_form": AssetRequestFilter().form,
         "asset_allocation_filter_form": AssetAllocationFilter().form,
@@ -1028,6 +1221,18 @@ def asset_request_alloaction_view_search_filter(request):
     Returns:
         Rendered HTTP response with the filtered and paginated asset request allocation list.
     """
+    # This endpoint returns only the list/filter fragment; direct browser opens
+    # (address bar navigation/reload) should land on the full request &
+    # allocation page that loads this fragment via HTMX, instead of showing
+    # the raw, unstyled fragment. Sec-Fetch-Mode is set by the browser itself
+    # for a real top-level navigation and can't be spoofed by an htmx fetch()
+    # call, unlike the HX-Request header alone.
+    if request.headers.get("Sec-Fetch-Mode") == "navigate":
+        redirect_url = reverse("asset-request-allocation-view")
+        query_string = request.GET.urlencode()
+        if query_string:
+            redirect_url = f"{redirect_url}?{query_string}"
+        return redirect(redirect_url)
     context = filter_pagination_asset_request_allocation(request)
     template = "request_allocation/asset_request_allocation_list.html"
     if (
@@ -1043,6 +1248,11 @@ def asset_request_alloaction_view_search_filter(request):
 
 @login_required
 @hx_request_required
+@owner_can_enter(
+    "asset.view_assetassignment",
+    AssetAssignment,
+    employee_field="assigned_to_employee_id",
+)
 def own_asset_individual_view(request, asset_id):
     """
     This function is responsible for view the individual own asset
@@ -1051,7 +1261,9 @@ def own_asset_individual_view(request, asset_id):
         request : HTTP request object
         id (int): Id of the asset assignment
     """
-    asset_assignment = AssetAssignment.objects.get(id=asset_id)
+    asset_assignment = AssetAssignment.find(asset_id)
+    if not asset_assignment:
+        return HorillaRedirect(request, message=_("Asset assignment not found"))
     asset = asset_assignment.asset_id
     context = {
         "asset": asset,
@@ -1069,6 +1281,9 @@ def own_asset_individual_view(request, asset_id):
 
 @login_required
 @hx_request_required
+@owner_can_enter(
+    "asset.view_assetrequest", AssetRequest, employee_field="requested_employee_id"
+)
 def asset_request_individual_view(request, asset_request_id):
     """
     Display the details of an individual asset request.
@@ -1088,7 +1303,9 @@ def asset_request_individual_view(request, asset_request_id):
     dashboard = not request.META.get("HTTP_HX_CURRENT_URL", "").endswith(
         "asset-request-allocation-view/"
     )
-    asset_request = AssetRequest.objects.get(id=asset_request_id)
+    asset_request = AssetRequest.objects.filter(id=asset_request_id).first()
+    if not asset_request:
+        return HttpResponse()
     context = {
         "asset_request": asset_request,
         "dashboard": dashboard,
@@ -1105,6 +1322,11 @@ def asset_request_individual_view(request, asset_request_id):
 
 @login_required
 @hx_request_required
+@owner_can_enter(
+    "asset.view_assetassignment",
+    AssetAssignment,
+    employee_field="assigned_to_employee_id",
+)
 def asset_allocation_individual_view(request, asset_allocation_id):
     """
     Display the details of an individual asset allocation.
@@ -1121,7 +1343,9 @@ def asset_allocation_individual_view(request, asset_allocation_id):
     Returns:
         HttpResponse: The rendered 'individual_allocation.html' template with the context data.
     """
-    asset_allocation = AssetAssignment.objects.get(id=asset_allocation_id)
+    asset_allocation = AssetAssignment.objects.filter(id=asset_allocation_id).first()
+    if not asset_allocation:
+        return HttpResponse()
     context = {"asset_allocation": asset_allocation}
     allocation_ids_json = request.GET.get("allocations_ids")
     if allocation_ids_json:
@@ -1130,7 +1354,7 @@ def asset_allocation_individual_view(request, asset_allocation_id):
         context["allocations_ids"] = allocation_ids_json
         context["previous"] = previous_id
         context["next"] = next_id
-    return render(request, "request_allocation/individual allocation.html", context)
+    return render(request, "request_allocation/individual_allocation.html", context)
 
 
 def convert_nan(val):
@@ -1145,80 +1369,98 @@ def convert_nan(val):
 fs = FileSystemStorage(location="csv_tmp/")
 
 
-def csv_asset_import(file):
-    file_content = ContentFile(file.read())
-    file_name = fs.save("_tmp.csv", file_content)
-    tmp_file = fs.path(file_name)
-
-    with open(tmp_file, errors="ignore") as csv_file:
-        reader = csv.reader(csv_file)
-        next(reader)  # Skip header row
-
-        asset_list = []
-        for row in reader:
-            (
-                asset_name,
-                asset_description,
-                asset_tracking_id,
-                asset_purchase_date,
-                asset_purchase_cost,
-                asset_category_name,
-                asset_status,
-                asset_lot_number,
-            ) = row
-
-            # Helper function to get or create categories and lots
-            asset_category, _ = AssetCategory.objects.get_or_create(
-                asset_category_name=asset_category_name
-            )
-            asset_lot, _ = AssetLot.objects.get_or_create(lot_number=asset_lot_number)
-
-            asset_list.append(
-                Asset(
-                    asset_name=asset_name,
-                    asset_description=asset_description,
-                    asset_tracking_id=asset_tracking_id,
-                    asset_purchase_date=asset_purchase_date,
-                    asset_purchase_cost=asset_purchase_cost,
-                    asset_status=asset_status,
-                    asset_category_id=asset_category,
-                    asset_lot_number_id=asset_lot,
-                )
-            )
-
-    # Bulk create assets from CSV
-    Asset.objects.bulk_create(asset_list)
-
-    # Delete the temporary file
-    if os.path.exists(tmp_file):
-        os.remove(tmp_file)
+ASSET_IMPORT_COLUMNS = [
+    "Asset name",
+    "Description",
+    "Serial No.",
+    "Purchase date",
+    "Purchase cost",
+    "Category",
+    "Batch number",
+    "Status",
+]
 
 
 def spreadsheetml_asset_import(dataframe):
-    for index, row in dataframe.iterrows():
-        asset_name = convert_nan(row["Asset name"])
-        asset_description = convert_nan(row["Description"])
-        asset_tracking_id = convert_nan(row["Tracking id"])
-        purchase_date = convert_nan(row["Purchase date"])
-        purchase_cost = convert_nan(row["Purchase cost"])
-        category_name = convert_nan(row["Category"])
-        lot_number = convert_nan(row["Batch number"])
-        status = convert_nan(row["Status"])
+    """
+    Import assets row by row; returns (created_count, error_rows) where each
+    error row is the original row data plus an "Error" column.
+    """
+    created_count = 0
+    error_rows = []
+    for _index, row in dataframe.iterrows():
+        try:
+            with transaction.atomic():
+                _import_asset_row(row)
+            created_count += 1
+        except Exception as exception:
+            error_row = {
+                column: convert_nan(row.get(column)) for column in ASSET_IMPORT_COLUMNS
+            }
+            error_row["Error"] = _friendly_import_error(exception)
+            error_rows.append(error_row)
+    return created_count, error_rows
 
-        asset_category, create = AssetCategory.objects.get_or_create(
-            asset_category_name=category_name
-        )
-        asset_lot_number, create = AssetLot.objects.get_or_create(lot_number=lot_number)
-        Asset.objects.create(
-            asset_name=asset_name,
-            asset_description=asset_description,
-            asset_tracking_id=asset_tracking_id,
-            asset_purchase_date=purchase_date,
-            asset_purchase_cost=purchase_cost,
-            asset_category_id=asset_category,
-            asset_status=status,
-            asset_lot_number_id=asset_lot_number,
-        )
+
+def _friendly_import_error(exception):
+    """Turn raw database errors into messages users can act on."""
+    message = str(exception)
+    if "UNIQUE constraint failed" in message or "duplicate key" in message:
+        if "asset_tracking_id" in message:
+            return _("Serial No. already exists. Each asset needs a unique Serial No.")
+        return _("This record already exists.")
+    if "NOT NULL constraint failed" in message or "null value in column" in message:
+        return _("A required value is missing in this row.")
+    if "FOREIGN KEY constraint failed" in message:
+        return _("A related Category or Batch number is invalid.")
+    return message
+
+
+def _import_asset_row(row):
+    asset_name = convert_nan(row["Asset name"])
+    asset_description = convert_nan(row["Description"])
+    asset_tracking_id = convert_nan(row["Serial No."])
+    purchase_date = convert_nan(row["Purchase date"])
+    purchase_cost = convert_nan(row["Purchase cost"])
+    category_name = convert_nan(row["Category"])
+    lot_number = convert_nan(row["Batch number"])
+    status = convert_nan(row["Status"])
+
+    asset_category, _created = AssetCategory.objects.get_or_create(
+        asset_category_name=category_name
+    )
+    asset_lot_number, _created = AssetLot.objects.get_or_create(lot_number=lot_number)
+    asset = Asset(
+        asset_name=asset_name,
+        asset_description=asset_description,
+        asset_tracking_id=asset_tracking_id,
+        asset_purchase_date=purchase_date,
+        asset_purchase_cost=purchase_cost,
+        asset_category_id=asset_category,
+        asset_status=status,
+        asset_lot_number_id=asset_lot_number,
+    )
+    asset.save()
+
+
+def handle_asset_import_errors(error_rows):
+    """Build a downloadable error sheet and return its dynamic URL path."""
+    from asset.urls import path, urlpatterns
+
+    data_frame = pd.DataFrame(error_rows)
+    response = HttpResponse(content_type="application/ms-excel")
+    response["Content-Disposition"] = 'attachment; filename="ImportError.xlsx"'
+    write_import_xlsx(data_frame, response)
+
+    path_info = f"error-sheet-{uuid.uuid4()}"
+
+    def get_error_sheet(request):
+        # one-time download: drop the temporary route once it is served
+        urlpatterns[:] = [p for p in urlpatterns if p.name != path_info]
+        return response
+
+    urlpatterns.append(path(path_info, get_error_sheet, name=path_info))
+    return f"asset/{path_info}"
 
 
 @login_required
@@ -1234,38 +1476,57 @@ def asset_import(request):
 
     Args:
         request (HttpRequest): The HTTP request object containing metadata about the request.
-
-    Returns:
-        HorillaRedirect: A redirect to the asset category view after processing the import.
     """
-    if request.META.get("HTTP_HX_REQUEST"):
+    if request.method != "POST":
         return render(request, "asset/asset_import.html")
+
+    def error_response(message):
+        response = render(
+            request,
+            "attendance/attendance/import_error_alert.html",
+            {"error_message": message},
+        )
+        response["HX-Retarget"] = "#AssetImportResponse"
+        response["HX-Reswap"] = "innerHTML"
+        return response
+
+    file = request.FILES.get("asset_import")
+    if file is None:
+        return error_response(_("Please select a file to upload."))
     try:
-        if request.method == "POST":
-            file = request.FILES.get("asset_import")
-            if file is not None and file.content_type == "text/csv":
-                try:
-                    csv_asset_import(file)
-                    messages.success(request, _("Successfully imported Assets"))
-                except Exception as exception:
-                    messages.error(request, f"{exception}")
-            elif (
-                file is not None
-                and file.content_type
-                == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ):
-                try:
-                    dataframe = pd.read_excel(file)
-                    spreadsheetml_asset_import(dataframe)
-                    messages.success(request, _("Successfully imported Assets"))
-                except KeyError as exception:
-                    messages.error(request, f"{exception}")
-            else:
-                messages.error(request, _("File Error"))
-            return redirect(asset_category_view)
+        return _asset_import_file(request, file, error_response)
     except Exception as exception:
-        messages.error(request, f"{exception}")
-    return redirect(asset_category_view)
+        return error_response(str(exception))
+
+
+def _asset_import_file(request, file, error_response):
+    """Run the import for an uploaded file; returns the HTMX response."""
+    name = file.name.lower()
+    if name.endswith(".csv"):
+        dataframe = pd.read_csv(file)
+    elif name.endswith((".xlsx", ".xls")):
+        dataframe = pd.read_excel(file)
+    else:
+        return error_response(
+            _("Unsupported file type. Please upload a .csv or .xlsx file.")
+        )
+    missing = [c for c in ASSET_IMPORT_COLUMNS if c not in dataframe.columns]
+    if missing:
+        return error_response(
+            _("These required headers are missing in the uploaded file: ")
+            + ", ".join(missing)
+        )
+    created_count, error_rows = spreadsheetml_asset_import(dataframe)
+    context = {
+        "created_count": created_count,
+        "error_count": len(error_rows),
+        "model": _("Assets"),
+        "path_info": handle_asset_import_errors(error_rows) if error_rows else None,
+    }
+    response = render(request, "import_popup.html", context)
+    response["HX-Retarget"] = "#objectCreateModal"
+    response["HX-Reswap"] = "innerHTML"
+    return response
 
 
 @login_required
@@ -1273,31 +1534,39 @@ def asset_excel(_request):
     """asset excel download view"""
 
     try:
-        columns = [
-            "Asset name",
-            "Description",
-            "Tracking id",
-            "Purchase date",
-            "Purchase cost",
-            "Category",
-            "Status",
-            "Batch number",
-        ]
-        # Create a pandas DataFrame with columns but no data
-        dataframe = pd.DataFrame(columns=columns)
+        dataframe = import_template_frame("asset")
         # Write the DataFrame to an Excel file
         response = HttpResponse(content_type="application/ms-excel")
         response["Content-Disposition"] = 'attachment; filename="my_excel_file.xlsx"'
-        dataframe.to_excel(response, index=False)
+        write_import_xlsx(dataframe, response)
         return response
     except Exception as exception:
         return HttpResponse(exception)
+
+
+# (field on Asset, column heading in the file) -- also the column picker in the
+# export modal.
+ASSET_EXPORT_COLUMNS = [
+    ("asset_name", "Asset name"),
+    ("asset_description", "Description"),
+    ("asset_tracking_id", "Serial No."),
+    ("asset_purchase_date", "Purchase date"),
+    ("asset_purchase_cost", "Purchase cost"),
+    ("asset_category_id", "Category"),
+    ("asset_status", "Status"),
+    ("asset_lot_number_id", "Batch number"),
+]
 
 
 @login_required
 @permission_required("asset.view_assetcategory")
 def asset_export_excel(request):
     """asset export view"""
+    if not has_export_access(request, Asset):
+        return HorillaRedirect(
+            request, message=_("You don't have access to export this data")
+        )
+
     asset_export_filter = AssetExportFilter(request.GET, queryset=Asset.objects.all())
     if request.method == "POST":
         queryset_all = Asset.objects.all()
@@ -1305,7 +1574,15 @@ def asset_export_excel(request):
             messages.warning(request, _("There are no assets to export."))
             return redirect("asset-category-view")  # or some other URL
 
-        queryset = AssetExportFilter(request.POST, queryset=queryset_all).qs
+        selected_ids = eval_validate(request.POST.get("ids", "[]"))
+        if selected_ids:
+            queryset = queryset_all.filter(id__in=selected_ids)
+        else:
+            queryset = AssetExportFilter(request.POST, queryset=queryset_all).qs
+
+        if not queryset.exists():
+            messages.warning(request, _("There are no assets to export."))
+            return redirect("asset-category-view")
 
         # Convert the queryset to a Pandas DataFrame
         data = {
@@ -1358,7 +1635,10 @@ def asset_export_excel(request):
                     start_date = datetime.strptime(str(value), "%Y-%m-%d").date()
 
                     # The formatted date for each format
-                    for format_name, format_string in HORILLA_DATE_FORMATS.items():
+                    for (
+                        format_name,
+                        format_string,
+                    ) in settings.HORILLA_DATE_FORMATS.items():
                         if format_name == date_format:
                             value = start_date.strftime(format_string)
 
@@ -1374,25 +1654,24 @@ def asset_export_excel(request):
 
         # Convert any date fields to the desired format
         # Rename the columns as needed
-        dataframe = dataframe.rename(
-            columns={
-                "asset_name": "Asset name",
-                "asset_description": "Description",
-                "asset_tracking_id": "Tracking id",
-                "asset_purchase_date": "Purchase date",
-                "asset_purchase_cost": "Purchase cost",
-                "asset_category_id": "Category",
-                "asset_status": "Status",
-                "asset_lot_number_id": "Batch number",
-            }
-        )
+        dataframe = dataframe.rename(columns=dict(ASSET_EXPORT_COLUMNS))
+
+        chosen = request.POST.getlist("selected_fields")
+        columns_map = dict(ASSET_EXPORT_COLUMNS)
+        headings = [columns_map[field] for field in chosen if field in columns_map] or [
+            heading for _field, heading in ASSET_EXPORT_COLUMNS
+        ]
+        dataframe = dataframe[headings]
 
         # Write the DataFrame to an Excel file
         response = HttpResponse(content_type="application/vnd.ms-excel")
         response["Content-Disposition"] = 'attachment; filename="assets.xlsx"'
         dataframe.to_excel(response, index=False)
         return response
-    context = {"asset_export_filter": asset_export_filter}
+    context = {
+        "asset_export_filter": asset_export_filter,
+        "export_columns": ASSET_EXPORT_COLUMNS,
+    }
     return render(request, "category/asset_filter_export.html", context)
 
 
@@ -1418,7 +1697,7 @@ def asset_batch_number_creation(request):
             asset_batch_form = AssetBatchForm()
             messages.success(request, _("Batch number created successfully."))
             if AssetLot.objects.filter().count() == 1 and not hx_vals:
-                return HorillaRedirect(request)
+                return HttpResponse(status=204, headers={"HX-Refresh": "true"})
             if hx_vals:
                 category_id = request.GET.get("asset_category_id")
                 url = reverse("asset-creation", args=[category_id])
@@ -1507,6 +1786,9 @@ def asset_batch_number_delete(request, batch_id):
     Returns:
     - message of the return
     """
+    request_copy = request.GET.copy()
+    request_copy.pop("requests_ids", None)
+    previous_data = request_copy.urlencode()
     previous_data = request.GET.urlencode()
     try:
         asset_batch_number = AssetLot.objects.get(id=batch_id)
@@ -1515,7 +1797,7 @@ def asset_batch_number_delete(request, batch_id):
         )
         if assigned_batch_number:
             messages.error(request, _("Batch number in-use"))
-            return redirect(f"/asset/asset-batch-number-search?{previous_data}")
+            return redirect(f"/asset/asset-batch-list?{previous_data}")
         asset_batch_number.delete()
         messages.success(request, _("Batch number deleted"))
     except AssetLot.DoesNotExist:
@@ -1523,7 +1805,7 @@ def asset_batch_number_delete(request, batch_id):
     except ProtectedError:
         messages.error(request, _("You cannot delete this Batch number."))
     if not AssetLot.objects.filter():
-        return HorillaRedirect(request)
+        return HttpResponse(status=204, headers={"HX-Refresh": "true"})
     return redirect(f"/asset/asset-batch-number-search?{previous_data}")
 
 
@@ -1558,6 +1840,7 @@ def asset_batch_number_search(request):
 
 
 @login_required
+@hx_request_required
 def asset_count_update(request):
     """
     View function to return update asset count at asset category.
@@ -1596,6 +1879,7 @@ def asset_dashboard(request):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="asset.view_assetrequest")
 def asset_dashboard_requests(request):
     """
@@ -1619,6 +1903,7 @@ def asset_dashboard_requests(request):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="asset.view_assetassignment")
 def asset_dashboard_allocates(request):
     asset_allocations = AssetAssignment.objects.filter(
@@ -1733,7 +2018,12 @@ def asset_history_single_view(request, asset_id):
     Returns:
         html: Returns asset history single view template
     """
-    asset_assignment = get_object_or_404(AssetAssignment, id=asset_id)
+    try:
+        asset_assignment = AssetAssignment.objects.get(id=asset_id)
+    except AssetAssignment.DoesNotExist:
+        messages.error(request, _("Asset assignment not found."))
+        return HorillaRedirect(request)
+
     context = {"asset_assignment": asset_assignment}
     requests_ids_json = request.GET.get("requests_ids")
     if requests_ids_json:
@@ -1750,6 +2040,7 @@ def asset_history_single_view(request, asset_id):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="asset.view_assetassignment")
 def asset_history_search(request):
     """
@@ -1802,7 +2093,7 @@ def asset_history_search(request):
 
 @login_required
 @owner_can_enter("asset.view_asset", Employee)
-def asset_tab(request, emp_id):
+def asset_tab(request, pk):
     """
     This function is used to view asset tab of an employee in employee individual view.
 
@@ -1813,7 +2104,12 @@ def asset_tab(request, emp_id):
     Returns: return asset-tab template
 
     """
-    employee = Employee.objects.get(id=emp_id)
+    try:
+        employee = Employee.objects.get(id=pk)
+    except Employee.DoesNotExist:
+        messages.error(request, _("Employee not found."))
+        return HorillaRedirect(request)
+
     assets_requests = employee.requested_employee.all()
     assets = employee.allocated_employee.all()
     assets_ids = (
@@ -1823,13 +2119,14 @@ def asset_tab(request, emp_id):
         "assets": assets,
         "requests": assets_requests,
         "assets_ids": assets_ids,
-        "employee": emp_id,
+        "employee": pk,
     }
-    return render(request, "tabs/asset-tab.html", context=context)
+    return render(request, "tabs/main_asset_tab.html", context=context)
 
 
 @login_required
 @hx_request_required
+@owner_can_enter("asset.view_assetassignment", Employee)
 def profile_asset_tab(request, emp_id):
     """
     This function is used to view asset tab of an employee in employee profile view.
@@ -1841,7 +2138,9 @@ def profile_asset_tab(request, emp_id):
     Returns: return profile-asset-tab template
 
     """
-    employee = Employee.objects.get(id=emp_id)
+    employee = Employee.objects.filter(id=emp_id).first()
+    if not employee:
+        return HttpResponse()
     assets = employee.allocated_employee.all()
     assets_ids = json.dumps([instance.id for instance in assets])
     context = {
@@ -1853,6 +2152,7 @@ def profile_asset_tab(request, emp_id):
 
 @login_required
 @hx_request_required
+@owner_can_enter("asset.view_assetrequest", Employee)
 def asset_request_tab(request, emp_id):
     """
     This function is used to view asset request tab of an employee in employee individual view.
@@ -1864,7 +2164,9 @@ def asset_request_tab(request, emp_id):
     Returns: return asset-request-tab template
 
     """
-    employee = Employee.objects.get(id=emp_id)
+    employee = Employee.objects.filter(id=emp_id).first()
+    if not employee:
+        return HttpResponse()
     assets_requests = employee.requested_employee.all()
     requests_ids = json.dumps([instance.id for instance in assets_requests])
     context = {
@@ -1873,3 +2175,76 @@ def asset_request_tab(request, emp_id):
         "requests_ids": requests_ids,
     }
     return render(request, "tabs/asset_request_tab.html", context=context)
+
+
+@login_required
+def asset_rule_settings_view(request):
+    """
+    "Asset Rule" settings page, gathering company-scoped asset settings.
+    """
+    company = get_session_company(request)
+    setting, _created = AssetGeneralSetting.objects.get_or_create(company_id=company)
+    return render(
+        request,
+        "asset/settings/asset_rule.html",
+        {"asset_general_setting": setting},
+    )
+
+
+@login_required
+@hx_request_required
+@permission_required("asset.change_assetgeneralsetting")
+def enable_disable_asset_fine(request):
+    """
+    Enables or disables the asset fine feature for the active company.
+    """
+    if request.method == "POST":
+        is_checked = request.POST.get("isChecked")
+        setting_id = request.POST.get("setting_Id")
+        enable = bool(is_checked)
+
+        updated = AssetGeneralSetting.objects.filter(id=setting_id).update(
+            enable_asset_fine=enable
+        )
+
+        if updated:
+            message = _("Asset fine has been successfully {}.").format(
+                _("enabled") if enable else _("disabled")
+            )
+            messages.success(request, message)
+
+    return HttpResponse("")
+
+
+@login_required
+@hx_request_required
+@permission_required(perm="asset.change_assetassignment")
+def asset_service_request_add_note(request, pk):
+    """
+    Standalone modal to add a note on a service request, launched from
+    the Service Request list row.
+    """
+    instance = AssetServiceRequest.objects.filter(pk=pk).first()
+    if not instance:
+        messages.error(request, _("Service request not found."))
+        return HorillaRedirect(request)
+    if request.method == "POST":
+        note_text = request.POST.get("note", "").strip()
+        if note_text:
+            AssetServiceRequestNote.objects.create(
+                request_id=instance,
+                employee_id=request.user.employee_get,
+                note=note_text,
+            )
+            messages.success(request, _("Note added."))
+        return render(
+            request,
+            "cbv/request_and_allocation/forms/service_request_add_note_success.html",
+            {"instance": instance},
+        )
+    context = {"service_request": instance}
+    return render(
+        request,
+        "cbv/request_and_allocation/forms/service_request_add_note_form.html",
+        context,
+    )

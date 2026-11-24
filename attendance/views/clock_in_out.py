@@ -577,23 +577,34 @@ def clock_out(request):
         datetime_now = timezone.localtime()
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime
+        # one effective check-out time for the break end, the activity and the
+        # attendance row (request.date / request.time still override)
+        checkout_at = timezone.localtime(
+            timezone.make_aware(datetime_now)
+            if timezone.is_naive(datetime_now)
+            else datetime_now
+        )
         # A running break has already closed the open activity. End it first, at
         # this check-out's own time, so the check-out closes the resumed
         # activity and no break stays open.
         from attendance.services import breaks as break_service
 
-        if break_service.open_break(employee) is not None:
-            checkout_at = (
-                timezone.make_aware(datetime_now)
-                if timezone.is_naive(datetime_now)
-                else datetime_now
-            )
-            break_service.end_break(employee, now=timezone.localtime(checkout_at))
+        running_break = break_service.open_break(employee)
+        if running_break is not None:
+            if checkout_at < running_break.start_datetime:
+                # e.g. a buffered device punch from before the break started:
+                # ending the break at that time would put its end before its start
+                messages.error(
+                    request,
+                    _("This check-out is earlier than the start of your break."),
+                )
+                return HorillaRedirect(request)
+            break_service.end_break(employee, now=checkout_at)
         shift = work_info.shift_id
-        date_today = date.today()
+        date_today = checkout_at.date()
         if request.__dict__.get("date"):
             date_today = request.date
-        now = datetime.now().strftime("%H:%M")
+        now = checkout_at.strftime("%H:%M")
         if request.__dict__.get("time"):
             now = request.time.strftime("%H:%M")
         attendance = clock_out_attendance_and_activity(

@@ -92,10 +92,25 @@ class AppendOnlyQuerySet(models.QuerySet):
     def delete(self):
         raise ValueError("AttendanceCorrectionLog rows cannot be deleted.")
 
-    def bulk_create(self, objs, *args, **kwargs):
-        if kwargs.get("update_conflicts"):
+    def bulk_create(
+        self,
+        objs,
+        batch_size=None,
+        ignore_conflicts=False,
+        update_conflicts=False,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        if update_conflicts:
             raise ValueError("AttendanceCorrectionLog rows cannot be changed.")
-        return super().bulk_create(objs, *args, **kwargs)
+        return super().bulk_create(
+            objs,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
 
 
 class AttendanceCorrectionLog(models.Model):

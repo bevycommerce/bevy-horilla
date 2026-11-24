@@ -9,3 +9,18 @@ Take a Break form with a note being typed), so nothing typed is lost.
      hx-get="{% url 'workspace-card' %}"
      hx-trigger="load, every 60s[!document.querySelector('#workspace-card details[open]')], visibilitychange[document.visibilityState === 'visible' && !document.querySelector('#workspace-card details[open]')] from:document"
      hx-swap="innerHTML"></div>
+<script>
+  // A refresh that started before a menu was opened can arrive while the user
+  // is typing in it: drop that answer (the next refresh brings the card).
+  // Actions inside the card (their own requests) still swap.
+  if (!window.wsCardSwapGuard) {
+    window.wsCardSwapGuard = true;
+    document.addEventListener("htmx:beforeSwap", function (event) {
+      var elt = event.detail.elt;
+      if (elt && elt.id === "workspace-card" &&
+          elt.querySelector("details[open]")) {
+        event.detail.shouldSwap = false;
+      }
+    });
+  }
+</script>

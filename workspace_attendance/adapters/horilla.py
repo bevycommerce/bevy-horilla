@@ -78,6 +78,23 @@ def _hhmmss(value):
     return value.strftime("%H:%M:%S")
 
 
+def _change(old_date, old_clock, new_date, new_clock):
+    """
+    (old, new) for the correction log, or None when nothing changed. A time on
+    another calendar date is a change too; then both values carry the date.
+    """
+    if _hhmmss(old_clock) == _hhmmss(new_clock) and (
+        old_clock is None or old_date == new_date
+    ):
+        return None
+    if old_clock is not None and old_date is not None and old_date != new_date:
+        return (
+            f"{old_date.isoformat()} {_hhmmss(old_clock)}",
+            f"{new_date.isoformat()} {_hhmmss(new_clock)}",
+        )
+    return (_hhmmss(old_clock), _hhmmss(new_clock))
+
+
 class HorillaAdapter(BaseAdapter):
     # ------------------------------------------------------------------ people
     def get_employee(self, user):
@@ -532,7 +549,12 @@ class HorillaAdapter(BaseAdapter):
                 _("You are on a break for this day. End the break first."), code="on_break"
             )
 
-        shift = employee.employee_work_info.shift_id
+        # the shift the day was recorded under; a new day uses the current shift
+        shift = (
+            attendance.shift_id
+            if attendance is not None and attendance.shift_id_id
+            else employee.employee_work_info.shift_id
+        )
         day = _shift_day(work_date)
         minimum_hour, start_sec, end_sec = shift_schedule_today(day=day, shift=shift)
         night_shift = start_sec > end_sec
@@ -660,24 +682,34 @@ class HorillaAdapter(BaseAdapter):
                         raise AttendanceActionError(
                             _("Sign in must be before your first break or sign out."), code="order"
                         )
-                old = _hhmmss(attendance.attendance_clock_in)
+                change = _change(
+                    attendance.attendance_clock_in_date,
+                    attendance.attendance_clock_in,
+                    in_date,
+                    sign_in,
+                )
                 first.clock_in = sign_in
                 first.clock_in_date = in_date
                 first.in_datetime = _aware(in_date, sign_in)
                 first.save()
-                if old != _hhmmss(sign_in):
-                    changes.append(("sign_in", old, _hhmmss(sign_in)))
+                if change:
+                    changes.append(("sign_in",) + change)
             if sign_out is not None:
                 last_in_clock = last.clock_in if last is not first or sign_in is None else sign_in
                 out_date = out_date_for(last.clock_in_date, last_in_clock, sign_out)
                 not_future(out_date, sign_out, _("Sign out"))
-                old = _hhmmss(attendance.attendance_clock_out)
+                change = _change(
+                    attendance.attendance_clock_out_date,
+                    attendance.attendance_clock_out,
+                    out_date,
+                    sign_out,
+                )
                 last.clock_out = sign_out
                 last.clock_out_date = out_date
                 last.out_datetime = _aware(out_date, sign_out)
                 last.save()
-                if old != _hhmmss(sign_out):
-                    changes.append(("sign_out", old, _hhmmss(sign_out)))
+                if change:
+                    changes.append(("sign_out",) + change)
 
         # ---------------- recompute the day the way Horilla does on sign out
         activities = list(

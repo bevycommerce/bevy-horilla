@@ -10,24 +10,49 @@ list and per-changed-file table are the checklist. Do not substitute a generic r
 
 Steps:
 
-1. **Work out the target, and make it the checkout.** The gate in step 2 runs against the working
-   tree, so reading one revision while testing another reports a passing gate for code it never
-   ran. Note the current branch first so you can return to it, and refuse to switch if the tree is
-   dirty.
+1. **Work out the target, pin it to one commit, and make it the checkout.** The gate in step 2 runs
+   against the working **tree**, so reading one revision while testing another reports a passing
+   gate for code it never ran.
 
-   | Argument | Diff | Get the files onto disk |
-   |---|---|---|
-   | nothing | `git diff staging...HEAD` | already the checkout |
-   | a branch name | `git diff staging...<branch>` | `git switch <branch>` |
-   | a PR number | `gh pr diff <n>` | `gh pr checkout <n>` |
+   Start with `git status --porcelain`. **Refuse a dirty tree on every target, the current branch
+   included** — there the diff is of commits while the gate would test your uncommitted edits, so a
+   pass can belong to code that is not in the diff and not in the PR. Note the current branch first
+   so you can return to it.
+
+   | Argument | Base | Diff | Get the files onto disk |
+   |---|---|---|---|
+   | nothing | `staging` | `git diff staging...HEAD` | already the checkout |
+   | a branch name | `staging` | `git diff staging...<branch>` | `git switch <branch>` |
+   | a PR number | its `baseRefName` | `gh pr diff <n>` | `gh pr checkout <n>` |
+
+   For a PR, read the head commit and the base **before** the diff and confirm the checkout landed
+   on that commit. The two commands are separate requests, and an author who pushes between them
+   leaves you reviewing one revision and testing another:
+
+   ```powershell
+   gh pr view <n> --repo bevycommerce/bevy-horilla --json headRefOid,baseRefName
+   ```
+
+   ```powershell
+   gh pr checkout <n> --repo bevycommerce/bevy-horilla
+   ```
+
+   ```powershell
+   git rev-parse HEAD
+   ```
+
+   If `git rev-parse HEAD` is not the `headRefOid` you read, stop and report the mismatch rather
+   than reviewing across two revisions.
 
    `gh pr diff` and `git diff <branch>` only *display* a revision — neither changes the checkout.
    If you cannot or should not switch (dirty tree, or the user asked you not to), review from the
    diff alone and say explicitly that the gate was **not** run against the target.
 
-2. Run the gate (`/hr-check`) against that checkout. A failing `makemigrations --check` is a Blocker
-   on its own and needs no code reading to report. **CI does not run on `staging`**, so this review
-   is the gate.
+2. Run the gate against that checkout, passing the base from the table: `/hr-check <base>`. It
+   picks the test labels from `<base>...HEAD`, so the base has to be the one the diff used — a PR
+   into `dev/v2.0` compared against `staging` lists changes that already shipped and can miss the
+   app the PR actually touches. A failing `makemigrations --check` is a Blocker on its own and needs
+   no code reading to report. **CI does not run on `staging`**, so this review is the gate.
 3. Open the compliance rule for each area the diff touches —
    [`docs/compliance/`](../../docs/compliance/README.md). Do not review from memory of the rules.
 4. Read every changed file against the per-file table.

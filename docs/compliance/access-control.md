@@ -26,8 +26,14 @@ How-to and the decorator table:
 - Hide or disable a control the user may not use, and say why when it is disabled. A clickable
   control that fails server-side is a bug report waiting to happen.
 - Gate a sidebar entry with its `accessibility` callable rather than rendering a link that 403s.
-- Scope "my own" and "my team" views by the actual relationship (`owner_can_enter`,
-  `manager_can_enter`), not by a filter the user could change in the URL.
+- Scope "my own" and "my team" views by the relationship to **the record being requested** —
+  checked in `get_queryset()` or on the object — not by a filter the user could change in the URL,
+  and not by a decorator alone. `manager_can_enter` does **not** do this for you: all it asks is
+  `EmployeeWorkInformation.objects.filter(reporting_manager_id=employee).exists()`, so one team lead
+  with one report clears it for every record the view serves. `owner_can_enter` does resolve the
+  target and check it (`check_manager`), but it **fails open** when the id resolves to nothing — the
+  final test is `if can_enter or not employee` — and `manager_access=True` drops it back to the same
+  "manages anyone" question.
 - Add a test for a new access rule: the permitted role sees it, the adjacent role does not.
 
 ## Do not
@@ -40,5 +46,8 @@ How-to and the decorator table:
   saying so in the PR.
 - Widen an existing check to make a new screen work. Add the narrower one the new screen needs.
 - Use `superuser_required` because the right permission is unclear — find it, or ask.
+- Treat `manager_can_enter` as team scoping, or `check_manager` as more than a one-level
+  direct-report test: it compares `employee_work_info.reporting_manager_id` and nothing further, and
+  returns `False` on any exception, including a missing work-information row.
 - Weaken `horilla/decorators.py` or `accessibility/`; they are
   [protected paths](protected-paths.md).

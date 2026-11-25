@@ -251,8 +251,8 @@ CBVs use. The server check comes first, every time
 | `login_required` | Horilla's own, not Django's — handles HTMX responses and the install/init states |
 | `permission_required(perm)` | A single Django permission |
 | `any_permission_required([...])` | Any one of several |
-| `manager_can_enter(perm)` | The permission **or** being the employee's reporting manager |
-| `owner_can_enter(perm, model)` | The permission **or** owning the record |
+| `manager_can_enter(perm)` | The permission **or** being the reporting manager of *anyone*. It never looks at the requested record |
+| `owner_can_enter(perm, model)` | The permission, owning the record, or being its owner's direct manager. Fails **open** when the id resolves to nothing |
 | `delete_permission()` / `duplicate_permission()` | The generic delete / duplicate routes |
 | `superuser_required` | Superusers only |
 | `hx_request_required` | Refuses a non-HTMX request to a fragment route |
@@ -261,6 +261,11 @@ CBVs use. The server check comes first, every time
 
 On a CBV, apply them with `@method_decorator(login_required, name="dispatch")`. For forms, prefer
 `AddOrChangePermissionMixin` plus `add_perm` / `change_perm` over hand-rolled checks.
+
+`manager_can_enter` and `owner_can_enter(..., manager_access=True)` answer "does this user manage
+someone", not "may this user see *this* row". Where that distinction matters, the per-record check
+belongs in `get_queryset()` or on the object —
+[`compliance/access-control.md`](compliance/access-control.md).
 
 The screen must mirror the server check — a control the user may not use is hidden or disabled with
 its reason, never left clickable to fail server-side.

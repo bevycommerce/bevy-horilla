@@ -10,18 +10,26 @@ Blocker / Major first.
 ## Before
 
 - Get the diff: `git diff staging...HEAD` for the current branch, `git diff staging...<branch>` for
-  another, or `gh pr diff <n>` for a PR.
+  another, or `gh pr diff <n>` for a PR. For a PR, read `headRefOid` and `baseRefName` first
+  (`gh pr view <n> --json headRefOid,baseRefName`): the base is what the gate's test selection must
+  compare against, and the head commit is what the checkout must land on.
 - **Put the revision under review on disk before running the gate.** `gh pr diff` and
   `git diff <branch>` only display a revision; they do not change the checkout. Reviewing one
   revision while the gate tests another reports a pass for code it never ran — use
-  `gh pr checkout <n>` or `git switch <branch>` first (note the branch you started on, and do not
-  switch with a dirty tree). If you cannot switch, review from the diff and say in the report that
-  the gate did not run against the target.
+  `gh pr checkout <n>` or `git switch <branch>` first, then check `git rev-parse HEAD` against the
+  `headRefOid` you read. A push between the two commands silently moves the target; a mismatch is a
+  stop-and-report, not something to review across. Note the branch you started on. If you cannot
+  switch, review from the diff and say in the report that the gate did not run against the target.
+- **Require a clean tree**, on the current branch as much as on a branch you switch to. The diff is
+  of commits; the gate runs on the working tree. With uncommitted edits in it, a pass can belong to
+  code that is in neither the diff nor the PR.
 - Read [`AGENTS.md`](../../AGENTS.md) — hard rules. Open the compliance rule for each area the diff
   touches.
-- Run the gate before reading the code — `/hr-check`, or
-  [`AGENTS.md` — Checks](../../AGENTS.md#checks). A failing `makemigrations --check` is a Blocker and
-  needs no further review to report.
+- Run the gate before reading the code — `/hr-check <base>`, or
+  [`AGENTS.md` — Checks](../../AGENTS.md#checks). Pass the base the diff used: the test labels come
+  from `<base>...HEAD`, and comparing a PR that targets another branch against `staging` lists
+  changes that already shipped while missing the app the PR touches. A failing
+  `makemigrations --check` is a Blocker and needs no further review to report.
 
 ## Blockers
 
@@ -30,7 +38,9 @@ Report these first; they stop the merge.
 - A model change with no committed migration, or an edit to a migration already applied on staging.
 - A secret, dump, `.env`, `media/` file or password in the diff.
 - A missing or weakened server-side permission check, or a gate that exists only in a template — a
-  new list or detail screen over employee data with `login_required` but no view permission is this.
+  new list or detail screen over employee data with `login_required` but no view permission is this,
+  and so is a "my team" screen whose only gate is `manager_can_enter`, which any reporting manager
+  passes for every record on it.
 - A company-scoped model read through `.objects` where the result reaches a user.
 - An attendance or payroll change that alters validated rows, the global validation rule, or
   overtime approval ([`workspace-attendance-integrity`](../compliance/workspace-attendance-integrity.md)).
@@ -44,7 +54,7 @@ Report these first; they stop the merge.
 | Check | Looking for |
 |---|---|
 | **Correctness** | Does it do what the PR says? Off-by-one on dates, time-zone assumptions (`TIME_ZONE` defaults to `Asia/Kolkata`), `None` paths, half-day and night-shift cases |
-| **Access** | The decorator on the view; a **view permission** on a list or detail screen and not just `login_required` (the generics do not gate the read); the screen mirroring it; the fragment route guarded by `hx_request_required` |
+| **Access** | The decorator on the view; a **view permission** on a list or detail screen and not just `login_required` (the generics do not gate the read); a per-record check in `get_queryset()` or on the object wherever the screen is "my team" (`manager_can_enter` only asks whether the user manages *anyone*); the screen mirroring it; the fragment route guarded by `hx_request_required` |
 | **Scoping** | `HorillaCompanyManager` on new models; per-request scoping in a filter's `queryset_fn` |
 | **Migration** | Present, readable, reversible if it moves data, named meaningfully, unformatted |
 | **Queries** | `select_related` / `prefetch_related` on rendered relations; no ORM call in a loop; aggregation in SQL; pagination intact |

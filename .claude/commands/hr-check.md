@@ -1,5 +1,6 @@
 ---
 description: Run the local quality gate (what CI would run if it ran on staging) and report only failures
+argument-hint: "[base branch for test selection, default staging]"
 ---
 
 Run the gate for this repository and report **only what failed**, with the command and the relevant
@@ -19,12 +20,17 @@ python manage.py check --fail-level WARNING --tag horilla.tenancy
 python manage.py makemigrations --check --dry-run
 ```
 
-Then run the tests for the apps this branch touched. Work out which from **both** the committed and
-the uncommitted changes — a second app edited after the last commit is still about to ship, and a
-gate that misses it reports success for code it never ran:
+Then run the tests for the apps this branch touched. Compare against $ARGUMENTS if a base branch
+was given, otherwise `staging`; a reviewer checking a PR into another branch passes that PR's base,
+so the labels come from the same comparison as the diff being read. Work out which apps from
+**both** the committed and the uncommitted changes — a second app edited after the last commit is
+still about to ship, and a gate that misses it reports success for code it never ran:
 
 ```powershell
-git diff --name-only staging...HEAD        # committed on this branch
+git diff --name-only <base>...HEAD        # committed on this branch, <base> = staging unless given
+```
+
+```powershell
 git status --porcelain --untracked-files=all   # staged, unstaged and new files
 ```
 

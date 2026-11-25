@@ -12,13 +12,16 @@ Take a Break form with a note being typed), so nothing typed is lost.
 <script>
   // A refresh that started before a menu was opened can arrive while the user
   // is typing in it: drop that answer (the next refresh brings the card).
-  // Actions inside the card (their own requests) still swap.
+  // Only the card's automatic refresh is a GET; the actions inside the card
+  // (sign in, breaks, sign out, away) are POSTs and always swap, errors too.
   if (!window.wsCardSwapGuard) {
     window.wsCardSwapGuard = true;
     document.addEventListener("htmx:beforeSwap", function (event) {
-      var elt = event.detail.elt;
-      if (elt && elt.id === "workspace-card" &&
-          elt.querySelector("details[open]")) {
+      var target = event.detail.target;
+      var config = event.detail.requestConfig || {};
+      if (target && target.id === "workspace-card" &&
+          String(config.verb).toLowerCase() === "get" &&
+          target.querySelector("details[open]")) {
         event.detail.shouldSwap = false;
       }
     });

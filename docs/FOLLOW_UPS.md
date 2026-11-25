@@ -17,6 +17,7 @@ the same PR. Each row names where the evidence is, so it can be re-checked rathe
 | F-05 | The `/api/` alias is deprecated and should be dropped in a major release | Until it goes, two paths serve the same surface | `horilla_api/apps.py`, [`reference/API.md`](reference/API.md) |
 | F-06 | `pdfkit` `PYSEC-2026-2860` has no upstream fix; it is mitigated in `base.methods.generate_pdf` and ignored by ID in `pip-audit` | If pdfkit ever ships a fix, the ignore line is the reminder to take it and drop the mitigation | `.github/workflows/quality.yml` |
 | F-07 | `pg_backup/` and `dynamic_fields/` exist in the tree but are not in `INSTALLED_APPS` | Unclear whether they are abandoned or pending. Do not build on them without finding out | `horilla/settings/base.py` |
+| F-08 | **List and detail screens are not gated by the framework.** `HorillaListView` checks permissions only for its bulk-update and import controls — nothing in `dispatch` or `get_queryset`. 80 of the 138 decorated `HorillaListView` / `HorillaDetailedView` subclasses carry no `permission_required`, `manager_can_enter` or `owner_can_enter`. Many are legitimately scoped inside `get_queryset()` (ESS "my own records" screens), but **this has not been audited** | A screen over employee data with `login_required` alone is readable by any signed-in employee via its fragment URL. Worth an audit that separates deliberately-open and viewer-scoped screens from genuine gaps | `horilla_views/generic/cbv/views.py`, [`compliance/access-control.md`](compliance/access-control.md) |
 
 ## Quality
 

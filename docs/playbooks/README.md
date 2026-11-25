@@ -37,6 +37,10 @@ in this table and in [`AGENTS.md`](../../AGENTS.md#start-here-every-task-opens-i
   screenshots, no extra markdown files in the diff.
 - **CI will not check it.** The workflows run on `dev/v2.0` and `2.0`, not `staging` — so run the
   gate yourself ([`AGENTS.md` — Checks](../../AGENTS.md#checks)) or `/hr-check`.
+- **After `gh pr create`, find the real PR number.** The `bevy-automate` bot closes the new PR and
+  reopens it under the next number, commenting `PR closed and reopened in #<M>` on the original.
+  Read that comment and work against `#<M>`
+  ([`reference/ENVIRONMENTS.md`](../reference/ENVIRONMENTS.md#the-pr-number-you-open-is-not-the-pr-number-you-get)).
 - **Click-test on staging after merge.** A push to `staging` deploys to
   https://hr-portal.bevy.dev within a few minutes.
 

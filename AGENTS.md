@@ -49,7 +49,8 @@ Every change, code or docs, follows these. One line each here; the linked doc is
 editing an area a rule covers, open that rule.
 
 - [Migrations are committed](docs/compliance/migrations-are-committed.md) — a model change ships its
-  generated migration in the same PR; `makemigrations` / `migrate` never run on a server.
+  generated migration in the same PR; you never run `makemigrations` anywhere but your own machine,
+  and never `migrate` by hand on a server (the boot applies them).
 - [Protected paths](docs/compliance/protected-paths.md) — infra, settings, auth, permission checks,
   payroll calculation and `.github/` change only when the task names the file.
 - [Secrets and server access](docs/compliance/secrets-and-server-access.md) — no `.env`, dumps,

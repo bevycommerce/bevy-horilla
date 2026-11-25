@@ -68,21 +68,49 @@ employee row. An impossible transition is a friendly no-op, not an error page.
 
 ## The safe correction sequence
 
-`attendance/views/requests.py::approve_validate_attendance_request()` is the reference
-implementation. Copy its order:
+**The reference implementation is `HorillaAdapter.correct_times()` in
+`workspace_attendance/adapters/horilla.py`**, reached from `correct_times()` in
+`workspace_attendance/services.py`. Read it before writing a correction path.
 
-1. Update `attendance_clock_in` / `attendance_clock_out` and their dates.
-2. Sync the matching `AttendanceActivity` — the first activity's start, the last activity's end.
-   Break segments in between are **preserved**.
-3. Recompute worked hours from the activity sum.
-4. Run `overtime_calculation()`, then `late_come()` and `early_out()`.
-5. Set validation per the policy above.
-6. Save, so the signals update `WorkRecords`.
+Do **not** copy `attendance/views/requests.py::approve_validate_attendance_request()`. It is HR's
+approval path, not a correction reference: its `AttendanceActivity` sync is gated on
+`attendance_clock_out is None or attendance_clock_out_date is None`, so for a **completed** day it
+skips the activity sync entirely, it only ever touches the activity's `clock_in` side, and it does
+not recompute worked hours from the activity sum. Copying it leaves activity rows out of step with
+the corrected clock times.
 
-Constraints on Fix My Times: within `WORKSPACE_CORRECTION_WINDOW_DAYS` (30) calendar days, no future
-times, sign-out after sign-in (night shifts follow Horilla's own date rules), and a correction that
-would cut through an existing break is **rejected with a message that says so**. It does not create
-or touch a Horilla attendance request.
+What the adapter actually does, in order:
+
+1. **Refuse early.** A day with a pending attendance request (`is_validate_request`) is refused —
+   cancel the request first. So is a day with an open break.
+2. **Resolve the shift** the day was recorded under (a brand-new day uses the employee's current
+   shift), and derive the night-shift window from it. Night shifts place an overnight sign-out on the
+   next calendar date while `work_date` stays the shift date.
+3. **Edit the ends, not the middle.** The **first** activity's `clock_in` and the **last**
+   activity's `clock_out` are updated; the break segments between them are untouched. A missing day
+   creates the `Attendance` plus one activity; an `Attendance` with no activities (an import) gets
+   one rebuilt from the row.
+4. **Re-read the activities in order**, then set `attendance_clock_in` from the first and
+   `attendance_clock_out` from the last — or `None` when the last activity is still open.
+5. **Sum worked hours across every closed activity** and store it with `format_time()`. This is the
+   step the HR approval path does not have.
+6. **Recompute `overtime_calculation()` — and refuse the whole correction** if HR has already
+   approved overtime for that day and the new amount would differ (`code="overtime_approved"`, the
+   transaction rolls back). A self-correction must never change an approved amount payroll will pay.
+7. **Recompute late / early flags without destroying penalties**: delete only the
+   `AttendanceLateComeEarlyOut` rows that have no `penaltyaccounts_set`, then re-run `late_come()`
+   and `early_out()`. A flag that already carries a penalty survives.
+8. Save, so the signals update `WorkRecords`.
+
+Validation is applied by the **service**, not the adapter: `services.correct_times()` calls
+`adapter.mark_valid_for_payroll()` only when `WORKSPACE_AUTO_VALIDATE` is on **and**
+`attendance_clock_out is not None`. An open day is never marked valid.
+
+Other constraints on Fix My Times: within `WORKSPACE_CORRECTION_WINDOW_DAYS` (30) calendar days and
+not in the future — both checked for new corrections only, so a retry after midnight still replays a
+correction saved before midnight. Sign-out must be after sign-in, and a new sign-in must fall before
+the first break or sign-out ("Sign in must be before your first break or sign out"). It does not
+create or touch a Horilla attendance request.
 
 ## Time zones
 

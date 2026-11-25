@@ -24,6 +24,22 @@ broken portal, and there is no CI in front of it.
 (`dev/v2.0`, `[ADD] APP:` commit tags). They do not apply to work here —
 [`AGENTS.md` — Defaults](../../AGENTS.md#defaults) does.
 
+## The PR number you open is not the PR number you get
+
+The `bevy-automate` bot **closes every new PR and reopens it under the next number**, leaving a
+comment on the original: `PR closed and reopened in #<M>`. Observed on #19→#20, #21→#22 and
+#23→#24.
+
+So after `gh pr create`:
+
+```powershell
+gh pr view <n> --repo bevycommerce/bevy-horilla --comments
+```
+
+Read the bot's comment for the new number, and work against that PR from then on — reviews,
+comments and labels on the closed one go nowhere. Anything you set at create time (labels,
+reviewers, assignees) may not carry over, so re-apply it on the reopened PR.
+
 ## How a deploy happens
 
 1. A PR merges into `staging`.

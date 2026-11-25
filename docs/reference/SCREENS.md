@@ -29,6 +29,7 @@ points at it, and the nav view's `search_swap_target` names the container to swa
 
 ```python
 @method_decorator(login_required, name="dispatch")
+@method_decorator(permission_required("myapp.view_shiftswaprequest"), name="dispatch")
 class SwapListView(HorillaListView):
     model = ShiftSwapRequest
     filter_class = SwapFilter
@@ -79,6 +80,15 @@ The class body is evaluated once at import time and has no request.
 
 Override `get_queryset()` to scope rows — and scope by the real relationship, not by a URL
 parameter the user could change.
+
+**The generic does not gate the read.** `HorillaListView` checks permissions only for the
+bulk-update and import *controls* (`bulk_update_accessibility`, `import_accessibility`) — there is no
+check in `dispatch` or `get_queryset`. With `login_required` alone, any signed-in employee can read
+the list by requesting its URL directly; it is a fragment route, so no page shell hides it. Stack
+`permission_required("<app>.view_<model>")` as above (`asset/cbv/asset.py` is the in-tree example),
+or scope `get_queryset()` to the viewer for a deliberately "my own records" screen. The holidays
+example below has no view permission because public holidays are not restricted — do not copy that
+for employee data.
 
 ## HorillaNavView
 
@@ -208,6 +218,8 @@ Write no JavaScript that fetches JSON and renders rows. Swap server-rendered HTM
 ## Checklist for a new screen
 
 - [ ] Routes for shell, nav, list, form, detail — each named, each decorated
+- [ ] A **view permission** on the list and detail views, not just `login_required` — the generics do
+      not gate the read
 - [ ] Permission on every view; the screen hides or disables what the user may not use
 - [ ] `filter_class` subclassing `HorillaFilterSet`; large FK fields behind `ajax_fields`
 - [ ] Form subclassing `base.forms`; `form_valid` returns `self.HttpResponse()`

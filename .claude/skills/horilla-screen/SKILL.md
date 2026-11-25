@@ -55,6 +55,7 @@ Add them to `<app>/urls.py`. If the app mounts its own routes, that happens in `
 
 ```python
 @method_decorator(login_required, name="dispatch")
+@method_decorator(permission_required("myapp.view_shiftswaprequest"), name="dispatch")
 class SwapListView(HorillaListView):
     model = ShiftSwapRequest
     filter_class = SwapFilter
@@ -68,6 +69,16 @@ class SwapListView(HorillaListView):
         if self.request.user.has_perm("myapp.change_shiftswaprequest"):
             self.action_method = "swap_actions"
 ```
+
+**`HorillaListView` does not gate the read.** It checks permissions only for the bulk-update and
+import *controls* (`bulk_update_accessibility`, `import_accessibility`); there is no permission check
+in `dispatch` or `get_queryset`. So `login_required` alone means **any signed-in employee can read
+the list**, including by hitting the list URL directly — it is a fragment route, so there is no page
+shell to hide behind. Gate it with `permission_required` as above, the way `asset/cbv/asset.py`
+does, or scope `get_queryset()` to the viewer when the screen is deliberately "my own records".
+
+`base/cbv/holidays.py` — the worked example — has no view-permission decorator, because public
+holidays are not restricted. Do not copy that part for anything holding employee data.
 
 The rules that are easy to get wrong:
 
@@ -124,6 +135,8 @@ Write no JavaScript that fetches JSON and renders rows. Swap server-rendered HTM
 ## Step 7 — the checklist
 
 - [ ] Routes for shell, nav, list, form, detail — each named, each decorated
+- [ ] **A view permission on the list and detail views**, not just `login_required` — the generics do
+      not gate the read. Or a `get_queryset()` scoped to the viewer for an "my own records" screen
 - [ ] Permission on **every** view; the screen hides or disables what the user may not use, with its
       reason when disabled
 - [ ] Fragment routes guarded with `hx_request_required`
@@ -151,4 +164,5 @@ Write no JavaScript that fetches JSON and renders rows. Swap server-rendered HTM
 | Two sidebar items highlighted | Missing or overlapping `match_prefixes` |
 | Filter page slow, or the browser hangs | A large FK rendered as `<option>` tags instead of `ajax_fields` |
 | Company's rows leaking | Model left with the default manager (`docs/compliance/company-scoping.md`) |
+| Any signed-in employee can read a restricted list | `login_required` without `permission_required`; the generics do not gate the read |
 | Columns show raw values or blank | The `columns` tuple names a field that does not exist, or a method not on the model |

@@ -39,8 +39,12 @@ Steps:
 
 Rules:
 
-- Never run `makemigrations` or `migrate` against a server.
+- Never run `makemigrations` anywhere but this machine, and never run `migrate` by hand against a
+  server — the boot applies migrations, and that automated step is the only thing that should.
 - Never edit or delete a migration already applied on staging — add a new one.
+- Rename a generated migration only if nothing references it yet. If another migration lists it in
+  `dependencies`, rename both sides in the same commit or leave the name alone: a dangling
+  dependency makes the graph unloadable.
 - Do not reformat the file. `migrations/` is excluded from `black`, `isort`, `ruff` and the
   whitespace hooks deliberately.
 - A data migration that touches employee or payroll rows is reversible, or its docstring says why

@@ -35,12 +35,17 @@ task.
 
 ## During
 
-- Merge with renormalisation — `.gitattributes` normalises line endings, and a branch created before
-  that landed conflicts on *every line* of any file whose endings changed:
+- Merge **the ref that was approved in Before**, with renormalisation — `.gitattributes` normalises
+  line endings, and a branch created before that landed conflicts on *every line* of any file whose
+  endings changed:
 
   ```powershell
-  git merge -Xrenormalize upstream/2.0
+  git merge -Xrenormalize <approved-ref>    # e.g. upstream/2.0, or a release tag
   ```
+
+  Merging a different ref than the one approved can leave the requested changes absent while every
+  check still passes, so confirm `git log --oneline HEAD..<approved-ref>` is the range you described
+  before merging.
 
   A conflict that survives that is a genuine content conflict. `git diff --ignore-cr-at-eol` shows
   the real difference when a diff looks far larger than the change.

@@ -10,10 +10,13 @@ implements is `WORKSPACE_IMPLEMENTATION_PLAN.md` (sections 3 and 5).
 ## Do
 
 - Go through Horilla's own functions for every time change:
-  `clock_in_attendance_and_activity()` / `clock_out_attendance_and_activity()`, and the correction
-  sequence that `attendance/views/requests.py::approve_validate_attendance_request()` demonstrates
-  (update fields, sync the matching `AttendanceActivity`, set validated, re-run `late_come()` and
-  `early_out()`).
+  `clock_in_attendance_and_activity()` / `clock_out_attendance_and_activity()` for sign in and out,
+  and `HorillaAdapter.correct_times()` (`workspace_attendance/adapters/horilla.py`) as the reference
+  for a correction — it edits the first and last activity, re-derives the clock fields and the
+  worked-hour sum from the activities, and recomputes overtime and the late/early flags. The full
+  sequence is in the `horilla-attendance` skill. **Not**
+  `attendance/views/requests.py::approve_validate_attendance_request()`: that is HR's approval path,
+  it skips the activity sync for a completed day, and it does not recompute worked hours.
 - Keep Workspace tables to metadata only: `WorkspaceAttendanceEvent`,
   `WorkspaceAttendanceMeta`, `AttendanceCorrectionLog`, `WorkspaceIdempotencyKey`.
 - Write a `WorkspaceAttendanceEvent` for every sign in, sign out, break start/end and correction,

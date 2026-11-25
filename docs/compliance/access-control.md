@@ -16,6 +16,11 @@ How-to and the decorator table:
   `HorillaFormView`, `AddOrChangePermissionMixin` with `add_perm` and `change_perm`.
 - Guard an HTMX fragment route with `hx_request_required` as well as its permission — a fragment URL
   is directly reachable.
+- **Put a view permission on a list or detail screen.** The `horilla_views` generics do not check one:
+  `HorillaListView` gates only the bulk-update and import controls, not `dispatch` or `get_queryset`.
+  `login_required` alone means any signed-in employee can read the rows by requesting the list URL.
+  Stack `permission_required("<app>.view_<model>")`, or scope `get_queryset()` to the viewer when the
+  screen is deliberately "my own records".
 - Build permission-dependent toolbar entries inside `__init__`, behind `request.user.has_perm(...)`.
   The class body runs once at import time and has no request.
 - Hide or disable a control the user may not use, and say why when it is disabled. A clickable

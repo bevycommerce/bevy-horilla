@@ -19,13 +19,25 @@ python manage.py check --fail-level WARNING --tag horilla.tenancy
 python manage.py makemigrations --check --dry-run
 ```
 
-Then run the tests for the apps this branch touched. Work out which from
-`git diff --name-only staging...HEAD` — the first path segment is usually the app label. Run them in
-one command:
+Then run the tests for the apps this branch touched. Work out which from **both** the committed and
+the uncommitted changes — a second app edited after the last commit is still about to ship, and a
+gate that misses it reports success for code it never ran:
+
+```powershell
+git diff --name-only staging...HEAD        # committed on this branch
+git status --porcelain --untracked-files=all   # staged, unstaged and new files
+```
+
+The first path segment of each result is usually the app label. Take the union, drop paths that are
+not app directories (`docs/`, `.claude/`, `.github/`, `static/`, `templates/`, `prototypes/`), and
+run what is left in one command:
 
 ```powershell
 python manage.py test <label> <label>
 ```
+
+If the union is empty — a docs-only or config-only change — say so rather than reporting that tests
+passed.
 
 Do **not** run `make test-smoke` or `make test-cov` unless asked; they take many minutes.
 

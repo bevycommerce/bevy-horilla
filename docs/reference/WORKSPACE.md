@@ -61,16 +61,36 @@ The whole policy is one switch, `WORKSPACE_AUTO_VALIDATE`, so it is not scattere
 ## Fix My Times
 
 Employees correct their own times within `WORKSPACE_CORRECTION_WINDOW_DAYS` calendar days. No future
-times; sign-out after sign-in (night shifts follow Horilla's own date rules).
+times; sign-out after sign-in (night shifts follow Horilla's own date rules). The window and
+future checks run for **new** corrections only, so a retry after midnight still replays a correction
+saved before midnight.
 
-- **Existing record:** update `attendance_clock_in` / `out` and their dates, the first activity's
-  start and the last activity's end. Break segments in between are preserved, and a correction that
-  would cut through an existing break is rejected with a message that says so.
+`services.correct_times()` wraps the policy; `HorillaAdapter.correct_times()`
+(`workspace_attendance/adapters/horilla.py`) does the work and is the implementation to read:
+
+- **Refused outright:** a day with a pending attendance request (cancel it first), or a day with an
+  open break (end it first).
+- **Existing record:** the **first** activity's `clock_in` and the **last** activity's `clock_out`
+  are updated; break segments between them are untouched. A new sign-in must fall before the first
+  break or sign-out, or it is rejected with that message.
 - **Missing record:** create the `Attendance` plus one `AttendanceActivity` using the adapter's
-  shift lookup.
-- Then recompute: worked hours from the activity sum, `overtime_calculation()`, `late_come()`,
-  `early_out()`, validation per the policy above, and save so the signals update `WorkRecords`.
+  shift lookup. An `Attendance` with no activities (an import) gets one rebuilt from the row.
+- **Then re-derive from the activities**, not from the input: clock in/out from the first and last,
+  worked hours as the sum over every closed activity, then `overtime_calculation()`.
+- **Refused if HR already approved overtime** for that day and the recomputed amount would differ
+  (`code="overtime_approved"`) — the whole correction rolls back, so a self-correction can never
+  change an approved amount payroll will pay.
+- **Late / early flags** are recomputed, but a flag that already carries a penalty is kept: only
+  `AttendanceLateComeEarlyOut` rows with no `penaltyaccounts_set` are deleted before re-running
+  `late_come()` and `early_out()`.
+- **Validation** is the service's call, not the adapter's: `mark_valid_for_payroll()` runs only when
+  `WORKSPACE_AUTO_VALIDATE` is on **and** `attendance_clock_out is not None`. An open day is never
+  marked valid.
 - It does **not** create or touch a Horilla attendance request. Fix My Times is not a request flow.
+
+Do not take `attendance/views/requests.py::approve_validate_attendance_request()` as the correction
+reference. It is HR's approval path: its activity sync only runs when the clock-out is missing, it
+touches the `clock_in` side only, and it does not recompute worked hours from the activities.
 
 ## Settings
 

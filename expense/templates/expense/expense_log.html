@@ -26,36 +26,63 @@
             <div><span style="color: #888">{% trans "Total amount" %}:</span> <strong>{{ total }}</strong></div>
         </div>
 
-        <div style="overflow-x: auto; border: 1px solid #ebebeb; border-radius: 6px">
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px">
+        <style>
+            .exp-log-box { overflow-x: auto; border: 1px solid #ebebeb; border-radius: 6px; }
+            .exp-log { width: 100%; border-collapse: collapse; font-size: 13px; }
+            .exp-log th { padding: 10px 12px; background: #f5f5f5; text-align: left; }
+            .exp-log td { padding: 10px 12px; border-top: 1px solid #ebebeb; overflow-wrap: anywhere; }
+            .exp-log .exp-log-desc { max-width: 300px; }
+            .exp-log .exp-log-amount { font-variant-numeric: tabular-nums; }
+            .exp-log .exp-log-proof a { display: block; color: #e9910d; }
+            .exp-log .exp-log-empty { padding: 24px; text-align: center; color: #888; }
+            /* Phones (HR review 2026-11-25): one card per expense instead of a wide table */
+            @media (max-width: 640px) {
+                .exp-log-box { overflow-x: visible; border: 0; }
+                .exp-log thead { display: none; }
+                .exp-log, .exp-log tbody, .exp-log tr, .exp-log td { display: block; width: 100%; }
+                .exp-log tr { margin-bottom: 12px; padding: 6px 12px; border: 1px solid #ebebeb; border-radius: 8px; }
+                .exp-log td { display: flex; gap: 12px; padding: 6px 0; border-top: 0; }
+                .exp-log td + td { border-top: 1px solid #f2f2f2; }
+                .exp-log td::before { content: attr(data-label); flex: 0 0 96px; color: #888; }
+                .exp-log td.exp-log-name { font-weight: 600; }
+                .exp-log td.exp-log-name::before { content: none; }
+                .exp-log .exp-log-desc { max-width: none; }
+                .exp-log td.exp-log-empty { display: block; }
+                .exp-log td.exp-log-empty::before { content: none; }
+            }
+        </style>
+        <div class="exp-log-box">
+            <table class="exp-log">
                 <thead>
-                    <tr style="background: #f5f5f5; text-align: left">
-                        {% if can_view_all %}<th style="padding: 10px 12px">{% trans "Employee" %}</th>{% endif %}
-                        <th style="padding: 10px 12px">{% trans "Expense Date" %}</th>
-                        <th style="padding: 10px 12px">{% trans "Vendor / Company" %}</th>
-                        <th style="padding: 10px 12px">{% trans "Description" %}</th>
-                        <th style="padding: 10px 12px">{% trans "Amount" %}</th>
-                        <th style="padding: 10px 12px">{% trans "Proof" %}</th>
-                        <th style="padding: 10px 12px">{% trans "Submitted" %}</th>
+                    <tr>
+                        {% if can_view_all %}<th>{% trans "Employee" %}</th>{% endif %}
+                        <th>{% trans "Expense Date" %}</th>
+                        <th>{% trans "Vendor / Company" %}</th>
+                        <th>{% trans "Description" %}</th>
+                        <th>{% trans "Amount" %}</th>
+                        <th>{% trans "Proof" %}</th>
+                        <th>{% trans "Submitted" %}</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for row in rows %}
-                        <tr style="border-top: 1px solid #ebebeb">
-                            {% if can_view_all %}<td style="padding: 10px 12px">{{ row.employee }}</td>{% endif %}
-                            <td style="padding: 10px 12px">{{ row.expense_date|date:"d M Y" }}</td>
-                            <td style="padding: 10px 12px">{{ row.vendor }}</td>
-                            <td style="padding: 10px 12px; max-width: 300px">{{ row.description }}</td>
-                            <td style="padding: 10px 12px; font-variant-numeric: tabular-nums">{{ row.amount }}</td>
-                            <td style="padding: 10px 12px">
-                                {% for proof in row.proofs %}
-                                    <a href="{{ proof.file.url }}" target="_blank" rel="noopener" style="display: block; color: #e9910d">{{ proof.original_name }}</a>
-                                {% empty %}-{% endfor %}
+                        <tr>
+                            {% if can_view_all %}<td class="exp-log-name" data-label="{% trans 'Employee' %}">{{ row.employee }}</td>{% endif %}
+                            <td data-label="{% trans 'Expense Date' %}">{{ row.expense_date|date:"d M Y" }}</td>
+                            <td data-label="{% trans 'Vendor / Company' %}">{{ row.vendor }}</td>
+                            <td class="exp-log-desc" data-label="{% trans 'Description' %}">{{ row.description }}</td>
+                            <td class="exp-log-amount" data-label="{% trans 'Amount' %}">{{ row.amount }}</td>
+                            <td class="exp-log-proof" data-label="{% trans 'Proof' %}">
+                                <div>
+                                    {% for proof in row.proofs %}
+                                        <a href="{{ proof.file.url }}" target="_blank" rel="noopener">{{ proof.original_name }}</a>
+                                    {% empty %}-{% endfor %}
+                                </div>
                             </td>
-                            <td style="padding: 10px 12px">{{ row.created_at|date:"d M Y H:i" }}</td>
+                            <td data-label="{% trans 'Submitted' %}">{{ row.created_at|date:"d M Y H:i" }}</td>
                         </tr>
                     {% empty %}
-                        <tr><td colspan="7" style="padding: 24px; text-align: center; color: #888">{% trans "No expenses found for this period." %}</td></tr>
+                        <tr><td colspan="7" class="exp-log-empty">{% trans "No expenses found for this period." %}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

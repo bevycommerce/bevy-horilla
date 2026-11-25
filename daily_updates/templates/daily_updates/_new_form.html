@@ -2,6 +2,7 @@
 <form hx-post="{% url 'daily-updates-submit' %}" hx-target="#du-day" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="date" value="{{ work_date|date:'Y-m-d' }}" />
     <input type="hidden" name="type" value="{{ form_type }}" />
+    {% if regular %}<input type="hidden" name="regular" value="1" />{% endif %}
     <div class="du-field">
         <label for="du-{{ form_type }}-summary">{{ prompt }}</label>
         <textarea class="du-textarea" id="du-{{ form_type }}-summary" name="summary" maxlength="5000" required>{{ values.summary }}</textarea>

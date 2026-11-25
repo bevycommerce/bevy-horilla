@@ -40,3 +40,17 @@ def make_workspace_employee(username="ws_emp", company=None, shift=None, enable_
         last_name="Tester",
     )
     return company, shift, user, employee
+
+
+def make_forgotten_sign_out(employee, day, user):
+    """A past day signed in at 09:00 with no sign out (via Fix My Times, then cleared)."""
+    from attendance.models import Attendance, AttendanceActivity
+    from workspace_attendance import services
+
+    services.correct_times(employee, day, time(9, 0), time(17, 0), user, "web")
+    AttendanceActivity.objects.filter(employee_id=employee, attendance_date=day).update(
+        clock_out=None, clock_out_date=None, out_datetime=None
+    )
+    Attendance.objects.filter(employee_id=employee, attendance_date=day).update(
+        attendance_clock_out=None, attendance_clock_out_date=None
+    )

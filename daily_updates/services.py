@@ -141,10 +141,11 @@ def submit_update(employee, work_date, update_type, fields, source, key=""):
     _check_source(source)
     if update_type not in TYPES:
         raise WorkspaceError(_("Unknown update type."), code="bad_type")
-    _check_work_date(work_date)
     cleaned = _clean_fields(fields)
 
     def do():
+        # checked inside the callback so a retry after midnight still replays
+        _check_work_date(work_date)
         with transaction.atomic():
             _lock_employee(employee)
             existing = set(
@@ -186,8 +187,12 @@ def submit_update(employee, work_date, update_type, fields, source, key=""):
 
 
 def edit_update(employee, update_id, fields, source, actor, key=""):
+    """
+    Save new text for one of the employee's updates. A field missing from
+    ``fields`` keeps its current value (so an API PATCH may send only what
+    changed); a field sent as "" clears it.
+    """
     _check_source(source)
-    cleaned = _clean_fields(fields)
 
     def do():
         with transaction.atomic():
@@ -195,7 +200,15 @@ def edit_update(employee, update_id, fields, source, actor, key=""):
             update = DailyUpdate.objects.select_for_update().filter(pk=update_id).first()
             if update is None or update.employee_id != employee.pk:
                 # same answer for "missing" and "someone else's": no information leak
-                raise WorkspaceError(_("Update not found."), code="not_found", status=404)
+                raise WorkspaceError(
+                    _("Update not found."), code="not_found", status=404
+                )
+            cleaned = _clean_fields(
+                {
+                    f: fields[f] if f in fields else getattr(update, f)
+                    for f in TEXT_FIELDS
+                }
+            )
             if all(getattr(update, f) == cleaned[f] for f in TEXT_FIELDS):
                 return 200, {"ok": True, "message": _("Nothing changed."), "update": serialize_update(update)}
             DailyUpdateRevision.objects.create(
@@ -218,10 +231,12 @@ def edit_update(employee, update_id, fields, source, actor, key=""):
 
 def delete_update(employee, update_id, source, key=""):
     """
-    Owner rule (2026-11-11): the employee may delete their own update, and
-    nothing of it is kept anywhere: the update, its edit history (cascade)
-    and any stored idempotent answers that contain its text are removed.
-    The type can then be sent again for that day.
+    The employee may delete their own update, and
+    nothing of it is kept anywhere: the update and its edit history (cascade)
+    are removed, and stored idempotent answers that contain its text are
+    replaced with a short "deleted" answer. The keys themselves stay, so an
+    old retry can never send the deleted text again; a new submission with a
+    new key can send that type again for the day.
     """
     _check_source(source)
 
@@ -233,12 +248,16 @@ def delete_update(employee, update_id, source, key=""):
                 raise WorkspaceError(_("Update not found."), code="not_found", status=404)
             work_date = update.work_date
             update.delete()  # revisions go with it (on_delete=CASCADE)
-            WorkspaceIdempotencyKey.objects.filter(employee=employee).filter(
+            for stored in WorkspaceIdempotencyKey.objects.filter(
+                employee=employee
+            ).filter(
                 Q(response__update__id=update_id)
                 | Q(response__day__midday__id=update_id)
                 | Q(response__day__eod__id=update_id)
                 | Q(response__day__combined__id=update_id)
-            ).delete()
+            ):
+                stored.response = _redact(stored.response, update_id)
+                stored.save(update_fields=["response"])
             return 200, {
                 "ok": True,
                 "message": _("Update deleted."),
@@ -249,13 +268,35 @@ def delete_update(employee, update_id, source, key=""):
     return run_idempotent(employee, key, "update_delete", do)
 
 
+def _redact(response, update_id):
+    """A stored answer with the deleted update's content taken out."""
+    response = dict(response)
+    if (response.get("update") or {}).get("id") == update_id:
+        response["update"] = None
+        response["deleted_id"] = update_id
+    day = response.get("day")
+    if isinstance(day, dict):
+        day = dict(day)
+        for part in (MIDDAY, EOD, COMBINED):
+            if (day.get(part) or {}).get("id") == update_id:
+                day[part] = None
+                if part == MIDDAY:
+                    # carry_forward is copied from the Midday "ongoing" text
+                    day["carry_forward"] = ""
+        response["day"] = day
+    return response
+
+
 def skip_midday(employee, work_date, choice, source, key=""):
     _check_source(source)
     if choice not in (MiddaySkip.LATER, MiddaySkip.COMBINE):
-        raise WorkspaceError(_("Choose Write later or Combine with End of Day."), code="bad_choice")
-    _check_work_date(work_date)
+        raise WorkspaceError(
+            _("Choose Write later or Combine with End of Day."), code="bad_choice"
+        )
 
     def do():
+        # checked inside the callback so a retry after midnight still replays
+        _check_work_date(work_date)
         with transaction.atomic():
             _lock_employee(employee)
             state = day_state(employee, work_date)
@@ -279,7 +320,10 @@ def skip_midday(employee, work_date, choice, source, key=""):
     return run_idempotent(employee, key, f"skip_{choice}", do)
 
 
-def update_history(update):
+def update_history(update, revisions=None):
+    """Earlier versions, newest first. Pass ``revisions`` to reuse an already loaded list."""
+    if revisions is None:
+        revisions = list(update.revisions.all())
     return [
         {
             "revision": r.revision_number,
@@ -290,7 +334,7 @@ def update_history(update):
             "content_submitted_at": timezone.localtime(r.content_submitted_at).isoformat(),
             "replaced_at": timezone.localtime(r.replaced_at).isoformat(),
         }
-        for r in update.revisions.all()
+        for r in revisions
     ]
 
 

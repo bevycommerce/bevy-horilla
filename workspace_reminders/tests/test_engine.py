@@ -13,7 +13,10 @@ from daily_updates import services as updates
 from daily_updates.models import COMBINED, EOD, MIDDAY, MiddaySkip
 from horilla.testkit.factories import make_leave_request, make_leave_type
 from workspace_attendance import services as ws
-from workspace_attendance.tests.helpers import make_workspace_employee
+from workspace_attendance.tests.helpers import (
+    make_forgotten_sign_out,
+    make_workspace_employee,
+)
 from workspace_reminders import engine
 from workspace_reminders.models import ReminderDelivery, ReminderSnooze
 
@@ -190,7 +193,7 @@ class ReminderEngineTests(TestCase):
         self.signed_in_at_nine()
         self.assertEqual([a["kind"] for a in engine.pending_actions(self.employee, at(14, 0))], ["midday"])
         yesterday = timezone.localdate() - timedelta(days=1)
-        ws.correct_times(self.employee, yesterday, time(9, 0), None, self.user, "web")
+        make_forgotten_sign_out(self.employee, yesterday, self.user)
         actions = engine.pending_actions(self.employee, at(8, 0))
         self.assertIn("fix_sign_out", [a["kind"] for a in actions])
 

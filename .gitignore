@@ -157,9 +157,17 @@ whoosh_index/
 #macOS
 .DS_Store
 
-# Claude Code (never commit AI tooling configs to public repo)
-.claude/
-CLAUDE.md
+# Claude Code / agent tooling.
+#
+# The shared agent docs ARE committed in this fork: AGENTS.md is the router,
+# CLAUDE.md is a one-line import of it, and .claude/commands + .claude/skills
+# are the repo's own slash commands and skills. Ignoring them meant every
+# developer re-derived the same workflow, which is what docs/ exists to stop.
+# Personal and machine-local config stays ignored.
+.claude/*
+!.claude/commands/
+!.claude/skills/
+.claude/settings.local.json
 .mcp.json
 .mcp.safe.json
 .claudeignore

@@ -12,5 +12,12 @@
         <button type="submit" class="ws-btn">{% trans "Save" %}</button>
     </form>
     {% if row.message %}<div class="ws-note ws-note--ok" role="status">{{ row.message }}</div>{% endif %}
-    {% if row.error %}<div class="ws-note ws-note--error" role="alert">{{ row.error }}</div>{% endif %}
+    {% if row.error %}
+        <div class="ws-note ws-note--error" role="alert">
+            {{ row.error }}
+            {% if row.error_code == "update_required" and row.date %}
+                <a href="{% url 'daily-updates' %}?date={{ row.date|date:'Y-m-d' }}">{% trans "Write the update for this day" %}</a>
+            {% endif %}
+        </div>
+    {% endif %}
 </div>

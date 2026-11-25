@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
@@ -16,6 +16,7 @@ from .helpers import make_workspace_employee
 BASE = "/api/workspace/v1/"
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class WorkspaceAPITests(TestCase):
     @classmethod
     def setUpTestData(cls):

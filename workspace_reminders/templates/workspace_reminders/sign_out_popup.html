@@ -1,0 +1,39 @@
+{% load i18n %}
+{% include "workspace_reminders/_popup_style.html" %}
+<div class="wsp-overlay" role="dialog" aria-modal="true" aria-labelledby="wsp-title">
+  <div class="wsp-box">
+    {% if done %}
+      <div class="wsp-note wsp-note--ok" role="status">{{ message }}</div>
+      <div class="wsp-actions">
+        <button type="button" class="wsp-btn" onclick="document.getElementById('ws-popup-host').innerHTML='';">{% trans "Close" %}</button>
+      </div>
+      <script>setTimeout(function () { var h = document.getElementById("ws-popup-host"); if (h) h.innerHTML = ""; }, 4000);</script>
+    {% else %}
+      <div class="wsp-top">
+        <div>
+          {% if combined %}
+            <h2 class="wsp-title" id="wsp-title">{% trans "Send your Midday + End of Day update to sign out" %}</h2>
+            <p class="wsp-sub">{% trans "You have not sent an update today. Write one note about your whole day. You are signed out as soon as it is sent." %}</p>
+          {% else %}
+            <h2 class="wsp-title" id="wsp-title">{% trans "Send your End of Day update to sign out" %}</h2>
+            <p class="wsp-sub">{% trans "Write what you did since your Midday update. You are signed out as soon as it is sent." %}</p>
+          {% endif %}
+        </div>
+        <button type="button" class="wsp-x" title="{% trans 'Close (you stay signed in)' %}"
+                onclick="document.getElementById('ws-popup-host').innerHTML='';">&times;</button>
+      </div>
+      <form hx-post="{% url 'ws-sign-out-update' %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="work_date" value="{{ work_date|date:'Y-m-d' }}" />
+        <input type="hidden" name="latitude" class="ws-lat" />
+        <input type="hidden" name="longitude" class="ws-lng" />
+        <textarea name="summary" class="wsp-text" maxlength="5000" required placeholder="{% trans 'For example: Finished the reports, tomorrow I will start the review.' %}">{{ text }}</textarea>
+        {% if error %}<div class="wsp-note wsp-note--error" role="alert">{{ error }}{% if error_code == "location_restricted" %}<br />{% trans "Please allow location access in your browser, then try again." %}{% endif %}</div>{% endif %}
+        <div class="wsp-actions">
+          <button type="submit" class="wsp-btn wsp-btn--primary">{% trans "Send update and Sign Out" %}</button>
+        </div>
+      </form>
+      <p class="wsp-hint">{% trans "If you close this box, you stay signed in." %}</p>
+      {% include "workspace_reminders/_popup_location.html" %}
+    {% endif %}
+  </div>
+</div>

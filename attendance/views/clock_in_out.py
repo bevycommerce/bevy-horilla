@@ -574,6 +574,20 @@ def clock_out(request):
         # Hold the employee lock from ending a break through the check-out, so a
         # Workspace break cannot start in between; read the time after the lock.
         _lock_employee_row(employee)
+        if not request.__dict__.get("datetime"):
+            # HR rule 2026-11-25: no sign out without the day's last update.
+            # The portal then opens the update box (workspace_reminders popup).
+            from workspace_attendance import services as workspace
+            from workspace_attendance.views import SIGN_OUT_POPUP_FLAG
+
+            state = workspace.get_state(employee)
+            if state["status"] in ("working", "away", "on_break"):
+                needed = workspace.required_update(employee, state["work_date"])
+                if needed:
+                    error = workspace.update_required_error(state["work_date"], needed)
+                    messages.error(request, error.message)
+                    request.session[SIGN_OUT_POPUP_FLAG] = True
+                    return HorillaRedirect(request)
         datetime_now = timezone.localtime()
         if request.__dict__.get("datetime"):
             datetime_now = request.datetime

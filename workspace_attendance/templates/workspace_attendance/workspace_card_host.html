@@ -7,7 +7,7 @@ Take a Break form with a note being typed), so nothing typed is lost.
 {% endcomment %}
 <div id="workspace-card"
      hx-get="{% url 'workspace-card' %}"
-     hx-trigger="load, every 60s[!document.querySelector('#workspace-card details[open]')], visibilitychange[document.visibilityState === 'visible' && !document.querySelector('#workspace-card details[open]')] from:document"
+     hx-trigger="load, every 60s[!document.querySelector('#workspace-card details[open]')], visibilitychange[document.visibilityState === 'visible' && !document.querySelector('#workspace-card details[open]')] from:document, wsCardRefresh from:body"
      hx-swap="innerHTML"></div>
 <script>
   // A refresh that started before a menu was opened can arrive while the user

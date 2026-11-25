@@ -113,6 +113,11 @@ class MiddayPopupTests(TestCase):
 
     def test_sign_out_from_popup(self):
         delivery = self.make_due()
+        # no update yet today: the box asks for the last update instead
+        response = self.client.post(reverse("ws-midday-popup-sign-out", args=[delivery.pk]), **HX)
+        self.assertContains(response, "Send your Midday + End of Day update to sign out")
+        self.assertEqual(ws.get_state(self.employee)["status"], "working")
+        DailyUpdate.objects.create(employee=self.employee, work_date=timezone.localdate(), update_type="combined", summary="Done")
         with mock.patch("workspace_attendance.adapters.horilla.HorillaAdapter.check_allowed"):
             self.client.post(reverse("ws-midday-popup-sign-out", args=[delivery.pk]), **HX)
         self.assertEqual(ws.get_state(self.employee)["status"], "signed_out")

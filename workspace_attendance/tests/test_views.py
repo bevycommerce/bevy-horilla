@@ -3,7 +3,7 @@
 from datetime import time, timedelta
 
 from django.template.loader import render_to_string
-from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -92,6 +92,7 @@ class CardRenderTests(CardTestBase):
         self.assertIn("Take a Break", html)
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class CardActionTests(CardTestBase):
     def test_sign_in_shows_working(self):
         response = self.post("workspace-sign-in")
@@ -163,6 +164,7 @@ class CardActionTests(CardTestBase):
         self.assertContains(response, "Working")
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class FixTimesTests(CardTestBase):
     def day(self, n):
         return timezone.localdate() - timedelta(days=n)
@@ -239,6 +241,7 @@ class FixTimesTests(CardTestBase):
         self.assertNotEqual(response.status_code, 500)
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class CardHostTests(CardTestBase):
     def test_host_refreshes_card_periodically(self):
         html = render_to_string("workspace_attendance/workspace_card_host.html")

@@ -1,0 +1,21 @@
+{% comment %}
+Fills the hidden latitude/longitude fields of the box's forms when the browser
+already allows location (only needed when the company uses location checks),
+and asks for it after the server said the location is required.
+{% endcomment %}
+<script>
+  (function () {
+    var host = document.getElementById("ws-popup-host");
+    if (!host || !navigator.geolocation) { return; }
+    function fill(pos) {
+      host.querySelectorAll(".ws-lat").forEach(function (i) { i.value = pos.coords.latitude; });
+      host.querySelectorAll(".ws-lng").forEach(function (i) { i.value = pos.coords.longitude; });
+    }
+    function locate() { navigator.geolocation.getCurrentPosition(fill, function () {}, { maximumAge: 60000, timeout: 10000 }); }
+    if ("{{ error_code|escapejs }}" === "location_restricted") {
+      locate();
+    } else if (navigator.permissions) {
+      navigator.permissions.query({ name: "geolocation" }).then(function (r) { if (r.state === "granted") { locate(); } }).catch(function () {});
+    }
+  })();
+</script>

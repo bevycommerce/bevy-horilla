@@ -29,6 +29,7 @@ from workspace_attendance.services import WorkspaceError
 from .helpers import make_workspace_employee
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class SignInOutTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -126,6 +127,7 @@ class SignInOutTests(TestCase):
             services.sign_in(self.employee, "telepathy")
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class IdempotencyTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -238,6 +240,7 @@ class CompanyRuleTests(TestCase):
         self.assertTrue(body["changed"])
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class FixMyTimesTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -360,6 +363,7 @@ class FixMyTimesTests(TestCase):
             self.assertFalse(AttendanceLateComeEarlyOut.objects.filter(attendance_id=att, type="late_come").exists())
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class PayrollCompatibilityTests(TestCase):
     """A Workspace day must count in payroll exactly like an HR-validated day."""
 

@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, time, timedelta
 
 from django.db import connection
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from notifications.models import Notification
 
@@ -30,6 +30,7 @@ def kinds(employee):
     return sorted(ReminderDelivery.objects.filter(employee=employee).values_list("kind", "attempt"))
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class ReminderEngineTests(TestCase):
     """
     Shift 09:00-18:00: sign_in 09:00, follow-up 09:30, eod 17:30 (+18:00), sign_out 18:00 (+18:30).

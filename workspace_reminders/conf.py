@@ -33,6 +33,9 @@ DEFAULTS = {
         "sign_out": {"anchor": "end", "offset": 0, "attempts": 2, "repeat": 30},
     },
     "snooze_choices": [15, 30],
+    # HR rule 2026-11-25: the "Start your day now?" box shows on the first portal
+    # visit of a work day; closed, it comes back once after this many minutes.
+    "start_day_repeat_minutes": 30,
 }
 
 
@@ -46,6 +49,7 @@ def get():
     minutes = test_minutes()
     if minutes:
         kinds["midday"].update({"offset": minutes, "repeat": minutes, "attempts": min(1000, 24 * 60 // minutes)})
+        merged["start_day_repeat_minutes"] = minutes
     merged["kinds"] = kinds
     merged["test_minutes"] = minutes
     return merged

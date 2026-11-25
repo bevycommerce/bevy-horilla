@@ -1,0 +1,34 @@
+{% load i18n %}
+{% include "workspace_reminders/_popup_style.html" %}
+<div class="wsp-overlay" role="dialog" aria-modal="true" aria-labelledby="wsp-title">
+  <div class="wsp-box">
+    {% if done %}
+      <div class="wsp-note wsp-note--ok" role="status">{{ message }}</div>
+      <div class="wsp-actions">
+        <button type="button" class="wsp-btn" onclick="document.getElementById('ws-popup-host').innerHTML='';">{% trans "Close" %}</button>
+      </div>
+      <script>setTimeout(function () { var h = document.getElementById("ws-popup-host"); if (h) h.innerHTML = ""; }, 4000);</script>
+    {% else %}
+      <div class="wsp-top">
+        <div>
+          <h2 class="wsp-title" id="wsp-title">{% trans "Start your day now?" %}</h2>
+          <p class="wsp-sub">{% trans "Your work timer starts as soon as you click the button." %}</p>
+        </div>
+        <button type="button" class="wsp-x" title="{% trans 'Close' %}"
+                hx-post="{% url 'ws-start-day-close' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML">&times;</button>
+      </div>
+      <form hx-post="{% url 'ws-start-day' delivery.pk %}" hx-target="#ws-popup-host" hx-swap="innerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="latitude" class="ws-lat" />
+        <input type="hidden" name="longitude" class="ws-lng" />
+        {% if error %}<div class="wsp-note wsp-note--error" role="alert">{{ error }}{% if error_code == "location_restricted" %}<br />{% trans "Please allow location access in your browser, then try again." %}{% endif %}</div>{% endif %}
+        <div class="wsp-actions">
+          <button type="submit" class="wsp-btn wsp-btn--primary">{% trans "Start Your Day" %}</button>
+        </div>
+      </form>
+      <p class="wsp-hint">
+        {% if delivery.attempt == 1 %}{% blocktrans %}If you close this box, it will come back once in {{ comeback }}.{% endblocktrans %}{% else %}{% trans "You can also start your day from the My Workspace card." %}{% endif %}
+      </p>
+      {% include "workspace_reminders/_popup_location.html" %}
+    {% endif %}
+  </div>
+</div>

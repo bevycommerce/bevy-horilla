@@ -182,6 +182,37 @@ def get_state(employee):
     return get_adapter().get_state(employee)
 
 
+def required_update(employee, work_date):
+    """
+    The update type that must be sent before signing out of work_date, or None.
+
+    HR rule 2026-11-25: no sign out without the day's last update. That is the
+    End of Day update, or the Midday + End of Day combined update when no
+    Midday update was sent.
+    """
+    if not conf.get("WORKSPACE_SIGN_OUT_NEEDS_UPDATE"):
+        return None
+    from daily_updates.models import COMBINED, EOD
+    from daily_updates.services import day_state
+
+    day = day_state(employee, work_date)
+    if day["eod"] or day["combined"]:
+        return None
+    return EOD if day["midday"] else COMBINED
+
+
+def update_required_error(work_date, update_type):
+    from daily_updates.models import EOD
+
+    if update_type == EOD:
+        message = _("Please send your End of Day update for %(day)s before you sign out.")
+    else:
+        message = _("Please send your Midday + End of Day update for %(day)s before you sign out.")
+    return WorkspaceError(
+        message % {"day": work_date.strftime("%d %b %Y")}, code="update_required", status=409
+    )
+
+
 # --------------------------------------------------------------------------- actions
 def sign_in(employee, source, client_ip=None, coords=None, key=""):
     _check_source(source)
@@ -233,6 +264,9 @@ def sign_out(employee, source, client_ip=None, coords=None, key=""):
                     "message": _("You are not signed in right now."),
                     "state": serialize_state(state),
                 }
+            needed = required_update(employee, state["work_date"])
+            if needed:
+                raise update_required_error(state["work_date"], needed)
             try:
                 adapter.check_allowed(employee, client_ip=client_ip, coords=coords)
             except AttendanceActionError as error:
@@ -362,6 +396,14 @@ def correct_times(employee, work_date, sign_in_time, sign_out_time, actor, sourc
             )
         with transaction.atomic():
             _lock_employee(employee)
+            if sign_out_time is not None:
+                # adding a missing sign out also needs that day's last update
+                current = adapter.attendance_by_day(employee, work_date, work_date).get(work_date) or {}
+                needed = None if current.get("sign_out") else required_update(employee, work_date)
+                if needed:
+                    error = update_required_error(work_date, needed)
+                    error.status = 400
+                    raise error
             now = timezone.localtime()
             try:
                 attendance, changes = adapter.correct_times(employee, work_date, sign_in_time, sign_out_time, now)

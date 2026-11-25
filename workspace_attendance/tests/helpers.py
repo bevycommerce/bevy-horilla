@@ -47,7 +47,11 @@ def make_forgotten_sign_out(employee, day, user):
     from attendance.models import Attendance, AttendanceActivity
     from workspace_attendance import services
 
-    services.correct_times(employee, day, time(9, 0), time(17, 0), user, "web")
+    from django.test import override_settings
+
+    # set up through Fix My Times without the "last update before sign out" rule
+    with override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False):
+        services.correct_times(employee, day, time(9, 0), time(17, 0), user, "web")
     AttendanceActivity.objects.filter(employee_id=employee, attendance_date=day).update(
         clock_out=None, clock_out_date=None, out_datetime=None
     )

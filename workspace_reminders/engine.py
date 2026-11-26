@@ -232,16 +232,20 @@ def start_day_needed(employee, now, adapter=None):
     shift, on a work day, from 1 hour before the shift start until the shift
     end (any time when the day has no shift). The shift day is the day the
     shift starts: an overnight shift that began yesterday (22:00-06:00) still
-    counts after midnight, and a shift starting just after midnight counts
-    from 1 hour before. That day is used for the day-off check and for the
+    counts after midnight. That day is used for the day-off check and for the
     box's limits, so one shift gets one box and one repeat.
+
+    Tomorrow's shift is not offered before midnight (for example 23:45 for a
+    00:30 shift): Horilla's sign-in would record that visit on today's date
+    and could reopen today's finished attendance. From midnight on, today's
+    window applies as usual.
     """
     adapter = adapter or get_adapter()
     if adapter.get_state(employee, now)["status"] in ("working", "away", "on_break"):
         return None
     today = now.date()
     shift_day = None
-    for day in (today - timedelta(days=1), today, today + timedelta(days=1)):
+    for day in (today - timedelta(days=1), today):
         window = adapter.shift_window(employee, day)
         if window is not None and window[0] - timedelta(hours=1) <= now <= window[1]:
             shift_day = day

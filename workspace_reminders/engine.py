@@ -228,30 +228,34 @@ def start_day_needed(employee, now, adapter=None):
     """
     The shift day for which to offer "Start your day now?", or None.
 
-    HR rule 2026-11-25: offered while the employee has not signed in, on a work
-    day, from 1 hour before the shift start until the shift end (any time when
-    no shift is set). An overnight shift that began yesterday (for example
-    22:00-06:00) still counts until it ends: its shift day is yesterday, and
-    that day is used for the day-off check and for the box's limits, so one
-    shift gets one box and one repeat across midnight.
+    HR rule 2026-11-25: offered while the employee has not signed in for that
+    shift, on a work day, from 1 hour before the shift start until the shift
+    end (any time when the day has no shift). The shift day is the day the
+    shift starts: an overnight shift that began yesterday (22:00-06:00) still
+    counts after midnight, and a shift starting just after midnight counts
+    from 1 hour before. That day is used for the day-off check and for the
+    box's limits, so one shift gets one box and one repeat.
     """
     adapter = adapter or get_adapter()
-    if adapter.get_state(employee, now)["status"] != "not_signed_in":
+    if adapter.get_state(employee, now)["status"] in ("working", "away", "on_break"):
         return None
     today = now.date()
-    for day in (today, today - timedelta(days=1)):
+    shift_day = None
+    for day in (today - timedelta(days=1), today, today + timedelta(days=1)):
         window = adapter.shift_window(employee, day)
-        if window is None:
-            if day != today:
-                continue
-            shift_day = today  # no shift set: any time of the day
-        else:
-            start, end = window
-            if not (start - timedelta(hours=1) <= now <= end):
-                continue
+        if window is not None and window[0] - timedelta(hours=1) <= now <= window[1]:
             shift_day = day
-        return None if adapter.is_day_off(employee, shift_day) else shift_day
-    return None
+            break
+    if shift_day is None:
+        if adapter.shift_window(employee, today) is not None:
+            return None  # between shifts
+        shift_day = today  # no shift today: any time of the day
+    if adapter.is_day_off(employee, shift_day):
+        return None
+    row = adapter.attendance_by_day(employee, shift_day, shift_day).get(shift_day) or {}
+    if row.get("sign_in"):
+        return None  # already signed in for this shift (and maybe out again)
+    return shift_day
 
 
 def start_day_box(employee, now=None):

@@ -12,6 +12,7 @@
         .exp-input { width: 100%; max-width: 100%; height: 38px; padding: 0 2px; border: 0; border-bottom: 1px solid #c8c8c8; background: transparent; font-size: 14px; color: #202124; outline: none; }
         .exp-input:focus { border-bottom: 2px solid #e54f38; }
         .exp-input.exp-short { max-width: 300px; }
+        .exp-input.exp-textarea { height: auto; min-height: 38px; padding: 8px 2px; resize: vertical; font-family: inherit; line-height: 1.4; }
         .exp-msg { color: #d93025; font-size: 12px; margin-top: 6px; }
         .exp-file-btn { display: inline-block; padding: 8px 16px; border: 1px solid #dadce0; border-radius: 5px; color: #1a73e8; font-size: 14px; cursor: pointer; background: #fff; }
         .exp-files { margin-top: 8px; font-size: 13px; color: #333; overflow-wrap: anywhere; }
@@ -40,7 +41,7 @@
 
                 <div class="exp-card{% if errors.description %} exp-error{% endif %}">
                     <label class="exp-label" for="exp-desc">{% trans "Description of Expense" %} <span class="exp-req">*</span></label>
-                    <input class="exp-input" type="text" id="exp-desc" name="description" maxlength="500" placeholder="{% trans 'Your answer' %}" value="{{ values.description }}" required />
+                    <textarea class="exp-input exp-textarea" id="exp-desc" name="description" maxlength="500" rows="2" placeholder="{% trans 'Your answer' %}" required>{{ values.description }}</textarea>
                     {% if errors.description %}<div class="exp-msg">{{ errors.description }}</div>{% endif %}
                 </div>
 

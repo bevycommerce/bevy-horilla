@@ -226,37 +226,48 @@ START_DAY_ATTEMPTS = 2
 
 def start_day_needed(employee, now, adapter=None):
     """
-    HR rule 2026-11-25: offer "Start your day now?" while the employee has not
-    signed in today, on a work day, from 1 hour before the shift start until
-    the shift end (any time when no shift is set).
+    The shift day for which to offer "Start your day now?", or None.
+
+    HR rule 2026-11-25: offered while the employee has not signed in, on a work
+    day, from 1 hour before the shift start until the shift end (any time when
+    no shift is set). An overnight shift that began yesterday (for example
+    22:00-06:00) still counts until it ends: its shift day is yesterday, and
+    that day is used for the day-off check and for the box's limits, so one
+    shift gets one box and one repeat across midnight.
     """
     adapter = adapter or get_adapter()
     if adapter.get_state(employee, now)["status"] != "not_signed_in":
-        return False
+        return None
     today = now.date()
-    if adapter.is_day_off(employee, today):
-        return False
-    window = adapter.shift_window(employee, today)
-    if window is not None:
-        start, end = window
-        if not (start - timedelta(hours=1) <= now <= end):
-            return False
-    return True
+    for day in (today, today - timedelta(days=1)):
+        window = adapter.shift_window(employee, day)
+        if window is None:
+            if day != today:
+                continue
+            shift_day = today  # no shift set: any time of the day
+        else:
+            start, end = window
+            if not (start - timedelta(hours=1) <= now <= end):
+                continue
+            shift_day = day
+        return None if adapter.is_day_off(employee, shift_day) else shift_day
+    return None
 
 
 def start_day_box(employee, now=None):
     """
-    The open "Start your day now?" box for today (a ReminderDelivery), or None.
+    The open "Start your day now?" box for the current shift day (a
+    ReminderDelivery), or None.
 
-    Shown on the first portal visit of the day. Closed, it comes back once
-    after start_day_repeat_minutes, then not again that day.
+    Shown on the first portal visit of the shift day. Closed, it comes back
+    once after start_day_repeat_minutes, then not again for that shift day.
     """
     now = now or timezone.localtime()
-    if not start_day_needed(employee, now):
+    shift_day = start_day_needed(employee, now)
+    if shift_day is None:
         return None
-    today = now.date()
     shown = list(
-        ReminderDelivery.objects.filter(employee=employee, work_date=today, kind=START_DAY).order_by("attempt")
+        ReminderDelivery.objects.filter(employee=employee, work_date=shift_day, kind=START_DAY).order_by("attempt")
     )
     for delivery in shown:
         if delivery.acknowledged_at is None:
@@ -272,7 +283,7 @@ def start_day_box(employee, now=None):
         with transaction.atomic():
             return ReminderDelivery.objects.create(
                 employee=employee,
-                work_date=today,
+                work_date=shift_day,
                 kind=START_DAY,
                 attempt=attempt,
                 due_at=now,
@@ -280,7 +291,7 @@ def start_day_box(employee, now=None):
             )
     except IntegrityError:  # shown at the same moment in another tab
         return ReminderDelivery.objects.filter(
-            employee=employee, work_date=today, kind=START_DAY, attempt=attempt, acknowledged_at__isnull=True
+            employee=employee, work_date=shift_day, kind=START_DAY, attempt=attempt, acknowledged_at__isnull=True
         ).first()
 
 

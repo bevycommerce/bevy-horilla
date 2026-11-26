@@ -38,7 +38,8 @@
             /* Phones (HR review 2026-11-25): one card per expense instead of a wide table */
             @media (max-width: 640px) {
                 .exp-log-box { overflow-x: visible; border: 0; }
-                .exp-log thead { display: none; }
+                /* header cells stay readable by screen readers, only hidden on screen */
+                .exp-log thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
                 .exp-log, .exp-log tbody, .exp-log tr, .exp-log td { display: block; width: 100%; }
                 .exp-log tr { margin-bottom: 12px; padding: 6px 12px; border: 1px solid #ebebeb; border-radius: 8px; }
                 .exp-log td { display: flex; gap: 12px; padding: 6px 0; border-top: 0; }
@@ -52,37 +53,37 @@
             }
         </style>
         <div class="exp-log-box">
-            <table class="exp-log">
-                <thead>
-                    <tr>
-                        {% if can_view_all %}<th>{% trans "Employee" %}</th>{% endif %}
-                        <th>{% trans "Expense Date" %}</th>
-                        <th>{% trans "Vendor / Company" %}</th>
-                        <th>{% trans "Description" %}</th>
-                        <th>{% trans "Amount" %}</th>
-                        <th>{% trans "Proof" %}</th>
-                        <th>{% trans "Submitted" %}</th>
+            <table class="exp-log" role="table" aria-label="{% trans 'Expense Log' %}">
+                <thead role="rowgroup">
+                    <tr role="row">
+                        {% if can_view_all %}<th role="columnheader">{% trans "Employee" %}</th>{% endif %}
+                        <th role="columnheader">{% trans "Expense Date" %}</th>
+                        <th role="columnheader">{% trans "Vendor / Company" %}</th>
+                        <th role="columnheader">{% trans "Description" %}</th>
+                        <th role="columnheader">{% trans "Amount" %}</th>
+                        <th role="columnheader">{% trans "Proof" %}</th>
+                        <th role="columnheader">{% trans "Submitted" %}</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                     {% for row in rows %}
-                        <tr>
-                            {% if can_view_all %}<td class="exp-log-name" data-label="{% trans 'Employee' %}">{{ row.employee }}</td>{% endif %}
-                            <td data-label="{% trans 'Expense Date' %}">{{ row.expense_date|date:"d M Y" }}</td>
-                            <td data-label="{% trans 'Vendor / Company' %}">{{ row.vendor }}</td>
-                            <td class="exp-log-desc" data-label="{% trans 'Description' %}">{{ row.description }}</td>
-                            <td class="exp-log-amount" data-label="{% trans 'Amount' %}">{{ row.amount }}</td>
-                            <td class="exp-log-proof" data-label="{% trans 'Proof' %}">
+                        <tr role="row">
+                            {% if can_view_all %}<td role="cell" class="exp-log-name" data-label="{% trans 'Employee' %}">{{ row.employee }}</td>{% endif %}
+                            <td role="cell" data-label="{% trans 'Expense Date' %}">{{ row.expense_date|date:"d M Y" }}</td>
+                            <td role="cell" data-label="{% trans 'Vendor / Company' %}">{{ row.vendor }}</td>
+                            <td role="cell" class="exp-log-desc" data-label="{% trans 'Description' %}">{{ row.description }}</td>
+                            <td role="cell" class="exp-log-amount" data-label="{% trans 'Amount' %}">{{ row.amount }}</td>
+                            <td role="cell" class="exp-log-proof" data-label="{% trans 'Proof' %}">
                                 <div>
                                     {% for proof in row.proofs %}
                                         <a href="{{ proof.file.url }}" target="_blank" rel="noopener">{{ proof.original_name }}</a>
                                     {% empty %}-{% endfor %}
                                 </div>
                             </td>
-                            <td data-label="{% trans 'Submitted' %}">{{ row.created_at|date:"d M Y H:i" }}</td>
+                            <td role="cell" data-label="{% trans 'Submitted' %}">{{ row.created_at|date:"d M Y H:i" }}</td>
                         </tr>
                     {% empty %}
-                        <tr><td colspan="7" class="exp-log-empty">{% trans "No expenses found for this period." %}</td></tr>
+                        <tr role="row"><td role="cell" colspan="7" class="exp-log-empty">{% trans "No expenses found for this period." %}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

@@ -4,6 +4,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 KIND_CHOICES = [
+    ("start_day", _("Start your day box")),
     ("sign_in", _("Sign in")),
     ("sign_in_followup", _("Sign in follow-up")),
     ("midday", _("Midday update")),

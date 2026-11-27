@@ -219,6 +219,90 @@ def run_reminders(now=None):
     return total
 
 
+# ----------------------------------------------------------------- start your day
+START_DAY = "start_day"
+START_DAY_ATTEMPTS = 2
+
+
+def start_day_needed(employee, now, adapter=None):
+    """
+    The shift day for which to offer "Start your day now?", or None.
+
+    HR rule 2026-11-25: offered while the employee has not signed in for that
+    shift, on a work day, from 1 hour before the shift start until the shift
+    end (any time when the day has no shift). The shift day is the day the
+    shift starts: an overnight shift that began yesterday (22:00-06:00) still
+    counts after midnight. That day is used for the day-off check and for the
+    box's limits, so one shift gets one box and one repeat.
+
+    Tomorrow's shift is not offered before midnight (for example 23:45 for a
+    00:30 shift): Horilla's sign-in would record that visit on today's date
+    and could reopen today's finished attendance. From midnight on, today's
+    window applies as usual.
+    """
+    adapter = adapter or get_adapter()
+    if adapter.get_state(employee, now)["status"] in ("working", "away", "on_break"):
+        return None
+    today = now.date()
+    shift_day = None
+    for day in (today - timedelta(days=1), today):
+        window = adapter.shift_window(employee, day)
+        if window is not None and window[0] - timedelta(hours=1) <= now <= window[1]:
+            shift_day = day
+            break
+    if shift_day is None:
+        if adapter.shift_window(employee, today) is not None:
+            return None  # between shifts
+        shift_day = today  # no shift today: any time of the day
+    if adapter.is_day_off(employee, shift_day):
+        return None
+    row = adapter.attendance_by_day(employee, shift_day, shift_day).get(shift_day) or {}
+    if row.get("sign_in"):
+        return None  # already signed in for this shift (and maybe out again)
+    return shift_day
+
+
+def start_day_box(employee, now=None):
+    """
+    The open "Start your day now?" box for the current shift day (a
+    ReminderDelivery), or None.
+
+    Shown on the first portal visit of the shift day. Closed, it comes back
+    once after start_day_repeat_minutes, then not again for that shift day.
+    """
+    now = now or timezone.localtime()
+    shift_day = start_day_needed(employee, now)
+    if shift_day is None:
+        return None
+    shown = list(
+        ReminderDelivery.objects.filter(employee=employee, work_date=shift_day, kind=START_DAY).order_by("attempt")
+    )
+    for delivery in shown:
+        if delivery.acknowledged_at is None:
+            return delivery
+    if len(shown) >= START_DAY_ATTEMPTS:
+        return None
+    if shown:
+        repeat = timedelta(minutes=conf.get()["start_day_repeat_minutes"])
+        if shown[-1].acknowledged_at + repeat > now:
+            return None
+    attempt = len(shown) + 1
+    try:
+        with transaction.atomic():
+            return ReminderDelivery.objects.create(
+                employee=employee,
+                work_date=shift_day,
+                kind=START_DAY,
+                attempt=attempt,
+                due_at=now,
+                message=_("Start your day now?"),
+            )
+    except IntegrityError:  # shown at the same moment in another tab
+        return ReminderDelivery.objects.filter(
+            employee=employee, work_date=shift_day, kind=START_DAY, attempt=attempt, acknowledged_at__isnull=True
+        ).first()
+
+
 # ----------------------------------------------------------------- employee-facing
 def snooze(employee, delivery_id, minutes):
     config = conf.get()

@@ -23,6 +23,9 @@ DEFAULTS = {
     "WORKSPACE_SHOW_BREAK": False,
     # Owner rule 2026-11-12: hide the green check-in/out timer in the top bar
     "WORKSPACE_HIDE_HEADER_CLOCK": True,
+    # HR rule 2026-11-25: no sign out without the day's last update (End of Day,
+    # or Midday + End of Day combined when there is no Midday update).
+    "WORKSPACE_SIGN_OUT_NEEDS_UPDATE": True,
 }
 
 

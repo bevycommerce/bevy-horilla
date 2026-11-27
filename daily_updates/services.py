@@ -339,13 +339,28 @@ def update_history(update, revisions=None):
 
 
 # ----------------------------------------------------------------- company-wide views
-def company_feed(start, end, update_type=None, query=None, department_id=None, limit=300):
+def _visible(employees, user, viewer):
+    """employees without those the viewing user may not see (daily_updates.visibility)."""
+    if user is None:
+        return list(employees)
+    from daily_updates.visibility import hidden_from
+
+    employees = list(employees)
+    hidden = hidden_from(user, viewer, [e.pk for e in employees])
+    return [e for e in employees if e.pk not in hidden]
+
+
+def company_feed(start, end, update_type=None, query=None, department_id=None, limit=300, user=None, viewer=None):
     """
-    Everyone's submitted updates (company-wide visibility is intentional).
-    Each row holds only the safe employee card plus the update itself.
+    Submitted updates of the colleagues the viewing user may see (everyone by
+    default; see daily_updates.visibility). Each row holds only the safe
+    employee card plus the update itself.
     """
     adapter = get_adapter()
-    employees = {e.pk: e for e in adapter.active_employees(query=query, department_id=department_id)}
+    employees = {
+        e.pk: e
+        for e in _visible(adapter.active_employees(query=query, department_id=department_id), user, viewer)
+    }
     updates = DailyUpdate.objects.filter(employee_id__in=list(employees), work_date__range=(start, end))
     if update_type in TYPES:
         updates = updates.filter(update_type=update_type)
@@ -355,10 +370,10 @@ def company_feed(start, end, update_type=None, query=None, department_id=None, l
     ]
 
 
-def today_board(day, query=None, department_id=None):
-    """Attendance status plus that day's updates for every active employee, and totals."""
+def today_board(day, query=None, department_id=None, user=None, viewer=None):
+    """Attendance status plus that day's updates for every active employee the user may see, and totals."""
     adapter = get_adapter()
-    employees = adapter.active_employees(query=query, department_id=department_id)
+    employees = _visible(adapter.active_employees(query=query, department_id=department_id), user, viewer)
     rows = adapter.attendance_overview(day, employees)
     updates = {}
     for u in DailyUpdate.objects.filter(employee_id__in=[e.pk for e in employees], work_date=day):

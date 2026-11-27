@@ -3,7 +3,7 @@
 import json
 from datetime import timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from base.models import Department
@@ -17,6 +17,7 @@ from workspace_attendance.tests.helpers import (
 )
 
 
+@override_settings(WORKSPACE_SIGN_OUT_NEEDS_UPDATE=False)  # rule covered in test_sign_out_update
 class CompanyViewTests(TestCase):
     @classmethod
     def setUpTestData(cls):

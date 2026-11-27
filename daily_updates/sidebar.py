@@ -17,4 +17,16 @@ SUBMENUS = [
         "menu": _("Company Updates"),
         "redirect": reverse_lazy("daily-updates-company"),
     },
+    {
+        "menu": _("Who Sees What"),
+        "redirect": reverse_lazy("daily-updates-visibility"),
+        "accessibility": "daily_updates.sidebar.visibility_accessibility",
+    },
 ]
+
+
+def visibility_accessibility(request, submenu, user_perms, *args, **kwargs):
+    """Only Super Admin and HR Admin choose who sees whose sign in and updates."""
+    from daily_updates.visibility import is_admin
+
+    return is_admin(request.user)

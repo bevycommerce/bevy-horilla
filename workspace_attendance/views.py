@@ -21,6 +21,9 @@ from workspace_attendance.adapters import get_adapter
 
 logger = logging.getLogger(__name__)
 
+# Session flag: the next popup check shows the "send your last update" box.
+SIGN_OUT_POPUP_FLAG = "ws_sign_out_update"
+
 
 def login_required(view_func):
     """
@@ -92,7 +95,12 @@ def _run_action(request, call):
     except Exception:
         logger.exception("Workspace action failed")
         error = _("Something went wrong. Please try again.")
-    return _render_card(request, employee, message=message, error=error, error_code=error_code)
+    response = _render_card(request, employee, message=message, error=error, error_code=error_code)
+    if error_code == "update_required":
+        # open the "last update" box (workspace_reminders popup) right away
+        request.session[SIGN_OUT_POPUP_FLAG] = True
+        response["HX-Trigger"] = "wsSignOutUpdate"
+    return response
 
 
 @login_required
@@ -148,7 +156,7 @@ def _parse_time(raw, label):
     raise ValueError(_("%(label)s is not a valid time. Use the format HH:MM, for example 09:30.") % {"label": label})
 
 
-def _row(day, sign_in_value=None, sign_out_value=None, message="", error=""):
+def _row(day, sign_in_value=None, sign_out_value=None, message="", error="", error_code=""):
     def fmt(value):
         return value.strftime("%H:%M") if value else ""
 
@@ -158,6 +166,7 @@ def _row(day, sign_in_value=None, sign_out_value=None, message="", error=""):
         "sign_out_value": fmt(day["sign_out"]) if sign_out_value is None else sign_out_value,
         "message": message,
         "error": error,
+        "error_code": error_code,
     }
 
 
@@ -215,7 +224,7 @@ def fix_times_save(request):
         return render(
             request,
             "workspace_attendance/fix_times_row.html",
-            {"row": _row(base, raw_in, raw_out, error=exc.message)},
+            {"row": _row(base, raw_in, raw_out, error=exc.message, error_code=exc.code)},
         )
     except Exception:
         logger.exception("Fix My Times failed")

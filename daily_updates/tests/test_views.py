@@ -51,7 +51,7 @@ class MyPageTests(ViewBase):
         self.assertContains(response, "Write Midday note later")
         self.assertContains(response, "Combine with End of Day")
         self.assertContains(response, "never blocks Sign Out")
-        self.assertContains(response, "visible to everyone in the company")
+        self.assertContains(response, "unless HR has limited who can see them")
         self.assertContains(response, self.today.strftime("%d %b %Y"))
 
     def test_unauthenticated_redirects(self):
@@ -252,7 +252,7 @@ class CompanyTests(ViewBase):
     def test_company_page_renders_with_notice_and_tabs(self):
         response = self.client.get(reverse("daily-updates-company"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "visible to everyone in the company")
+        self.assertContains(response, "unless HR has limited who can see them")
         for label in ("Today", "Attendance", "Work Updates", "History"):
             self.assertContains(response, label)
 

@@ -1,0 +1,73 @@
+{% extends "index.html" %}
+{% load i18n %}
+{% block content %}
+    {% include "daily_updates/_styles.html" %}
+    <style>
+        .du-vis-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .du-vis-table th, .du-vis-table td { padding: 8px 10px; border-bottom: 1px solid var(--du-border); text-align: left; vertical-align: top; }
+        .du-vis-viewers { height: 140px; min-width: 260px; }
+    </style>
+    <div class="du-page">
+        <h1>{% trans "Who Sees What" %}</h1>
+        {% if forbidden %}
+            <div class="du-note du-note--error" role="alert">{% trans "Only the Super Admin and HR Admin can open this page." %}</div>
+        {% else %}
+            <div class="du-notice">
+                {% trans "Choose who sees each employee's sign in times and daily updates on Company Updates. Everyone is the normal setting. The Super Admin and HR Admin always see everyone." %}
+            </div>
+            {% if message %}<div class="du-note du-note--ok" role="status">{{ message }}</div>{% endif %}
+            {% if error %}<div class="du-note du-note--error" role="alert">{{ error }}</div>{% endif %}
+
+            <form method="get" class="du-actions" style="margin-bottom: 12px">
+                <input type="search" name="q" value="{{ query }}" class="du-input" placeholder="{% trans 'Search by name' %}" />
+                <button type="submit" class="du-btn">{% trans "Search" %}</button>
+            </form>
+
+            <form method="post">
+                {% csrf_token %}
+                <div class="du-card du-card--soft">
+                    <h2>{% trans "For the employees ticked below" %}</h2>
+                    <div class="du-actions">
+                        <label class="du-field">{% trans "Who can see them" %}
+                            <select name="mode" class="du-select" required>
+                                {% for value, label in choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                            </select>
+                        </label>
+                        <label class="du-field">{% trans "Selected people (only for Selected people; hold Ctrl to pick several)" %}
+                            <select name="viewers" class="du-select du-vis-viewers" multiple>
+                                {% for person in all_employees %}<option value="{{ person.pk }}">{{ person.get_full_name }}</option>{% endfor %}
+                            </select>
+                        </label>
+                    </div>
+                    <div class="du-actions"><button type="submit" class="du-btn du-btn--primary">{% trans "Save" %}</button></div>
+                </div>
+
+                <table class="du-vis-table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" aria-label="{% trans 'Select all' %}" onclick="document.querySelectorAll('.du-vis-pick').forEach(function (b) { b.checked = this.checked; }, this);" /></th>
+                            <th>{% trans "Employee" %}</th>
+                            <th>{% trans "Job position" %}</th>
+                            <th>{% trans "Who can see them" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                            <tr>
+                                <td><input type="checkbox" class="du-vis-pick" name="employee" value="{{ row.employee.pk }}" aria-label="{{ row.employee.get_full_name }}" /></td>
+                                <td>{{ row.employee.get_full_name }}</td>
+                                <td>{{ row.employee.employee_work_info.job_position_id|default:"" }}</td>
+                                <td>
+                                    {{ row.mode_label }}
+                                    {% if row.viewers %}<div class="du-muted">{% for person in row.viewers %}{{ person.get_full_name }}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="4">{% trans "No employees found." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </form>
+        {% endif %}
+    </div>
+{% endblock %}

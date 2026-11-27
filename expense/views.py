@@ -42,7 +42,8 @@ def expense_submit(request):
         values = {
             "expense_date": (request.POST.get("expense_date") or "").strip(),
             "vendor": (request.POST.get("vendor") or "").strip(),
-            "description": (request.POST.get("description") or "").strip(),
+            # the description box sends line breaks as CRLF: count them as one character
+            "description": (request.POST.get("description") or "").replace("\r\n", "\n").replace("\r", "\n").strip(),
             "amount": (request.POST.get("amount") or "").strip(),
         }
         files = request.FILES.getlist("proofs")

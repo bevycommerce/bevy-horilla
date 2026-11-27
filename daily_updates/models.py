@@ -111,3 +111,39 @@ class MiddaySkip(models.Model):
 
     def __str__(self):
         return f"{self.employee_id} {self.work_date} skip: {self.choice}"
+
+
+VISIBLE_EVERYONE = "everyone"
+VISIBLE_ADMINS = "admins"
+VISIBLE_SELECTED = "selected"
+VISIBILITY_CHOICES = [
+    (VISIBLE_EVERYONE, _("Everyone")),
+    (VISIBLE_ADMINS, _("Only Super Admin and HR Admin")),
+    (VISIBLE_SELECTED, _("Selected people")),
+]
+
+
+class UpdateVisibility(models.Model):
+    """
+    Who sees one employee's sign in times and daily updates on Company Updates
+    (HR rule 2026-11-25). No row means everyone. Super Admin and HR Admin
+    (the manage_update_visibility permission) always see everyone.
+    """
+
+    employee = models.OneToOneField(
+        "employee.Employee", on_delete=models.CASCADE, related_name="update_visibility"
+    )
+    mode = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default=VISIBLE_EVERYONE)
+    viewers = models.ManyToManyField("employee.Employee", blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    class Meta:
+        permissions = [
+            ("manage_update_visibility", _("Can choose who sees whose sign in and daily updates")),
+        ]
+
+    def __str__(self):
+        return f"{self.employee_id} {self.mode}"

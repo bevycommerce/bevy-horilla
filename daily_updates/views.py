@@ -22,8 +22,17 @@ from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy as _lazy
 from django.views.decorators.http import require_http_methods, require_POST
 
-from daily_updates import services
-from daily_updates.models import COMBINED, EOD, MIDDAY, DailyUpdate
+from daily_updates import services, visibility
+from daily_updates.models import (
+    COMBINED,
+    EOD,
+    MIDDAY,
+    VISIBILITY_CHOICES,
+    VISIBLE_EVERYONE,
+    VISIBLE_SELECTED,
+    DailyUpdate,
+    UpdateVisibility,
+)
 from workspace_attendance.adapters import get_adapter
 from workspace_attendance.views import login_required
 
@@ -198,13 +207,17 @@ def delete(request, update_id):
 def history(request, update_id):
     """
     Earlier versions of one update. Updates are visible to the same people as
-    the Company Updates page (the viewer's company scope), and always to the author.
+    the Company Updates page (the viewer's company scope and the visibility
+    setting), and always to the author.
     """
     update = DailyUpdate.objects.select_related("employee").filter(pk=update_id).first()
     if update is not None:
         viewer = get_adapter().get_employee(request.user)
         own = viewer is not None and viewer.pk == update.employee_id
-        if not own and not get_adapter().is_visible_employee(update.employee_id):
+        if not own and (
+            not get_adapter().is_visible_employee(update.employee_id)
+            or not visibility.can_see(request.user, viewer, update.employee_id)
+        ):
             update = None  # same answer as a missing update
     context = {
         "update": None,
@@ -339,7 +352,13 @@ def _company_context(request):
     }
     try:
         if tab in ("today", "attendance"):
-            board = services.today_board(filters["day"], query=filters["q"] or None, department_id=filters["department_id"])
+            board = services.today_board(
+                filters["day"],
+                query=filters["q"] or None,
+                department_id=filters["department_id"],
+                user=request.user,
+                viewer=_employee(request),
+            )
             context["totals"] = board["totals"]
             rows = []
             for row in board["rows"]:
@@ -358,6 +377,8 @@ def _company_context(request):
                 update_type=filters["type"] or None,
                 query=filters["q"] or None,
                 department_id=filters["department_id"],
+                user=request.user,
+                viewer=_employee(request),
             )
             for item in feed:
                 _prepare_update(item["update"])
@@ -384,3 +405,77 @@ def company_tab(request):
     # keep the address bar in step so a reload or a shared link shows the same view
     response["HX-Push-Url"] = f"{reverse('daily-updates-company')}?{context['state_query']}"
     return response
+
+
+# ---------------------------------------------------------------- who sees what
+@login_required
+@require_http_methods(["GET", "HEAD", "POST"])
+def visibility_settings(request):
+    """
+    Super Admin and HR Admin choose, per employee, who sees that employee's
+    sign in times and daily updates on Company Updates (HR rule 2026-11-25).
+    """
+    if not visibility.is_admin(request.user):
+        return render(request, "daily_updates/visibility.html", {"forbidden": True}, status=403)
+    from employee.models import Employee
+
+    message = error = ""
+    if request.method == "POST":
+        ids = [int(i) for i in request.POST.getlist("employee") if i.isdigit()]
+        mode = request.POST.get("mode", "")
+        viewer_ids = [int(i) for i in request.POST.getlist("viewers") if i.isdigit()]
+        chosen = list(Employee.objects.filter(pk__in=ids, is_active=True))
+        if not chosen:
+            error = _("Select at least one employee.")
+        elif mode not in dict(VISIBILITY_CHOICES):
+            error = _("Choose who can see them.")
+        elif mode == VISIBLE_SELECTED and not viewer_ids:
+            error = _("Choose at least one person who can see them.")
+        else:
+            viewers = list(Employee.objects.filter(pk__in=viewer_ids, is_active=True))
+            for employee in chosen:
+                if mode == VISIBLE_EVERYONE:
+                    UpdateVisibility.objects.filter(employee=employee).delete()
+                    continue
+                row, _created = UpdateVisibility.objects.update_or_create(
+                    employee=employee, defaults={"mode": mode, "updated_by": request.user}
+                )
+                row.viewers.set([v for v in viewers if v.pk != employee.pk] if mode == VISIBLE_SELECTED else [])
+            message = _("Saved for %(count)s employee(s).") % {"count": len(chosen)}
+
+    query = (request.GET.get("q") or "").strip()
+    employees = Employee.objects.filter(is_active=True).select_related(
+        "employee_work_info__job_position_id", "employee_work_info__department_id"
+    )
+    if query:
+        for word in query.split()[:4]:
+            employees = employees.filter(
+                Q(employee_first_name__icontains=word) | Q(employee_last_name__icontains=word)
+            )
+    employees = list(employees.order_by("employee_first_name", "employee_last_name"))
+    settings_by_id = {
+        row.employee_id: row
+        for row in UpdateVisibility.objects.filter(employee_id__in=[e.pk for e in employees]).prefetch_related(
+            "viewers"
+        )
+    }
+    rows = []
+    for employee in employees:
+        row = settings_by_id.get(employee.pk)
+        rows.append(
+            {
+                "employee": employee,
+                "mode": row.mode if row else VISIBLE_EVERYONE,
+                "mode_label": row.get_mode_display() if row else dict(VISIBILITY_CHOICES)[VISIBLE_EVERYONE],
+                "viewers": list(row.viewers.all()) if row else [],
+            }
+        )
+    context = {
+        "rows": rows,
+        "query": query,
+        "choices": VISIBILITY_CHOICES,
+        "all_employees": Employee.objects.filter(is_active=True).order_by("employee_first_name", "employee_last_name"),
+        "message": message,
+        "error": error,
+    }
+    return render(request, "daily_updates/visibility.html", context)
